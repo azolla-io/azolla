@@ -1,0 +1,7 @@
+# Default configuration for the Azolla server
+
+[server]
+port = 50051
+
+[database]
+url = "postgres://postgres:postgres@localhost:5432/azolla" 

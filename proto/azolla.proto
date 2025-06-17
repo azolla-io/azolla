@@ -1,0 +1,91 @@
+syntax = "proto3";
+
+package azolla;
+
+// The main gRPC service for Azolla.
+service Azolla {
+  // Creates a new task instance.
+  rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse);
+  
+  // Waits for a task to reach a terminal state.
+  rpc WaitForTask(WaitForTaskRequest) returns (WaitForTaskResponse);
+
+  // Creates a new flow instance.
+  rpc CreateFlow(CreateFlowRequest) returns (CreateFlowResponse);
+
+  // Waits for a flow to reach a terminal state.
+  rpc WaitForFlow(WaitForFlowRequest) returns (WaitForFlowResponse);
+
+  // Publishes an event associated with a task.
+  rpc PublishTaskEvent(PublishTaskEventRequest) returns (PublishTaskEventResponse);
+
+  // Publishes an event associated with a flow.
+  rpc PublishFlowEvent(PublishFlowEventRequest) returns (PublishFlowEventResponse);
+}
+
+// --- Message Definitions ---
+
+message CreateTaskRequest {
+  string name = 1;
+  string domain = 2;
+  // Using string for JSON representation for simplicity in proto.
+  // The server will parse this into JSONB.
+  string retry_policy = 3; 
+  repeated string args = 4;
+  string kwargs = 5;
+  optional int64 flow_instance_id = 6;
+}
+
+message CreateTaskResponse {
+  int64 task_id = 1;
+}
+
+message WaitForTaskRequest {
+  int64 task_id = 1;
+  string domain = 2;
+}
+
+message WaitForTaskResponse {
+  string status = 1;
+}
+
+message CreateFlowRequest {
+  string name = 1;
+  string domain = 2;
+  string dag = 3; // JSON representation of the DAG
+}
+
+message CreateFlowResponse {
+  int64 flow_id = 1;
+}
+
+message WaitForFlowRequest {
+  int64 flow_id = 1;
+  string domain = 2;
+}
+
+message WaitForFlowResponse {
+  string status = 1;
+}
+
+message PublishTaskEventRequest {
+  int64 task_instance_id = 1;
+  string domain = 2;
+  int32 event_type = 3; // smallint
+  string metadata = 4; // JSON
+}
+
+message PublishTaskEventResponse {
+  bool success = 1;
+}
+
+message PublishFlowEventRequest {
+  int64 flow_instance_id = 1;
+  string domain = 2;
+  int32 event_type = 3;
+  string metadata = 4;
+}
+
+message PublishFlowEventResponse {
+  bool success = 1;
+} 
