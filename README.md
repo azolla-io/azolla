@@ -225,15 +225,18 @@ We welcome contributions to Azolla. If you discover a bug, please submit a pull 
 
 ### Development Setup
 
+The recommended way to run a local development environment is using Docker Compose. This will start the Azolla server and a PostgreSQL database.
+
+1.  **Ensure you have Docker installed.**
+2.  **Build and run the services:**
+    ```bash
+    docker-compose up --build
+    ```
+    The Azolla gRPC server will be available on port `50051`. Any changes to the source code will require rebuilding the container.
+
+### Running Tests
+To run the test suite:
 ```bash
-# Clone the repository
-git clone https://github.com/azolla-org/azolla.git
-cd azolla
-
-# Start development environment  
-docker-compose -f docker-compose.dev.yml up -d
-
-# Run tests
 cargo test
 ```
 
