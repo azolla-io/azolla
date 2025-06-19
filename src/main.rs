@@ -14,8 +14,11 @@ async fn main() -> Result<()> {
     
     // Load configuration
     let settings = Settings::new().expect("Failed to load settings");
+    log::info!("Loaded settings: {:?}", settings);
     let addr = format!("[::1]:{}", settings.server.port).parse()?;
-
+    
+    
+    // Create the gRPC server
     // Create and connect database pool
     let pool = create_pool(&settings).expect("Failed to create database pool");
     

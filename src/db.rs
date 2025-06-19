@@ -45,8 +45,8 @@ pub fn create_pool(settings: &Settings) -> Result<PgPool> {
 }
 
 pub async fn run_migrations(pool: &PgPool) -> Result<()> {
-    let mut client = pool.get().await?;
     log::info!("Running database migrations...");
+    let mut client = pool.get().await?;
     migrations::migrations::runner()
         .run_async(&mut **client)
         .await?;
