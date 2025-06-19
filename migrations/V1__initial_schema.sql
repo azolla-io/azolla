@@ -41,15 +41,17 @@ CREATE TABLE flow_instance (
     dag JSONB,
     status SMALLINT NOT NULL,
     PRIMARY KEY (id, domain)
-);
+) PARTITION BY LIST (domain);
 
 -- Flow State Table
 -- Holds the durable context or state for a running flow instance.
 CREATE TABLE flow_state (
-    flow_run_id BIGINT PRIMARY KEY,
+    flow_run_id BIGINT NOT NULL,
+    domain TEXT NOT NULL,
     data JSONB NOT NULL,
     version BIGINT NOT NULL,
-    FOREIGN KEY (flow_run_id) REFERENCES flow_instance(id) ON DELETE CASCADE
+    PRIMARY KEY (flow_run_id, domain),
+    FOREIGN KEY (flow_run_id, domain) REFERENCES flow_instance (id, domain) ON DELETE CASCADE
 );
 
 -- Events Table
@@ -83,6 +85,9 @@ CREATE TABLE domain_cursor (
 
 -- Create a default partition for the 'task_instance' table.
 CREATE TABLE task_instance_default PARTITION OF task_instance FOR VALUES IN ('default');
+
+-- Create a default partition for the 'flow_instance' table.
+CREATE TABLE flow_instance_default PARTITION OF flow_instance FOR VALUES IN ('default');
 
 -- Create partitions for the 'events' table.
 -- Using 4 partitions as a sensible default.

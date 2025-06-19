@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   postgres:
-    image: postgres:14-alpine
+    image: postgres:16-alpine
     container_name: azolla_postgres
     environment:
       - POSTGRES_USER=postgres
@@ -18,9 +18,9 @@ services:
       timeout: 5s
       retries: 5
 
-  azolla-ochestrator:
+  azolla-orchestrator:
     build: .
-    container_name: azolla_ochestrator
+    container_name: azolla_orchestrator
     depends_on:
       postgres:
         condition: service_healthy
