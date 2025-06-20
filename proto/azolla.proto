@@ -33,15 +33,15 @@ message CreateTaskRequest {
   string retry_policy = 3; 
   repeated string args = 4;
   string kwargs = 5;
-  optional int64 flow_instance_id = 6;
+  optional string flow_instance_id = 6;
 }
 
 message CreateTaskResponse {
-  int64 task_id = 1;
+  string task_id = 1;
 }
 
 message WaitForTaskRequest {
-  int64 task_id = 1;
+  string task_id = 1;
   string domain = 2;
 }
 
@@ -56,11 +56,11 @@ message CreateFlowRequest {
 }
 
 message CreateFlowResponse {
-  int64 flow_id = 1;
+  string flow_id = 1;
 }
 
 message WaitForFlowRequest {
-  int64 flow_id = 1;
+  string flow_id = 1;
   string domain = 2;
 }
 
@@ -69,7 +69,7 @@ message WaitForFlowResponse {
 }
 
 message PublishTaskEventRequest {
-  int64 task_instance_id = 1;
+  string task_instance_id = 1;
   string domain = 2;
   int32 event_type = 3; // smallint
   string metadata = 4; // JSON
@@ -80,7 +80,7 @@ message PublishTaskEventResponse {
 }
 
 message PublishFlowEventRequest {
-  int64 flow_instance_id = 1;
+  string flow_instance_id = 1;
   string domain = 2;
   int32 event_type = 3;
   string metadata = 4;

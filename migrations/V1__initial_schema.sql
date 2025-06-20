@@ -1,14 +1,17 @@
 -- V1__initial_schema.sql
 
+-- Enable UUID extension
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
 -- Task Instance Table
 -- This table stores individual task instances. It's partitioned by 'domain'
 -- to allow for efficient querying and data management across different tenants or services.
 CREATE TABLE task_instance (
-    id BIGINT NOT NULL,
+    id UUID NOT NULL DEFAULT uuid_generate_v4(),
     name TEXT NOT NULL,
     domain TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    flow_instance_id BIGINT,
+    flow_instance_id UUID,
     retry_policy JSONB,
     args TEXT[],
     kwargs JSONB,
@@ -19,7 +22,7 @@ CREATE TABLE task_instance (
 -- Task Attempts Table
 -- Records each execution attempt for a given task instance.
 CREATE TABLE task_attempts (
-    task_instance_id BIGINT NOT NULL,
+    task_instance_id UUID NOT NULL,
     domain TEXT NOT NULL,
     attempt INT NOT NULL,
     start_time TIMESTAMPTZ,
@@ -32,7 +35,7 @@ CREATE TABLE task_attempts (
 -- Flow Instance Table
 -- Stores workflow instances, which are DAGs of tasks.
 CREATE TABLE flow_instance (
-    id BIGINT NOT NULL,
+    id UUID NOT NULL DEFAULT uuid_generate_v4(),
     name TEXT NOT NULL,
     domain TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -46,7 +49,7 @@ CREATE TABLE flow_instance (
 -- Flow State Table
 -- Holds the durable context or state for a running flow instance.
 CREATE TABLE flow_state (
-    flow_run_id BIGINT NOT NULL,
+    flow_run_id UUID NOT NULL,
     domain TEXT NOT NULL,
     data JSONB NOT NULL,
     version BIGINT NOT NULL,
@@ -56,12 +59,11 @@ CREATE TABLE flow_state (
 
 -- Events Table
 -- An append-only log of all events in the system, partitioned by domain.
--- This design is for high-throughput writes.
 CREATE TABLE events (
     event_id BIGINT GENERATED ALWAYS AS IDENTITY,
     domain TEXT NOT NULL,
-    task_instance_id BIGINT,
-    flow_instance_id BIGINT,
+    task_instance_id UUID,
+    flow_instance_id UUID,
     event_type SMALLINT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     metadata JSONB

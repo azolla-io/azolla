@@ -8,6 +8,7 @@ use futures::StreamExt;
 use rayon::prelude::*;
 use std::sync::Arc;
 use tokio_postgres::Row;
+use uuid::Uuid;
 
 /// Represents a single task attempt
 #[derive(Debug, Clone)]
@@ -21,10 +22,10 @@ pub struct TaskAttempt {
 /// Represents a task instance with embedded attempts
 #[derive(Debug, Clone)]
 pub struct Task {
-    pub id: i64,
+    pub id: Uuid,
     pub name: String,
     pub created_at: DateTime<Utc>,
-    pub flow_instance_id: Option<i64>,
+    pub flow_instance_id: Option<Uuid>,
     pub retry_policy: JsonValue,
     pub args: Vec<String>,
     pub kwargs: JsonValue,
@@ -35,7 +36,7 @@ pub struct Task {
 impl Task {
     /// Clear the task to reclaim memory while preserving allocations
     pub fn clear(&mut self) {
-        self.id = 0;
+        self.id = Uuid::new_v4();
         self.name.clear(); // Reuse String allocation
         self.created_at = DateTime::UNIX_EPOCH;
         self.flow_instance_id = None;
@@ -48,13 +49,13 @@ impl Task {
 
     /// Check if this task slot is available (empty)
     pub fn is_empty(&self) -> bool {
-        self.id == 0
+        self.name.is_empty()
     }
 
     /// Create a new task with default values
     pub fn new() -> Self {
         Self {
-            id: 0,
+            id: Uuid::new_v4(),
             name: String::new(),
             created_at: DateTime::UNIX_EPOCH,
             flow_instance_id: None,
@@ -72,7 +73,7 @@ impl Task {
 pub struct TaskSet {
     domain: String,
     tasks: Vec<Task>,
-    id_to_index: HashMap<i64, usize>,
+    id_to_index: HashMap<Uuid, usize>,
     gaps: Vec<usize>,
 }
 
@@ -93,14 +94,14 @@ impl TaskSet {
     }
 
     /// Get a task by ID (O(1) average case)
-    pub fn get_task(&self, id: i64) -> Option<&Task> {
+    pub fn get_task(&self, id: Uuid) -> Option<&Task> {
         self.id_to_index
             .get(&id)
             .map(|&index| &self.tasks[index])
     }
 
     /// Get a mutable reference to a task by ID
-    pub fn get_task_mut(&mut self, id: i64) -> Option<&mut Task> {
+    pub fn get_task_mut(&mut self, id: Uuid) -> Option<&mut Task> {
         self.id_to_index
             .get(&id)
             .map(|&index| &mut self.tasks[index])
@@ -132,7 +133,7 @@ impl TaskSet {
     }
 
     /// Delete a task by ID (O(1) average case)
-    pub fn delete_task(&mut self, id: i64) -> bool {
+    pub fn delete_task(&mut self, id: Uuid) -> bool {
         if let Some(&index) = self.id_to_index.get(&id) {
             // Clear the task to reclaim memory while preserving allocations
             self.tasks[index].clear();
@@ -249,7 +250,7 @@ impl TaskSetRegistry {
     }
 
     /// Find a task across all domains
-    pub fn find_task(&self, id: i64) -> Option<Task> {
+    pub fn find_task(&self, id: Uuid) -> Option<Task> {
         for entry in self.domains.iter() {
             if let Some(task) = entry.value().get_task(id) {
                 return Some(task.clone());
@@ -325,7 +326,7 @@ impl TaskSetRegistry {
                 // Process attempts for the current domain
                 if let Some(attempt_rows) = attempts_by_domain.get(domain) {
                     for row in attempt_rows {
-                        let task_id: i64 = row.get("task_instance_id");
+                        let task_id: Uuid = row.get("task_instance_id");
                         if let Some(task) = task_set.get_task_mut(task_id) {
                             let attempt = TaskAttempt {
                                 attempt: row.get("attempt"),
@@ -382,50 +383,52 @@ mod tests {
     use chrono::Utc;
 
     #[test]
-    fn test_task_creation_and_retrieval() {
+    fn test_upsert_and_get() {
         let mut task_set = TaskSet::new("test_domain".to_string());
         
+        let task_id = Uuid::new_v4();
         let task = Task {
-            id: 123,
+            id: task_id,
             name: "test_task".to_string(),
             created_at: Utc::now(),
             flow_instance_id: None,
             retry_policy: JsonValue::Null,
-            args: vec!["arg1".to_string()],
+            args: Vec::new(),
             kwargs: JsonValue::Null,
-            status: 0,
-            attempts: vec![],
+            status: 1,
+            attempts: Vec::new(),
         };
-
+        
         task_set.upsert_task(task);
         
         assert_eq!(task_set.len(), 1);
-        assert!(task_set.get_task(123).is_some());
-        assert!(task_set.get_task(456).is_none());
+        assert!(task_set.get_task(task_id).is_some());
+        assert!(task_set.get_task(Uuid::new_v4()).is_none());
     }
 
     #[test]
-    fn test_task_deletion() {
+    fn test_delete() {
         let mut task_set = TaskSet::new("test_domain".to_string());
         
+        let task_id = Uuid::new_v4();
         let task = Task {
-            id: 123,
+            id: task_id,
             name: "test_task".to_string(),
             created_at: Utc::now(),
             flow_instance_id: None,
             retry_policy: JsonValue::Null,
-            args: vec![],
+            args: Vec::new(),
             kwargs: JsonValue::Null,
-            status: 0,
-            attempts: vec![],
+            status: 1,
+            attempts: Vec::new(),
         };
-
+        
         task_set.upsert_task(task);
         assert_eq!(task_set.len(), 1);
         
-        assert!(task_set.delete_task(123));
+        assert!(task_set.delete_task(task_id));
         assert_eq!(task_set.len(), 0);
-        assert!(task_set.get_task(123).is_none());
+        assert!(task_set.get_task(task_id).is_none());
         
         // Should have a gap available
         assert_eq!(task_set.gaps.len(), 1);
@@ -436,36 +439,41 @@ mod tests {
         let mut task_set = TaskSet::new("test_domain".to_string());
         
         // Insert and delete a task
+        let task1_id = Uuid::new_v4();
         let task1 = Task {
-            id: 123,
+            id: task1_id,
             name: "task1".to_string(),
             created_at: Utc::now(),
             flow_instance_id: None,
             retry_policy: JsonValue::Null,
-            args: vec![],
+            args: Vec::new(),
             kwargs: JsonValue::Null,
-            status: 0,
-            attempts: vec![],
+            status: 1,
+            attempts: Vec::new(),
         };
         
         task_set.upsert_task(task1);
-        task_set.delete_task(123);
+        task_set.delete_task(task1_id);
         
         // Insert another task - should reuse the gap
+        let task2_id = Uuid::new_v4();
         let task2 = Task {
-            id: 456,
+            id: task2_id,
             name: "task2".to_string(),
             created_at: Utc::now(),
             flow_instance_id: None,
             retry_policy: JsonValue::Null,
-            args: vec![],
+            args: Vec::new(),
             kwargs: JsonValue::Null,
-            status: 0,
-            attempts: vec![],
+            status: 1,
+            attempts: Vec::new(),
         };
         
         task_set.upsert_task(task2);
+        
+        // Should still have length 1 (reused gap)
         assert_eq!(task_set.len(), 1);
-        assert_eq!(task_set.gaps.len(), 0); // Gap should be reused
+        // Gap should be consumed
+        assert_eq!(task_set.gaps.len(), 0);
     }
 } 

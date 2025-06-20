@@ -1,9 +1,10 @@
 mod common;
 use azolla::{db::PgPool, taskset::TaskSetRegistry};
 use chrono::Utc;
+use uuid::Uuid;
 
 // Helper to insert a task_instance
-async fn insert_task_instance(pool: &PgPool, id: i64, name: &str, domain: &str, status: i16) {
+async fn insert_task_instance(pool: &PgPool, id: Uuid, name: &str, domain: &str, status: i16) {
     let client = pool.get().await.unwrap();
     client.execute(
         "INSERT INTO task_instance (id, name, domain, created_at, flow_instance_id, retry_policy, args, kwargs, status) \
@@ -13,7 +14,7 @@ async fn insert_task_instance(pool: &PgPool, id: i64, name: &str, domain: &str, 
 }
 
 // Helper to insert a task_attempt
-async fn insert_task_attempt(pool: &PgPool, task_instance_id: i64, domain: &str, attempt: i32, status: i16) {
+async fn insert_task_attempt(pool: &PgPool, task_instance_id: Uuid, domain: &str, attempt: i32, status: i16) {
     let client = pool.get().await.unwrap();
     client.execute(
         "INSERT INTO task_attempts (task_instance_id, domain, attempt, start_time, end_time, status) \
@@ -23,16 +24,21 @@ async fn insert_task_attempt(pool: &PgPool, task_instance_id: i64, domain: &str,
 }
 
 db_test!(test_load_from_db_structure, (|pool| async move {
+    // Create UUIDs for test data
+    let task1_id = Uuid::new_v4();
+    let task2_id = Uuid::new_v4();
+    let task3_id = Uuid::new_v4();
+
     // Insert dummy data for two domains
     // domain_a: task 1 (2 attempts), task 2 (0 attempts)
     // domain_b: task 3 (1 attempt)
-    insert_task_instance(&pool, 1, "task1", "domain_a", 10).await;
-    insert_task_instance(&pool, 2, "task2", "domain_a", 20).await;
-    insert_task_instance(&pool, 3, "task3", "domain_b", 30).await;
+    insert_task_instance(&pool, task1_id, "task1", "domain_a", 10).await;
+    insert_task_instance(&pool, task2_id, "task2", "domain_a", 20).await;
+    insert_task_instance(&pool, task3_id, "task3", "domain_b", 30).await;
 
-    insert_task_attempt(&pool, 1, "domain_a", 1, 100).await;
-    insert_task_attempt(&pool, 1, "domain_a", 2, 101).await;
-    insert_task_attempt(&pool, 3, "domain_b", 1, 200).await;
+    insert_task_attempt(&pool, task1_id, "domain_a", 1, 100).await;
+    insert_task_attempt(&pool, task1_id, "domain_a", 2, 101).await;
+    insert_task_attempt(&pool, task3_id, "domain_b", 1, 200).await;
 
     // Load from DB
     let registry = TaskSetRegistry::new();
@@ -47,16 +53,18 @@ db_test!(test_load_from_db_structure, (|pool| async move {
     let domain_a = registry.get_domain("domain_a").unwrap();
     let mut tasks_a: Vec<_> = domain_a.all_tasks().map(|t| t.id).collect();
     tasks_a.sort();
-    assert_eq!(tasks_a, vec![1, 2]);
-    let task1 = domain_a.get_task(1).unwrap();
+    let mut expected_a = vec![task1_id, task2_id];
+    expected_a.sort();
+    assert_eq!(tasks_a, expected_a);
+    let task1 = domain_a.get_task(task1_id).unwrap();
     assert_eq!(task1.attempts.len(), 2);
-    let task2 = domain_a.get_task(2).unwrap();
+    let task2 = domain_a.get_task(task2_id).unwrap();
     assert_eq!(task2.attempts.len(), 0);
 
     // domain_b
     let domain_b = registry.get_domain("domain_b").unwrap();
     let tasks_b: Vec<_> = domain_b.all_tasks().map(|t| t.id).collect();
-    assert_eq!(tasks_b, vec![3]);
-    let task3 = domain_b.get_task(3).unwrap();
+    assert_eq!(tasks_b, vec![task3_id]);
+    let task3 = domain_b.get_task(task3_id).unwrap();
     assert_eq!(task3.attempts.len(), 1);
 })); 
