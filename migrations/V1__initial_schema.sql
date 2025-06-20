@@ -10,7 +10,9 @@ CREATE TABLE task_instance (
     id UUID NOT NULL DEFAULT uuid_generate_v4(),
     name TEXT NOT NULL,
     domain TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ,
+    start_time TIMESTAMPTZ,
+    end_time TIMESTAMPTZ,
     flow_instance_id UUID,
     retry_policy JSONB,
     args TEXT[],
@@ -38,7 +40,7 @@ CREATE TABLE flow_instance (
     id UUID NOT NULL DEFAULT uuid_generate_v4(),
     name TEXT NOT NULL,
     domain TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ,
     start_time TIMESTAMPTZ,
     end_time TIMESTAMPTZ,
     dag JSONB,
@@ -74,10 +76,8 @@ CREATE TABLE events (
 CREATE INDEX idx_events_event_id ON events USING BRIN (event_id);
 
 
--- Domain Cursor Table
--- Tracks the last processed event ID for each domain, crucial for event sourcing patterns.
-CREATE TABLE domain_cursor (
-    domain TEXT PRIMARY KEY,
+-- Tracks the last processed event ID globally
+CREATE TABLE merge_cursor (
     last_event_id BIGINT NOT NULL
 );
 

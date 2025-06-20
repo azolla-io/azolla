@@ -18,16 +18,14 @@ async fn main() -> Result<()> {
     log::info!("Loaded settings: {:?}", settings);
     let addr = format!("[::1]:{}", settings.server.port).parse()?;
     
-    
-    // Create the gRPC server
     // Create and connect database pool
     let pool = create_pool(&settings).expect("Failed to create database pool");
     
     // Run database migrations
     run_migrations(&pool).await?;
 
-    // Create the gRPC server
-    let server = create_server(pool);
+    // Create the gRPC server with initialized TaskSetRegistry
+    let server = create_server(pool).await?;
     
     log::info!("Azolla server listening on {}", addr);
 

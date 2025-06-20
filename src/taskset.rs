@@ -10,6 +10,8 @@ use std::sync::Arc;
 use tokio_postgres::Row;
 use uuid::Uuid;
 
+use log::{info, debug};
+
 /// Represents a single task attempt
 #[derive(Debug, Clone)]
 pub struct TaskAttempt {
@@ -349,6 +351,192 @@ impl TaskSetRegistry {
         }
         
         log::info!("Successfully loaded {} domains.", self.domains.len());
+        Ok(())
+    }
+
+    /// Merge events from the events table to task_instance and task_attempts tables
+    /// This method implements the periodic sync process for event sourcing
+    pub async fn merge_events_to_db(&self, pool: &PgPool) -> Result<()> {
+        let mut client = pool.get().await?;
+        
+        // Start a transaction for atomicity
+        let transaction = client.transaction().await?;
+        
+        // Get the current cursor position
+        let cursor_row = transaction
+            .query_opt("SELECT last_event_id FROM merge_cursor LIMIT 1", &[])
+            .await?;
+            
+        let last_processed_event_id = cursor_row
+            .map(|row| row.get::<_, i64>(0))
+            .unwrap_or(0);
+            
+        debug!("Starting event merge from event_id: {}", last_processed_event_id);
+        
+        // Get the maximum event_id to process
+        let max_event_row = transaction
+            .query_opt("SELECT MAX(event_id) FROM events WHERE event_id > $1", &[&last_processed_event_id])
+            .await?;
+            
+        let max_event_id = match max_event_row {
+            Some(row) => match row.get::<_, Option<i64>>(0) {
+                Some(id) => id,
+                None => {
+                    debug!("No new events to process");
+                    return Ok(());
+                }
+            },
+            None => {
+                debug!("No new events to process");
+                return Ok(());
+            }
+        };
+        
+        info!("Processing events from {} to {} using server-side SQL", last_processed_event_id, max_event_id);
+        
+        // 1. Merge EVENT_TASK_CREATED events into task_instance table
+        let task_created_count = transaction
+            .execute(
+                r#"
+                INSERT INTO task_instance (id, name, domain, created_at, retry_policy, args, kwargs, status, flow_instance_id)
+                SELECT 
+                    e.task_instance_id,
+                    COALESCE((e.metadata->>'task_name')::text, 'unknown'),
+                    e.domain,
+                    e.created_at,
+                    COALESCE((e.metadata->'retry_policy')::jsonb, '{}'::jsonb),
+                    CASE 
+                        WHEN e.metadata->'args' IS NOT NULL 
+                        THEN ARRAY(SELECT jsonb_array_elements_text(e.metadata->'args'))
+                        ELSE ARRAY[]::text[]
+                    END,
+                    COALESCE((e.metadata->'kwargs')::jsonb, '{}'::jsonb),
+                    0::smallint,
+                    e.flow_instance_id
+                FROM events e
+                WHERE e.event_id > $1 
+                  AND e.event_id <= $2
+                  AND e.event_type = 1
+                  AND e.task_instance_id IS NOT NULL
+                ON CONFLICT (id, domain) DO NOTHING
+                "#,
+                &[&last_processed_event_id, &max_event_id]
+            )
+            .await?;
+            
+        debug!("Merged {} task creation events", task_created_count);
+        
+        // 2. Merge EVENT_TASK_STARTED events by updating task_instance table
+        let task_started_count = transaction
+            .execute(
+                r#"
+                UPDATE task_instance 
+                SET start_time = e.created_at
+                FROM events e
+                WHERE task_instance.id = e.task_instance_id
+                  AND task_instance.domain = e.domain
+                  AND e.event_id > $1 
+                  AND e.event_id <= $2
+                  AND e.event_type = 2
+                  AND e.task_instance_id IS NOT NULL
+                "#,
+                &[&last_processed_event_id, &max_event_id]
+            )
+            .await?;
+            
+        debug!("Merged {} task started events", task_started_count);
+        
+        // 3. Merge EVENT_TASK_ENDED events by updating task_instance table
+        let task_ended_count = transaction
+            .execute(
+                r#"
+                UPDATE task_instance 
+                SET end_time = e.created_at
+                FROM events e
+                WHERE task_instance.id = e.task_instance_id
+                  AND task_instance.domain = e.domain
+                  AND e.event_id > $1 
+                  AND e.event_id <= $2
+                  AND e.event_type = 3
+                  AND e.task_instance_id IS NOT NULL
+                "#,
+                &[&last_processed_event_id, &max_event_id]
+            )
+            .await?;
+            
+        debug!("Merged {} task ended events", task_ended_count);
+        
+        // 4. Merge EVENT_TASK_ATTEMPT_STARTED events into task_attempts table
+        let attempt_started_count = transaction
+            .execute(
+                r#"
+                INSERT INTO task_attempts (task_instance_id, domain, attempt, start_time, status)
+                SELECT 
+                    e.task_instance_id,
+                    e.domain,
+                    COALESCE((e.metadata->>'attempt')::int, 1),
+                    e.created_at,
+                    0::smallint
+                FROM events e
+                WHERE e.event_id > $1 
+                  AND e.event_id <= $2
+                  AND e.event_type = 4
+                  AND e.task_instance_id IS NOT NULL
+                ON CONFLICT (task_instance_id, domain, attempt) 
+                DO UPDATE SET start_time = EXCLUDED.start_time
+                "#,
+                &[&last_processed_event_id, &max_event_id]
+            )
+            .await?;
+            
+        debug!("Merged {} task attempt started events", attempt_started_count);
+        
+        // 5. Merge EVENT_TASK_ATTEMPT_ENDED events by updating task_attempts table
+        let attempt_ended_count = transaction
+            .execute(
+                r#"
+                UPDATE task_attempts 
+                SET 
+                    end_time = e.created_at,
+                    status = COALESCE((e.metadata->>'status')::smallint, 1::smallint)
+                FROM events e
+                WHERE task_attempts.task_instance_id = e.task_instance_id
+                  AND task_attempts.domain = e.domain
+                  AND task_attempts.attempt = COALESCE((e.metadata->>'attempt')::int, 1)
+                  AND e.event_id > $1 
+                  AND e.event_id <= $2
+                  AND e.event_type = 5
+                  AND e.task_instance_id IS NOT NULL
+                "#,
+                &[&last_processed_event_id, &max_event_id]
+            )
+            .await?;
+            
+        debug!("Merged {} task attempt ended events", attempt_ended_count);
+        
+        // Update the cursor with the last processed event_id
+        if max_event_id > last_processed_event_id {
+            // Delete any existing rows and insert the new cursor value
+            transaction
+                .execute("DELETE FROM merge_cursor", &[])
+                .await?;
+                
+            transaction
+                .execute(
+                    "INSERT INTO merge_cursor (last_event_id) VALUES ($1)",
+                    &[&max_event_id]
+                )
+                .await?;
+                
+            info!("Updated merge cursor to event_id: {}", max_event_id);
+        }
+        
+        // Commit the transaction
+        transaction.commit().await?;
+        
+        let total_events = task_created_count + task_started_count + task_ended_count + attempt_started_count + attempt_ended_count;
+        info!("Successfully merged {} events using server-side SQL (task_created: {}, task_started: {}, task_ended: {}, attempt_started: {}, attempt_ended: {})", 
+              total_events, task_created_count, task_started_count, task_ended_count, attempt_started_count, attempt_ended_count);
         Ok(())
     }
 }
