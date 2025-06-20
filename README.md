@@ -23,7 +23,7 @@ _As simple as Celery, as durable as Temporal, and runs on just a database._
 - **Sub-millisecond scheduling latency.**
 - **10K+ tasks/sec** throughput on a single PostgreSQL instance.
 - **In-memory DAG tracking** and **append-only event sourcing** ensure minimal DB overhead.
-- **[FlowCache™]**: our ReadySet-inspired technique for incrementally syncing memory state with durable facts for blazing-fast reads.
+- **[TaskSet™]**: our ReadySet-inspired technique for incrementally syncing memory state with durable facts for blazing-fast reads.
 
 ### 🧑‍💻 **Developer-Friendly**
 - **Celery-like Python API** for defining tasks and flows.

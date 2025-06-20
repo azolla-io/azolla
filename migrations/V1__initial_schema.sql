@@ -84,10 +84,10 @@ CREATE TABLE domain_cursor (
 -- out of the box. You can add more partitions for other domains as needed.
 
 -- Create a default partition for the 'task_instance' table.
-CREATE TABLE task_instance_default PARTITION OF task_instance FOR VALUES IN ('default');
+CREATE TABLE task_instance_default PARTITION OF task_instance DEFAULT;
 
 -- Create a default partition for the 'flow_instance' table.
-CREATE TABLE flow_instance_default PARTITION OF flow_instance FOR VALUES IN ('default');
+CREATE TABLE flow_instance_default PARTITION OF flow_instance DEFAULT;
 
 -- Create partitions for the 'events' table.
 -- Using 4 partitions as a sensible default.
