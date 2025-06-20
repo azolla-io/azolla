@@ -2,6 +2,8 @@ use crate::db::PgPool;
 use anyhow::Result;
 use tokio_postgres::types::Json;
 use tonic::{Request, Response, Status};
+use log::info;
+use uuid::Uuid;
 
 // Import the generated protobuf code
 pub mod azolla {
@@ -35,16 +37,25 @@ impl Azolla for MyAzollaService {
             Status::internal("Database error")
         })?;
 
-        let task_id: i64 = rand::random();
+        let task_id = Uuid::new_v4();
         let retry_policy: serde_json::Value = serde_json::from_str(&req.retry_policy)
             .unwrap_or(serde_json::json!({}));
         let kwargs: serde_json::Value = serde_json::from_str(&req.kwargs)
             .unwrap_or(serde_json::json!({}));
 
+        let flow_instance_id = req.flow_instance_id
+            .as_ref()
+            .and_then(|id_str| Uuid::parse_str(id_str).ok());
+
+        // Here you would insert into your database
+        // For now, just log the values
+        info!("Task ID: {}", task_id);
+        info!("Flow Instance ID: {:?}", flow_instance_id);
+
         client
             .execute(
                 "INSERT INTO task_instance (id, name, domain, retry_policy, args, kwargs, status, flow_instance_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-                &[&task_id, &req.name, &req.domain, &Json(&retry_policy), &req.args, &Json(&kwargs), &0i16, &req.flow_instance_id],
+                &[&task_id, &req.name, &req.domain, &Json(&retry_policy), &req.args, &Json(&kwargs), &0i16, &flow_instance_id],
             )
             .await
             .map_err(|e| {
@@ -52,7 +63,7 @@ impl Azolla for MyAzollaService {
                 Status::internal("Failed to create task")
             })?;
         
-        Ok(Response::new(CreateTaskResponse { task_id }))
+        Ok(Response::new(CreateTaskResponse { task_id: task_id.to_string() }))
     }
 
     async fn wait_for_task(
@@ -70,9 +81,8 @@ impl Azolla for MyAzollaService {
         _request: Request<CreateFlowRequest>,
     ) -> Result<Response<CreateFlowResponse>, Status> {
         // Placeholder implementation
-        Ok(Response::new(CreateFlowResponse {
-            flow_id: rand::random(),
-        }))
+        let flow_id = Uuid::new_v4();
+        Ok(Response::new(CreateFlowResponse { flow_id: flow_id.to_string() }))
     }
 
     async fn wait_for_flow(
