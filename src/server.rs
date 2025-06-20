@@ -1,9 +1,12 @@
 use crate::db::PgPool;
+use crate::taskset::{TaskSetRegistry, Task};
 use anyhow::Result;
 use tokio_postgres::types::Json;
 use tonic::{Request, Response, Status};
 use log::info;
 use uuid::Uuid;
+use chrono::Utc;
+use std::sync::Arc;
 
 // Import the generated protobuf code
 pub mod azolla {
@@ -13,13 +16,45 @@ pub mod azolla {
 use azolla::azolla_server::{Azolla, AzollaServer};
 use azolla::*;
 
+// Event types for the events table
+const EVENT_TASK_CREATED: i32 = 1;
+const EVENT_TASK_STARTED: i32 = 2;
+const EVENT_TASK_ENDED: i32 = 3;
+const EVENT_TASK_ATTEMPT_STARTED: i32 = 4;
+const EVENT_TASK_ATTEMPT_ENDED: i32 = 5;
+
 pub struct MyAzollaService {
     pool: PgPool,
+    registry: Arc<TaskSetRegistry>,
 }
 
 impl MyAzollaService {
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self { 
+            pool,
+            registry: Arc::new(TaskSetRegistry::new()),
+        }
+    }
+
+    pub async fn initialize(&self) -> Result<()> {
+        // Load existing tasks from database into the registry
+        // Note: We initialize from task_instance table, but new operations only write to events table
+        // A separate periodic process will sync events back to task_instance table
+        self.registry.load_from_db(&self.pool).await?;
+        info!("TaskSetRegistry initialized with {} domains (from task_instance table)", 
+              self.registry.domains().count());
+        Ok(())
+    }
+
+    /// Get a reference to the TaskSetRegistry for debugging/monitoring
+    pub fn registry(&self) -> &Arc<TaskSetRegistry> {
+        &self.registry
+    }
+
+    /// Merge events from the events table to task_instance and task_attempts tables
+    /// This method can be called periodically or on-demand to sync the event log
+    pub async fn merge_events_to_db(&self) -> Result<()> {
+        self.registry.merge_events_to_db(&self.pool).await
     }
 }
 
@@ -30,7 +65,7 @@ impl Azolla for MyAzollaService {
         request: Request<CreateTaskRequest>,
     ) -> Result<Response<CreateTaskResponse>, Status> {
         let req = request.into_inner();
-        log::info!("Creating task: {}", req.name);
+        info!("Creating task: {} in domain: {}", req.name, req.domain);
 
         let client = self.pool.get().await.map_err(|e| {
             log::error!("Failed to get DB client: {}", e);
@@ -47,23 +82,53 @@ impl Azolla for MyAzollaService {
             .as_ref()
             .and_then(|id_str| Uuid::parse_str(id_str).ok());
 
-        // Here you would insert into your database
-        // For now, just log the values
-        info!("Task ID: {}", task_id);
-        info!("Flow Instance ID: {:?}", flow_instance_id);
+        // Create an event in the events table (event-sourcing pattern)
+        let event_metadata = serde_json::json!({
+            "task_id": task_id,
+            "task_name": req.name,
+            "created_by": "grpc_api",
+            "retry_policy": retry_policy,
+            "args": req.args,
+            "kwargs": kwargs,
+            "flow_instance_id": flow_instance_id
+        });
 
         client
             .execute(
-                "INSERT INTO task_instance (id, name, domain, retry_policy, args, kwargs, status, flow_instance_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-                &[&task_id, &req.name, &req.domain, &Json(&retry_policy), &req.args, &Json(&kwargs), &0i16, &flow_instance_id],
+                "INSERT INTO events (domain, task_instance_id, flow_instance_id, event_type, created_at, metadata) 
+                 VALUES ($1, $2, $3, $4, $5, $6)",
+                &[&req.domain, &task_id, &flow_instance_id, &EVENT_TASK_CREATED, &Utc::now(), &Json(&event_metadata)],
             )
             .await
             .map_err(|e| {
-                log::error!("Failed to create task: {}", e);
-                Status::internal("Failed to create task")
+                log::error!("Failed to create event: {}", e);
+                Status::internal("Failed to create event")
             })?;
+
+        // Update the in-memory TaskSet (source of truth for current state)
+        let task = Task {
+            id: task_id,
+            name: req.name.clone(),
+            created_at: Utc::now(),
+            flow_instance_id,
+            retry_policy,
+            args: req.args,
+            kwargs,
+            status: 0, // Created status
+            attempts: Vec::new(),
+        };
+
+        // Get or create the domain and insert the task
+        {
+            let mut domain_ref = self.registry.get_or_create_domain(&req.domain);
+            domain_ref.upsert_task(task);
+        }
+
+        info!("Successfully created task {} in domain {} (event-sourced)", task_id, req.domain);
         
-        Ok(Response::new(CreateTaskResponse { task_id: task_id.to_string() }))
+        Ok(Response::new(CreateTaskResponse { 
+            task_id: task_id.to_string() 
+        }))
     }
 
     async fn wait_for_task(
@@ -112,7 +177,11 @@ impl Azolla for MyAzollaService {
     }
 }
 
-pub fn create_server(pool: PgPool) -> AzollaServer<MyAzollaService> {
+pub async fn create_server(pool: PgPool) -> Result<AzollaServer<MyAzollaService>> {
     let service = MyAzollaService::new(pool);
-    AzollaServer::new(service)
+    
+    // Initialize the TaskSetRegistry by loading from database
+    service.initialize().await?;
+    
+    Ok(AzollaServer::new(service))
 } 
