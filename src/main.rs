@@ -3,6 +3,7 @@ use tonic::transport::Server;
 
 mod db;
 mod server;
+mod taskset;
 
 use db::{create_pool, run_migrations, Settings};
 use server::create_server;
