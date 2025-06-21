@@ -25,6 +25,7 @@ testcontainers = "0.24.0"
 openssl = { version = "0.10", features = ["vendored"] }
 postgres-openssl = "0.5"
 uuid = { version = "1.0", features = ["v4", "serde"] }
+clap = { version = "4.0", features = ["derive"] }
 
 [build-dependencies]
 tonic-build = "0.11"

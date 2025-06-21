@@ -17,11 +17,11 @@ use azolla::azolla_server::{Azolla, AzollaServer};
 use azolla::*;
 
 // Event types for the events table
-const EVENT_TASK_CREATED: i32 = 1;
-const EVENT_TASK_STARTED: i32 = 2;
-const EVENT_TASK_ENDED: i32 = 3;
-const EVENT_TASK_ATTEMPT_STARTED: i32 = 4;
-const EVENT_TASK_ATTEMPT_ENDED: i32 = 5;
+const EVENT_TASK_CREATED: i16 = 1;
+const EVENT_TASK_STARTED: i16 = 2;
+const EVENT_TASK_ENDED: i16 = 3;
+const EVENT_TASK_ATTEMPT_STARTED: i16 = 4;
+const EVENT_TASK_ATTEMPT_ENDED: i16 = 5;
 
 pub struct MyAzollaService {
     pool: PgPool,

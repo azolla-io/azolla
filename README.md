@@ -195,7 +195,7 @@ url = "postgresql://localhost/azolla"
 max_connections = 100
 
 [server]
-bind_address = "0.0.0.0:50051"
+bind_address = "0.0.0.0:52710"
 web_ui_port = 8080
 
 [scheduler]
@@ -212,7 +212,7 @@ tracing_endpoint = "http://jaeger:14268"
 from azolla import configure
 
 configure(
-    broker_url='grpc://localhost:50051',
+    broker_url='grpc://localhost:52710',
     result_backend='postgresql://localhost/azolla',
     task_default_retry_delay=60,
     task_default_max_retries=3
@@ -232,7 +232,7 @@ The recommended way to run a local development environment is using Docker Compo
     ```bash
     docker-compose up --build
     ```
-    The Azolla gRPC server will be available on port `50051`. Any changes to the source code will require rebuilding the container.
+    The Azolla gRPC server will be available on port `52710`. Any changes to the source code will require rebuilding the container.
 
 ### Running Tests
 To run the test suite:

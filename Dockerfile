@@ -25,7 +25,7 @@ COPY config ./config
 COPY migrations ./migrations
 
 # Expose the gRPC port
-EXPOSE 50051
+EXPOSE 52710
 
 # Set the entrypoint
 CMD ["/usr/local/bin/azolla"] 
