@@ -30,7 +30,7 @@ services:
       # Set the Rust logger to show info level logs
       - RUST_LOG=info
     ports:
-      - "50051:50051"
+      - "52710:52710"
 
 volumes:
   postgres_data: 
