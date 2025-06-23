@@ -2,6 +2,7 @@ use anyhow::Result;
 use tonic::transport::Server;
 
 mod db;
+mod event_buffer;
 mod server;
 mod taskset;
 

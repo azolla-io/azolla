@@ -4,4 +4,11 @@
 port = 52710
  
 [database]
-url = "postgres://postgres:postgres@localhost:5432/azolla" 
+url = "postgres://postgres:postgres@localhost:5432/azolla"
+
+[event_buffer]
+# Adaptive batching configuration
+max_batch_size = 100          # Maximum batch size for high load
+adaptive_threshold = 10       # Queue depth to trigger batching
+max_wait_time_ms = 1          # Maximum wait time for additional events
+channel_capacity = 1000       # Channel capacity for burst handling 
