@@ -47,27 +47,29 @@ db_test!(test_load_from_db_structure, (|pool| async move {
     registry.load_from_db(&pool).await.unwrap();
 
     // Check structure
-    let mut domains: Vec<_> = registry.domains().map(|entry| entry.key().clone()).collect();
+    let mut domains = registry.domains();
     domains.sort();
     assert_eq!(domains, vec!["domain_a", "domain_b"]);
 
     // domain_a
     let domain_a = registry.get_domain("domain_a").unwrap();
-    let mut tasks_a: Vec<_> = domain_a.all_tasks().map(|t| t.id).collect();
-    tasks_a.sort();
+    let tasks_a = domain_a.all_tasks().await.unwrap();
+    let mut tasks_a_ids: Vec<_> = tasks_a.iter().map(|t| t.id).collect();
+    tasks_a_ids.sort();
     let mut expected_a = vec![task1_id, task2_id];
     expected_a.sort();
-    assert_eq!(tasks_a, expected_a);
-    let task1 = domain_a.get_task(task1_id).unwrap();
+    assert_eq!(tasks_a_ids, expected_a);
+    let task1 = domain_a.get_task(task1_id).await.unwrap().unwrap();
     assert_eq!(task1.attempts.len(), 2);
-    let task2 = domain_a.get_task(task2_id).unwrap();
+    let task2 = domain_a.get_task(task2_id).await.unwrap().unwrap();
     assert_eq!(task2.attempts.len(), 0);
 
     // domain_b
     let domain_b = registry.get_domain("domain_b").unwrap();
-    let tasks_b: Vec<_> = domain_b.all_tasks().map(|t| t.id).collect();
-    assert_eq!(tasks_b, vec![task3_id]);
-    let task3 = domain_b.get_task(task3_id).unwrap();
+    let tasks_b = domain_b.all_tasks().await.unwrap();
+    let tasks_b_ids: Vec<_> = tasks_b.iter().map(|t| t.id).collect();
+    assert_eq!(tasks_b_ids, vec![task3_id]);
+    let task3 = domain_b.get_task(task3_id).await.unwrap().unwrap();
     assert_eq!(task3.attempts.len(), 1);
 }));
 
@@ -100,7 +102,7 @@ db_test!(test_merge_events_to_db_basic, (|pool: PgPool| async move {
     
     // Verify the task was created
     let domain_ref = registry.get_domain(domain).unwrap();
-    let task = domain_ref.get_task(task_id).unwrap();
+    let task = domain_ref.get_task(task_id).await.unwrap().unwrap();
     assert_eq!(task.name, "test_task");
     
     // Check merge_cursor was updated
@@ -270,17 +272,17 @@ db_test!(test_merge_events_to_db_comprehensive, (|pool: PgPool| async move {
     let domain_ref = registry.get_domain(domain).unwrap();
     
     // Case 1: Task 1 - only created
-    let task1 = domain_ref.get_task(task1_id).unwrap();
+    let task1 = domain_ref.get_task(task1_id).await.unwrap().unwrap();
     assert_eq!(task1.name, "task1");
     assert_eq!(task1.attempts.len(), 0);
     
     // Case 2: Task 2 - created and started
-    let task2 = domain_ref.get_task(task2_id).unwrap();
+    let task2 = domain_ref.get_task(task2_id).await.unwrap().unwrap();
     assert_eq!(task2.name, "task2");
     assert_eq!(task2.attempts.len(), 0);
     
     // Case 3: Task 3 - created, started, one attempt started
-    let task3 = domain_ref.get_task(task3_id).unwrap();
+    let task3 = domain_ref.get_task(task3_id).await.unwrap().unwrap();
     assert_eq!(task3.name, "task3");
     assert_eq!(task3.attempts.len(), 1);
     let attempt3_1 = &task3.attempts[0];
@@ -289,7 +291,7 @@ db_test!(test_merge_events_to_db_comprehensive, (|pool: PgPool| async move {
     assert!(attempt3_1.end_time.is_none());
     
     // Case 4: Task 4 - created, started, one attempt started and ended
-    let task4 = domain_ref.get_task(task4_id).unwrap();
+    let task4 = domain_ref.get_task(task4_id).await.unwrap().unwrap();
     assert_eq!(task4.name, "task4");
     assert_eq!(task4.attempts.len(), 1);
     let attempt4_1 = &task4.attempts[0];
@@ -299,7 +301,7 @@ db_test!(test_merge_events_to_db_comprehensive, (|pool: PgPool| async move {
     assert_eq!(attempt4_1.status, 1);
     
     // Case 5: Task 5 - created, started, one attempt started and ended, task ended
-    let task5 = domain_ref.get_task(task5_id).unwrap();
+    let task5 = domain_ref.get_task(task5_id).await.unwrap().unwrap();
     assert_eq!(task5.name, "task5");
     assert_eq!(task5.attempts.len(), 1);
     let attempt5_1 = &task5.attempts[0];
@@ -309,7 +311,7 @@ db_test!(test_merge_events_to_db_comprehensive, (|pool: PgPool| async move {
     assert_eq!(attempt5_1.status, 1);
     
     // Case 6: Task 6 - created, started, two attempts, task ended
-    let task6 = domain_ref.get_task(task6_id).unwrap();
+    let task6 = domain_ref.get_task(task6_id).await.unwrap().unwrap();
     assert_eq!(task6.name, "task6");
     assert_eq!(task6.attempts.len(), 2);
     

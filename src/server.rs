@@ -42,7 +42,7 @@ impl MyAzollaService {
         // A separate periodic process will sync events back to task_instance table
         self.registry.load_from_db(&self.pool).await?;
         info!("TaskSetRegistry initialized with {} domains (from task_instance table)", 
-              self.registry.domains().count());
+              self.registry.domains().len());
         Ok(())
     }
 
@@ -120,8 +120,10 @@ impl Azolla for MyAzollaService {
 
         // Get or create the domain and insert the task
         {
-            let mut domain_ref = self.registry.get_or_create_domain(&req.domain);
-            domain_ref.upsert_task(task);
+            let domain_actor = self.registry.get_or_create_domain(&req.domain);
+            domain_actor.upsert_task(task).await.map_err(|e| {
+                Status::internal(format!("Failed to upsert task: {:?}", e))
+            })?;
         }
 
         info!("Successfully created task {} in domain {} (event-sourced)", task_id, req.domain);
