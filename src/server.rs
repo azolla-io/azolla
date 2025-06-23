@@ -1,7 +1,7 @@
 use crate::db::PgPool;
 use crate::taskset::{TaskSetRegistry, Task};
+use crate::event_buffer::{EventBuffer, EventBufferConfig, EventRecord};
 use anyhow::Result;
-use tokio_postgres::types::Json;
 use tonic::{Request, Response, Status};
 use log::info;
 use uuid::Uuid;
@@ -26,13 +26,16 @@ const EVENT_TASK_ATTEMPT_ENDED: i16 = 5;
 pub struct MyAzollaService {
     pool: PgPool,
     registry: Arc<TaskSetRegistry>,
+    event_buffer: Arc<EventBuffer>,
 }
 
 impl MyAzollaService {
     pub fn new(pool: PgPool) -> Self {
+        let event_buffer = Arc::new(EventBuffer::new(pool.clone(), EventBufferConfig::default()));
         Self { 
             pool,
             registry: Arc::new(TaskSetRegistry::new()),
+            event_buffer,
         }
     }
 
@@ -67,11 +70,6 @@ impl Azolla for MyAzollaService {
         let req = request.into_inner();
         info!("Creating task: {} in domain: {}", req.name, req.domain);
 
-        let client = self.pool.get().await.map_err(|e| {
-            log::error!("Failed to get DB client: {}", e);
-            Status::internal("Database error")
-        })?;
-
         let task_id = Uuid::new_v4();
         let retry_policy: serde_json::Value = serde_json::from_str(&req.retry_policy)
             .unwrap_or(serde_json::json!({}));
@@ -82,7 +80,7 @@ impl Azolla for MyAzollaService {
             .as_ref()
             .and_then(|id_str| Uuid::parse_str(id_str).ok());
 
-        // Create an event in the events table (event-sourcing pattern)
+        // Create event record for adaptive batching
         let event_metadata = serde_json::json!({
             "task_id": task_id,
             "task_name": req.name,
@@ -93,16 +91,22 @@ impl Azolla for MyAzollaService {
             "flow_instance_id": flow_instance_id
         });
 
-        client
-            .execute(
-                "INSERT INTO events (domain, task_instance_id, flow_instance_id, event_type, created_at, metadata) 
-                 VALUES ($1, $2, $3, $4, $5, $6)",
-                &[&req.domain, &task_id, &flow_instance_id, &EVENT_TASK_CREATED, &Utc::now(), &Json(&event_metadata)],
-            )
+        let event_record = EventRecord {
+            domain: req.domain.clone(),
+            task_instance_id: Some(task_id),
+            flow_instance_id,
+            event_type: EVENT_TASK_CREATED,
+            created_at: Utc::now(),
+            metadata: event_metadata,
+        };
+
+        // Write event using adaptive batching - returns when batch is committed
+        self.event_buffer
+            .write_event(event_record)
             .await
             .map_err(|e| {
-                log::error!("Failed to create event: {}", e);
-                Status::internal("Failed to create event")
+                log::error!("Failed to write event: {}", e);
+                Status::internal("Failed to write event")
             })?;
 
         // Update the in-memory TaskSet (source of truth for current state)
