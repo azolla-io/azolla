@@ -2,7 +2,9 @@ use crate::db::PgPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
+#[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(test)]
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{timeout, Duration};
@@ -220,6 +222,7 @@ impl EventBuffer {
         #[cfg(not(test))] _metrics: (),
     ) {
         let mut current_batch = EventBatch::new();
+        let mut pending_small_batches: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
         while let Some(msg) = rx.recv().await {
             match msg {
@@ -259,10 +262,35 @@ impl EventBuffer {
                         #[cfg(not(test))]
                         Self::increment_batch_count(&_metrics);
                         
-                        Self::flush_batch(&pool, batch).await;
+                        if batch.len() == 1 {
+                            // Small batch: async spawn for concurrency
+                            let pool_clone = pool.clone();
+                            let handle = tokio::spawn(async move {
+                                Self::flush_batch(&pool_clone, batch).await;
+                            });
+                            pending_small_batches.push(handle);
+                            
+                            // Periodically clean up completed handles to prevent memory leaks
+                            if pending_small_batches.len() > 10 {
+                                pending_small_batches.retain(|handle| !handle.is_finished());
+                            }
+                        } else {
+                            // Large batch: wait for small batches to complete, then blocking commit
+                            // Wait for all pending small batches to complete
+                            for handle in pending_small_batches.drain(..) {
+                                let _ = handle.await;
+                            }
+                            // Now do blocking large batch commit
+                            Self::flush_batch(&pool, batch).await;
+                        }
                     }
                 }
                 EventBufferMessage::Shutdown => {
+                    // Wait for all pending small batches to complete
+                    for handle in pending_small_batches.drain(..) {
+                        let _ = handle.await;
+                    }
+                    
                     if !current_batch.is_empty() {
                         let batch = std::mem::replace(&mut current_batch, EventBatch::new());
                         
@@ -271,6 +299,7 @@ impl EventBuffer {
                         #[cfg(not(test))]
                         Self::increment_batch_count(&_metrics);
                         
+                        // Always block on shutdown to ensure completion
                         Self::flush_batch(&pool, batch).await;
                     }
                     break;
@@ -367,6 +396,7 @@ impl EventBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db_test;
     use chrono::Utc;
     use serde_json::json;
     use uuid::Uuid;
@@ -411,6 +441,9 @@ mod tests {
         
         assert!(result.is_ok(), "Single event write should succeed");
         
+        // Shutdown to ensure all async flushes complete
+        event_buffer.shutdown().await.unwrap();
+        
         // Verify adaptive batching metrics - should be immediate flush
         assert_eq!(event_buffer.get_batch_count(), 1, "Should have 1 batch flush");
         assert_eq!(event_buffer.get_immediate_flush_count(), 1, "Should be immediate flush (low load)");
@@ -437,6 +470,9 @@ mod tests {
             let result = event_buffer.write_event(event).await;
             assert!(result.is_ok(), "Event write should succeed");
         }
+        
+        // Shutdown to ensure all async flushes complete
+        event_buffer.shutdown().await.unwrap();
         
         // Verify all events were written
         let count = count_events(&pool, "high_load_domain").await;
@@ -486,6 +522,9 @@ mod tests {
                 assert!(result.is_ok(), "Concurrent write should succeed");
             }
         }
+        
+        // Shutdown to ensure all async flushes complete
+        event_buffer.shutdown().await.unwrap();
         
         // Verify efficient batching occurred
         let total_events = num_writers * events_per_writer;
