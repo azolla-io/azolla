@@ -1,6 +1,6 @@
 use crate::db::PgPool;
 use crate::taskset::{TaskSetRegistry, Task};
-use crate::event_buffer::{EventBuffer, EventBufferConfig, EventRecord};
+use crate::event_stream::{EventStream, EventStreamConfig, EventRecord};
 use anyhow::Result;
 use tonic::{Request, Response, Status};
 use log::info;
@@ -26,16 +26,16 @@ const EVENT_TASK_ATTEMPT_ENDED: i16 = 5;
 pub struct MyAzollaService {
     pool: PgPool,
     registry: Arc<TaskSetRegistry>,
-    event_buffer: Arc<EventBuffer>,
+    event_stream: Arc<EventStream>,
 }
 
 impl MyAzollaService {
     pub fn new(pool: PgPool) -> Self {
-        let event_buffer = Arc::new(EventBuffer::new(pool.clone(), EventBufferConfig::default()));
+        let event_stream = Arc::new(EventStream::new(pool.clone(), EventStreamConfig::default()));
         Self { 
             pool,
             registry: Arc::new(TaskSetRegistry::new()),
-            event_buffer,
+            event_stream,
         }
     }
 
@@ -101,7 +101,7 @@ impl Azolla for MyAzollaService {
         };
 
         // Write event using adaptive batching - returns when batch is committed
-        self.event_buffer
+        self.event_stream
             .write_event(event_record)
             .await
             .map_err(|e| {

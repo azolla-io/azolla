@@ -1,6 +1,6 @@
 pub mod db;
 pub mod taskset;
-pub mod event_buffer;
+pub mod event_stream;
 
 #[cfg(test)]
 #[macro_export]
