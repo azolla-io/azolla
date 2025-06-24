@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
     // Create the gRPC server with initialized TaskSetRegistry
     let (service, grpc_server) = create_server(pool).await?;
     
-    log::info!("Azolla server listening on {}", addr);
+    log::info!("Azolla Orchestrator listening on {}", addr);
 
     // Start the server with graceful shutdown
     let server_future = Server::builder()
@@ -72,7 +72,7 @@ async fn main() -> Result<()> {
     let result = server_future.await;
     
     // Shutdown the service to print metrics
-    log::info!("Server terminated, shutting down service...");
+    log::info!("Orchestrator terminated, shutting down service...");
     if let Err(e) = service.shutdown().await {
         log::error!("Error during service shutdown: {}", e);
     }

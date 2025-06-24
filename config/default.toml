@@ -1,4 +1,4 @@
-# Default configuration for the Azolla server
+# Default configuration for the Azolla Orchestrator
 
 [server]
 port = 52710

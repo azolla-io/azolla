@@ -63,9 +63,9 @@ impl MyAzollaService {
     
     /// Shutdown the service and print metrics
     pub async fn shutdown(&self) -> Result<()> {
-        log::info!("Shutting down Azolla service...");
+        log::info!("Shutting down Azolla Orchestrator service...");
         self.event_stream.shutdown().await?;
-        log::info!("Azolla service shutdown complete");
+        log::info!("Azolla Orchestrator service shutdown complete");
         Ok(())
     }
 }

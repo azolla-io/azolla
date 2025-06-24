@@ -86,7 +86,7 @@ Azolla provides idiomatic clients for multiple languages:
 
 #### Start the Orchestrator
 ```bash
-# Install the Azolla server
+# Install the Azolla Orchestrator
 cargo install azolla-server
 azolla orchestrator --db-url postgres://...
 
@@ -158,7 +158,7 @@ def step_two():
 
 ```bash
 # Start with PostgreSQL connection
-azolla-server --database-url postgresql://user:pass@localhost/azolla
+azolla-orchestrator --database-url postgresql://user:pass@localhost/azolla
 
 # Or with Docker Compose
 docker-compose up -d
@@ -232,7 +232,7 @@ The recommended way to run a local development environment is using Docker Compo
     ```bash
     docker-compose up --build
     ```
-    The Azolla gRPC server will be available on port `52710`. Any changes to the source code will require rebuilding the container.
+    The Azolla Orchestrator gRPC server will be available on port `52710`. Any changes to the source code will require rebuilding the container.
 
 ### Running Tests
 To run the test suite:
