@@ -4,7 +4,7 @@
 port = 52710
  
 [database]
-url = "postgres://postgres:postgres@localhost:5432/azolla"
+url = "postgres://postgres:postgres@127.0.0.1:5432/azolla"
 
 [event_stream]
 # Adaptive batching configuration
