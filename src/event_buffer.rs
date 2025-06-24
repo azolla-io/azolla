@@ -6,7 +6,6 @@ use serde_json::Value as JsonValue;
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(test)]
 use std::sync::Arc;
-use std::sync::OnceLock;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{timeout, Duration};
 use tokio_postgres::types::Json;
@@ -339,11 +338,7 @@ impl EventBuffer {
             return;
         }
 
-        let result = if batch.events.len() == 1 {
-            Self::write_single_event_to_db(pool, &batch.events[0]).await
-        } else {
-            Self::write_batch_to_db(pool, &batch.events).await
-        };
+        let result = Self::write_batch_to_db(pool, &batch.events).await;
         
         if let Err(e) = &result {
             log::error!("Failed to flush {} events: {}", batch.events.len(), e);
@@ -352,75 +347,48 @@ impl EventBuffer {
         batch.notify_completion(&result);
     }
 
-    /// Optimized single event write using prepared statement
-    async fn write_single_event_to_db(pool: &PgPool, event: &EventRecord) -> Result<()> {
-        static PREPARED_STMT: OnceLock<String> = OnceLock::new();
-        
-        let stmt_sql = PREPARED_STMT.get_or_init(|| {
-            "INSERT INTO events (domain, task_instance_id, flow_instance_id, event_type, created_at, metadata) VALUES ($1, $2, $3, $4, $5, $6)".to_string()
-        });
 
-        let client = pool.get().await?;
-        let stmt = client.prepare(stmt_sql).await?;
-        
-        let json_metadata = Json(&event.metadata);
-        
-        client.execute(
-            &stmt,
-            &[
-                &event.domain,
-                &event.task_instance_id,
-                &event.flow_instance_id,
-                &event.event_type,
-                &event.created_at,
-                &json_metadata,
-            ],
-        ).await?;
-
-        Ok(())
-    }
-
-    /// Batch write using single transaction
+    /// Unified write using UNNEST-based prepared statement for all batch sizes
     async fn write_batch_to_db(pool: &PgPool, events: &[EventRecord]) -> Result<()> {
         if events.is_empty() {
             return Ok(());
         }
 
-        let mut client = pool.get().await?;
-        let transaction = client.transaction().await?;
+        const UNNEST_INSERT_STMT: &str = r#"INSERT INTO events (domain, task_instance_id, flow_instance_id, event_type, created_at, metadata)
+               SELECT * FROM UNNEST($1::text[], $2::uuid[], $3::uuid[], $4::int2[], $5::timestamptz[], $6::jsonb[])
+               AS t(domain, task_instance_id, flow_instance_id, event_type, created_at, metadata)"#;
 
-        // Pre-allocate capacity: 6 parameters per event
-        let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::with_capacity(events.len() * 6);
-        let mut values_clauses = Vec::with_capacity(events.len());
-        let mut json_params: Vec<Json<&JsonValue>> = Vec::with_capacity(events.len());
+        let client = pool.get().await?;
+        let stmt = client.prepare(UNNEST_INSERT_STMT).await?;
         
-        for (i, event) in events.iter().enumerate() {
-            let base_idx = i * 6;
-            values_clauses.push(format!(
-                "(${}, ${}, ${}, ${}, ${}, ${})",
-                base_idx + 1, base_idx + 2, base_idx + 3, 
-                base_idx + 4, base_idx + 5, base_idx + 6
-            ));
-            
-            json_params.push(Json(&event.metadata));
+        // Collect data into arrays for UNNEST
+        let mut domains = Vec::with_capacity(events.len());
+        let mut task_ids = Vec::with_capacity(events.len());
+        let mut flow_ids = Vec::with_capacity(events.len());
+        let mut event_types = Vec::with_capacity(events.len());
+        let mut created_ats = Vec::with_capacity(events.len());
+        let mut json_metadatas = Vec::with_capacity(events.len());
+        
+        for event in events {
+            domains.push(event.domain.clone());
+            task_ids.push(event.task_instance_id);
+            flow_ids.push(event.flow_instance_id);
+            event_types.push(event.event_type);
+            created_ats.push(event.created_at);
+            json_metadatas.push(Json(&event.metadata));
         }
 
-        for (i, event) in events.iter().enumerate() {
-            params.push(&event.domain);
-            params.push(&event.task_instance_id);
-            params.push(&event.flow_instance_id);
-            params.push(&event.event_type);
-            params.push(&event.created_at);
-            params.push(&json_params[i]);
-        }
-
-        let query = format!(
-            "INSERT INTO events (domain, task_instance_id, flow_instance_id, event_type, created_at, metadata) VALUES {}",
-            values_clauses.join(", ")
-        );
-
-        transaction.execute(&query, &params).await?;
-        transaction.commit().await?;
+        client.execute(
+            &stmt,
+            &[
+                &domains,
+                &task_ids,
+                &flow_ids,
+                &event_types,
+                &created_ats,
+                &json_metadatas,
+            ],
+        ).await?;
 
         Ok(())
     }
