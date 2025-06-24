@@ -23,6 +23,7 @@ const EVENT_TASK_ENDED: i16 = 3;
 const EVENT_TASK_ATTEMPT_STARTED: i16 = 4;
 const EVENT_TASK_ATTEMPT_ENDED: i16 = 5;
 
+#[derive(Clone)]
 pub struct MyAzollaService {
     pool: PgPool,
     registry: Arc<TaskSetRegistry>,
@@ -58,6 +59,20 @@ impl MyAzollaService {
     /// This method can be called periodically or on-demand to sync the event log
     pub async fn merge_events_to_db(&self) -> Result<()> {
         self.registry.merge_events_to_db(&self.pool).await
+    }
+    
+    /// Shutdown the service and print metrics
+    pub async fn shutdown(&self) -> Result<()> {
+        log::info!("Shutting down Azolla service...");
+        self.event_stream.shutdown().await?;
+        log::info!("Azolla service shutdown complete");
+        Ok(())
+    }
+}
+
+impl Drop for MyAzollaService {
+    fn drop(&mut self) {
+        log::info!("MyAzollaService dropping");
     }
 }
 
@@ -183,11 +198,14 @@ impl Azolla for MyAzollaService {
     }
 }
 
-pub async fn create_server(pool: PgPool) -> Result<AzollaServer<MyAzollaService>> {
+pub async fn create_server(pool: PgPool) -> Result<(MyAzollaService, AzollaServer<MyAzollaService>)> {
     let service = MyAzollaService::new(pool);
     
     // Initialize the TaskSetRegistry by loading from database
     service.initialize().await?;
     
-    Ok(AzollaServer::new(service))
+    // Clone the service for the server (since AzollaServer takes ownership)
+    let server = AzollaServer::new(service.clone());
+    
+    Ok((service, server))
 } 
