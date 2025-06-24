@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 /// Adaptive batching configuration
 #[derive(Clone, Debug)]
-pub struct EventBufferConfig {
+pub struct EventStreamConfig {
     /// Maximum batch size for high load scenarios
     pub max_batch_size: usize,
     /// Queue depth threshold to trigger batching (events/sec indicator)
@@ -24,7 +24,7 @@ pub struct EventBufferConfig {
     pub channel_capacity: usize,
 }
 
-impl Default for EventBufferConfig {
+impl Default for EventStreamConfig {
     fn default() -> Self {
         Self {
             max_batch_size: 100,
@@ -47,7 +47,7 @@ pub struct EventRecord {
 }
 
 #[derive(Debug)]
-enum EventBufferMessage {
+enum EventStreamMessage {
     WriteEvent {
         event: EventRecord,
         completion_tx: oneshot::Sender<Result<()>>,
@@ -94,17 +94,17 @@ impl EventBatch {
     }
 }
 
-/// Adaptive event buffer for high-throughput scenarios
+/// Adaptive event stream for high-throughput scenarios
 /// - Low load: immediate commits
 /// - High load: automatic batching based on queue depth
-pub struct EventBuffer {
-    tx: mpsc::Sender<EventBufferMessage>,
+pub struct EventStream {
+    tx: mpsc::Sender<EventStreamMessage>,
     _handle: tokio::task::JoinHandle<()>,
     #[cfg(test)]
     metrics: Arc<BufferMetrics>,
 }
 
-impl Clone for EventBuffer {
+impl Clone for EventStream {
     fn clone(&self) -> Self {
         Self {
             tx: self.tx.clone(),
@@ -123,8 +123,8 @@ struct BufferMetrics {
     immediate_flush_count: AtomicU64,
 }
 
-impl EventBuffer {
-    pub fn new(pool: PgPool, config: EventBufferConfig) -> Self {
+impl EventStream {
+    pub fn new(pool: PgPool, config: EventStreamConfig) -> Self {
         let (tx, rx) = mpsc::channel(config.channel_capacity);
         
         #[cfg(test)]
@@ -134,7 +134,7 @@ impl EventBuffer {
             immediate_flush_count: AtomicU64::new(0),
         });
         
-        let handle = tokio::spawn(Self::run_adaptive_buffer(
+        let handle = tokio::spawn(Self::run_adaptive_stream(
             pool, 
             config, 
             rx,
@@ -155,23 +155,23 @@ impl EventBuffer {
         let (completion_tx, completion_rx) = oneshot::channel();
         
         self.tx
-            .send(EventBufferMessage::WriteEvent {
+            .send(EventStreamMessage::WriteEvent {
                 event,
                 completion_tx,
             })
             .await
-            .map_err(|_| anyhow::anyhow!("EventBuffer channel closed"))?;
+            .map_err(|_| anyhow::anyhow!("EventStream channel closed"))?;
         
         completion_rx
             .await
-            .map_err(|_| anyhow::anyhow!("EventBuffer completion channel closed"))?
+            .map_err(|_| anyhow::anyhow!("EventStream completion channel closed"))?
     }
 
     pub async fn shutdown(&self) -> Result<()> {
         self.tx
-            .send(EventBufferMessage::Shutdown)
+            .send(EventStreamMessage::Shutdown)
             .await
-            .map_err(|_| anyhow::anyhow!("EventBuffer channel closed"))
+            .map_err(|_| anyhow::anyhow!("EventStream channel closed"))
     }
 
     #[cfg(test)]
@@ -214,10 +214,10 @@ impl EventBuffer {
     fn increment_immediate_flush_count(_metrics: &()) {}
 
     /// Adaptive batching actor: immediate commits when idle, batching when busy
-    async fn run_adaptive_buffer(
+    async fn run_adaptive_stream(
         pool: PgPool,
-        config: EventBufferConfig,
-        mut rx: mpsc::Receiver<EventBufferMessage>,
+        config: EventStreamConfig,
+        mut rx: mpsc::Receiver<EventStreamMessage>,
         #[cfg(test)] metrics: Arc<BufferMetrics>,
         #[cfg(not(test))] _metrics: (),
     ) {
@@ -226,7 +226,7 @@ impl EventBuffer {
 
         while let Some(msg) = rx.recv().await {
             match msg {
-                EventBufferMessage::WriteEvent { event, completion_tx } => {
+                EventStreamMessage::WriteEvent { event, completion_tx } => {
                     current_batch.add_event(event, completion_tx);
 
                     // Adaptive batching logic
@@ -286,7 +286,7 @@ impl EventBuffer {
                         }
                     }
                 }
-                EventBufferMessage::Shutdown => {
+                EventStreamMessage::Shutdown => {
                     // Wait for all pending handles to complete
                     for handle in pending_handles.drain(..) {
                         let _ = handle.await;
@@ -311,19 +311,19 @@ impl EventBuffer {
 
     /// Wait briefly for additional events during medium load
     async fn wait_for_more_events(
-        rx: &mut mpsc::Receiver<EventBufferMessage>,
+        rx: &mut mpsc::Receiver<EventStreamMessage>,
         current_batch: &mut EventBatch,
-        config: &EventBufferConfig,
+        config: &EventStreamConfig,
     ) -> bool {
         let wait_result = timeout(config.max_wait_time, rx.recv()).await;
         
         match wait_result {
-            Ok(Some(EventBufferMessage::WriteEvent { event, completion_tx })) => {
+            Ok(Some(EventStreamMessage::WriteEvent { event, completion_tx })) => {
                 current_batch.add_event(event, completion_tx);
                 // Check if we should continue waiting or flush now
                 current_batch.len() >= config.max_batch_size || rx.len() < config.adaptive_threshold
             }
-            Ok(Some(EventBufferMessage::Shutdown)) => {
+            Ok(Some(EventStreamMessage::Shutdown)) => {
                 // Shutdown received, flush current batch
                 true
             }
@@ -433,28 +433,28 @@ mod tests {
     }
 
     db_test!(test_low_load_immediate_flush, (|pool: crate::db::PgPool| async move {
-        let config = EventBufferConfig {
+        let config = EventStreamConfig {
             max_batch_size: 10,
             adaptive_threshold: 5,
             max_wait_time: Duration::from_millis(1),
             channel_capacity: 100,
         };
 
-        let event_buffer = EventBuffer::new(pool.clone(), config);
+        let event_stream = EventStream::new(pool.clone(), config);
         
         // Single event should trigger immediate flush (low load)
         let event = create_test_event("low_load_domain", "single_task");
-        let result = event_buffer.write_event(event).await;
+        let result = event_stream.write_event(event).await;
         
         assert!(result.is_ok(), "Single event write should succeed");
         
         // Shutdown to ensure all async flushes complete
-        event_buffer.shutdown().await.unwrap();
+        event_stream.shutdown().await.unwrap();
         
         // Verify adaptive batching metrics - should be immediate flush
-        assert_eq!(event_buffer.get_batch_count(), 1, "Should have 1 batch flush");
-        assert_eq!(event_buffer.get_immediate_flush_count(), 1, "Should be immediate flush (low load)");
-        assert_eq!(event_buffer.get_wait_count(), 0, "Should not wait for low load");
+        assert_eq!(event_stream.get_batch_count(), 1, "Should have 1 batch flush");
+        assert_eq!(event_stream.get_immediate_flush_count(), 1, "Should be immediate flush (low load)");
+        assert_eq!(event_stream.get_wait_count(), 0, "Should not wait for low load");
         
         // Verify event was written to database
         let count = count_events(&pool, "low_load_domain").await;
@@ -462,43 +462,43 @@ mod tests {
     }));
 
     db_test!(test_high_load_immediate_batch_flush, (|pool: crate::db::PgPool| async move {
-        let config = EventBufferConfig {
+        let config = EventStreamConfig {
             max_batch_size: 5,  // Small batch size for testing
             adaptive_threshold: 3,
             max_wait_time: Duration::from_millis(1),
             channel_capacity: 100,
         };
 
-        let event_buffer = EventBuffer::new(pool.clone(), config);
+        let event_stream = EventStream::new(pool.clone(), config);
         
         // Send events one at a time to see if batching works properly
         for i in 0..5 {
             let event = create_test_event("high_load_domain", &format!("task_{}", i));
-            let result = event_buffer.write_event(event).await;
+            let result = event_stream.write_event(event).await;
             assert!(result.is_ok(), "Event write should succeed");
         }
         
         // Shutdown to ensure all async flushes complete
-        event_buffer.shutdown().await.unwrap();
+        event_stream.shutdown().await.unwrap();
         
         // Verify all events were written
         let count = count_events(&pool, "high_load_domain").await;
         assert_eq!(count, 5, "All 5 events should be written");
         
         // The batching behavior depends on timing - we just verify events were processed
-        assert!(event_buffer.get_batch_count() >= 1, "Should have at least 1 batch flush");
-        assert!(event_buffer.get_batch_count() <= 5, "Should not exceed number of events");
+        assert!(event_stream.get_batch_count() >= 1, "Should have at least 1 batch flush");
+        assert!(event_stream.get_batch_count() <= 5, "Should not exceed number of events");
     }));
 
     db_test!(test_concurrent_access_batching, (|pool: crate::db::PgPool| async move {
-        let config = EventBufferConfig {
+        let config = EventStreamConfig {
             max_batch_size: 8,
             adaptive_threshold: 4,
             max_wait_time: Duration::from_millis(1),
             channel_capacity: 200,
         };
 
-        let event_buffer = EventBuffer::new(pool.clone(), config);
+        let event_stream = EventStream::new(pool.clone(), config);
         
         // Multiple concurrent writers to test thread safety
         let num_writers = 10;
@@ -506,7 +506,7 @@ mod tests {
         let mut handles = Vec::new();
         
         for writer_id in 0..num_writers {
-            let buffer = event_buffer.clone();
+            let buffer = event_stream.clone();
             let handle = tokio::spawn(async move {
                 let mut results = Vec::new();
                 for event_id in 0..events_per_writer {
@@ -531,11 +531,11 @@ mod tests {
         }
         
         // Shutdown to ensure all async flushes complete
-        event_buffer.shutdown().await.unwrap();
+        event_stream.shutdown().await.unwrap();
         
         // Verify efficient batching occurred
         let total_events = num_writers * events_per_writer;
-        let batch_count = event_buffer.get_batch_count();
+        let batch_count = event_stream.get_batch_count();
         
         // Should have fewer batches than total events (proving batching efficiency)
         assert!(batch_count < total_events as u64, 
