@@ -222,7 +222,7 @@ impl EventBuffer {
         #[cfg(not(test))] _metrics: (),
     ) {
         let mut current_batch = EventBatch::new();
-        let mut pending_small_batches: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+        let mut pending_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
         while let Some(msg) = rx.recv().await {
             match msg {
@@ -262,32 +262,33 @@ impl EventBuffer {
                         #[cfg(not(test))]
                         Self::increment_batch_count(&_metrics);
                         
-                        if batch.len() == 1 {
-                            // Small batch: async spawn for concurrency
-                            let pool_clone = pool.clone();
-                            let handle = tokio::spawn(async move {
-                                Self::flush_batch(&pool_clone, batch).await;
-                            });
-                            pending_small_batches.push(handle);
-                            
-                            // Periodically clean up completed handles to prevent memory leaks
-                            if pending_small_batches.len() > 10 {
-                                pending_small_batches.retain(|handle| !handle.is_finished());
+                        // Unified: acquire connection in actor loop for backpressure
+                        let pool_clone = pool.clone();
+                        match pool_clone.get().await {
+                            Ok(connection) => {
+                                // Spawn with guaranteed connection
+                                let handle = tokio::spawn(async move {
+                                    let result = Self::write_batch_to_db_with_connection(connection, &batch.events).await;
+                                    batch.notify_completion(&result);
+                                });
+                                pending_handles.push(handle);
+                                
+                                // Clean up completed handles
+                                if pending_handles.len() > 10 {
+                                    pending_handles.retain(|handle| !handle.is_finished());
+                                }
                             }
-                        } else {
-                            // Large batch: wait for small batches to complete, then blocking commit
-                            // Wait for all pending small batches to complete
-                            for handle in pending_small_batches.drain(..) {
-                                let _ = handle.await;
+                            Err(e) => {
+                                // Connection pool error - notify batch completion with error
+                                let error_result = Err(anyhow::anyhow!("Failed to get connection: {}", e));
+                                batch.notify_completion(&error_result);
                             }
-                            // Now do blocking large batch commit
-                            Self::flush_batch(&pool, batch).await;
                         }
                     }
                 }
                 EventBufferMessage::Shutdown => {
-                    // Wait for all pending small batches to complete
-                    for handle in pending_small_batches.drain(..) {
+                    // Wait for all pending handles to complete
+                    for handle in pending_handles.drain(..) {
                         let _ = handle.await;
                     }
                     
@@ -338,7 +339,10 @@ impl EventBuffer {
             return;
         }
 
-        let result = Self::write_batch_to_db(pool, &batch.events).await;
+        let result = match pool.get().await {
+            Ok(client) => Self::write_batch_to_db_with_connection(client, &batch.events).await,
+            Err(e) => Err(anyhow::anyhow!("Failed to get connection: {}", e)),
+        };
         
         if let Err(e) = &result {
             log::error!("Failed to flush {} events: {}", batch.events.len(), e);
@@ -348,8 +352,11 @@ impl EventBuffer {
     }
 
 
-    /// Unified write using UNNEST-based prepared statement for all batch sizes
-    async fn write_batch_to_db(pool: &PgPool, events: &[EventRecord]) -> Result<()> {
+    /// Write using connection acquired in actor loop for backpressure
+    async fn write_batch_to_db_with_connection(
+        client: deadpool_postgres::Object,
+        events: &[EventRecord],
+    ) -> Result<()> {
         if events.is_empty() {
             return Ok(());
         }
@@ -358,7 +365,6 @@ impl EventBuffer {
                SELECT * FROM UNNEST($1::text[], $2::uuid[], $3::uuid[], $4::int2[], $5::timestamptz[], $6::jsonb[])
                AS t(domain, task_instance_id, flow_instance_id, event_type, created_at, metadata)"#;
 
-        let client = pool.get().await?;
         let stmt = client.prepare(UNNEST_INSERT_STMT).await?;
         
         // Collect data into arrays for UNNEST

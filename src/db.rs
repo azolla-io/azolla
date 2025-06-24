@@ -14,6 +14,8 @@ mod migrations {
 #[derive(Debug, Deserialize, Clone)]
 pub struct Database {
     pub url: String,
+    #[serde(default = "default_pool_size")]
+    pub pool_size: usize,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -25,6 +27,10 @@ pub struct Server {
 pub struct Settings {
     pub database: Database,
     pub server: Server,
+}
+
+fn default_pool_size() -> usize {
+    8
 }
 
 impl Settings {
@@ -45,7 +51,9 @@ pub fn create_pool(settings: &Settings) -> Result<PgPool> {
     // Check if SSL is disabled in the connection string
     if pg_config.get_ssl_mode() == tokio_postgres::config::SslMode::Disable {
         let manager = Manager::new(pg_config, NoTls);
-        let pool = Pool::builder(manager).build()?;
+        let pool = Pool::builder(manager)
+            .max_size(settings.database.pool_size)
+            .build()?;
         Ok(pool)
     } else {
         let mut builder = SslConnector::builder(SslMethod::tls())?;
@@ -54,7 +62,9 @@ pub fn create_pool(settings: &Settings) -> Result<PgPool> {
         let connector = MakeTlsConnector::new(builder.build());
 
         let manager = Manager::new(pg_config, connector);
-        let pool = Pool::builder(manager).build()?;
+        let pool = Pool::builder(manager)
+            .max_size(settings.database.pool_size)
+            .build()?;
         Ok(pool)
     }
 }
