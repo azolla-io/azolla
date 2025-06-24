@@ -41,7 +41,7 @@ macro_rules! db_test {
 
             // 3. Create your settings struct and pool
             let settings = Settings {
-                database: Database { url: db_url },
+                database: Database { url: db_url, pool_size: 8 },
                 server: Server { port: 0 }, // dummy
             };
             let pool = create_pool(&settings).unwrap();
