@@ -10,8 +10,10 @@ This command performs an intelligent git commit by analyzing changes and followi
    - A concise one-sentence title describing the main change
    - Bullet points for all important changes (ignore minor ones)
    - Follow conventional commit best practices (feat:, fix:, refactor:, etc.)
-4. **Create commit**: Execute the commit with the generated message
-5. **Verify**: Run `git status` to confirm the commit succeeded
+4. **Present for review**: Show the proposed commit message to the user and ask for confirmation
+5. **Wait for approval**: Do NOT commit until the user explicitly approves the message
+6. **Create commit**: Only after user confirmation, execute the commit with the approved message
+7. **Verify**: Run `git status` to confirm the commit succeeded
 
 ## Commit Message Format
 
@@ -30,6 +32,8 @@ This command performs an intelligent git commit by analyzing changes and followi
 - Use clear, descriptive commit messages
 - Do NOT include any Claude Code promotional signatures
 - Focus on the most impactful changes in bullet points
+- **ALWAYS ask for user confirmation before committing**
+- Wait for explicit approval ("yes", "commit", "proceed", etc.) before executing commit
 
 ## Safety Checks
 
