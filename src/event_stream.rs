@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(test)]
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::{timeout, Duration};
+use tokio::time::{timeout, Duration, Instant};
 use tokio_postgres::types::Json;
 use uuid::Uuid;
 
@@ -223,113 +223,113 @@ impl EventStream {
     ) {
         let mut current_batch = EventBatch::new();
         let mut pending_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+        let mut last_flush_time = Instant::now();
 
-        while let Some(msg) = rx.recv().await {
-            match msg {
-                EventStreamMessage::WriteEvent { event, completion_tx } => {
-                    current_batch.add_event(event, completion_tx);
+        loop {
+            // Wrap the message receive in a timeout to check for flush timing
+            let msg_result = timeout(config.max_wait_time, rx.recv()).await;
+            
+            match msg_result {
+                Ok(Some(msg)) => {
+                    match msg {
+                        EventStreamMessage::WriteEvent { event, completion_tx } => {
+                            current_batch.add_event(event, completion_tx);
 
-                    // Adaptive batching logic
-                    let should_flush = if current_batch.len() >= config.max_batch_size {
-                        // High load: batch is full, flush immediately
-                        #[cfg(test)]
-                        Self::increment_immediate_flush_count(&metrics);
-                        #[cfg(not(test))]
-                        Self::increment_immediate_flush_count(&_metrics);
-                        true
-                    } else if rx.len() < config.adaptive_threshold {
-                        // Low load: few events queued, flush immediately
-                        #[cfg(test)]
-                        Self::increment_immediate_flush_count(&metrics);
-                        #[cfg(not(test))]
-                        Self::increment_immediate_flush_count(&_metrics);
-                        true
-                    } else {
-                        // Medium load: wait briefly for more events
+                            // Check immediate flush conditions
+                            let should_flush = current_batch.len() >= config.max_batch_size ||
+                                             rx.len() < config.adaptive_threshold;
+
+                            if should_flush {
+                                #[cfg(test)]
+                                Self::increment_immediate_flush_count(&metrics);
+                                #[cfg(not(test))]
+                                Self::increment_immediate_flush_count(&_metrics);
+                                
+                                Self::flush_batch_async(&mut current_batch, &pool, &mut pending_handles,
+                                                      #[cfg(test)] &metrics, #[cfg(not(test))] &_metrics).await;
+                                last_flush_time = Instant::now();
+                            }
+                        }
+                        EventStreamMessage::Shutdown => {
+                            // Wait for all pending handles to complete
+                            for handle in pending_handles.drain(..) {
+                                let _ = handle.await;
+                            }
+                            
+                            if !current_batch.is_empty() {
+                                let batch = std::mem::replace(&mut current_batch, EventBatch::new());
+                                
+                                #[cfg(test)]
+                                Self::increment_batch_count(&metrics);
+                                #[cfg(not(test))]
+                                Self::increment_batch_count(&_metrics);
+                                
+                                // Always block on shutdown to ensure completion
+                                Self::flush_batch(&pool, batch).await;
+                            }
+                            break;
+                        }
+                    }
+                }
+                Ok(None) => {
+                    // Channel closed, exit the loop
+                    break;
+                }
+                Err(_) => {
+                    // Timeout occurred - check if we need to flush due to time elapsed
+                    if !current_batch.is_empty() && last_flush_time.elapsed() >= config.max_wait_time {
                         #[cfg(test)]
                         Self::increment_wait_count(&metrics);
                         #[cfg(not(test))]
                         Self::increment_wait_count(&_metrics);
                         
-                        Self::wait_for_more_events(&mut rx, &mut current_batch, &config).await
-                    };
-
-                    if should_flush {
-                        let batch = std::mem::replace(&mut current_batch, EventBatch::new());
-                        
-                        #[cfg(test)]
-                        Self::increment_batch_count(&metrics);
-                        #[cfg(not(test))]
-                        Self::increment_batch_count(&_metrics);
-                        
-                        // Unified: acquire connection in actor loop for backpressure
-                        let pool_clone = pool.clone();
-                        match pool_clone.get().await {
-                            Ok(connection) => {
-                                // Spawn with guaranteed connection
-                                let handle = tokio::spawn(async move {
-                                    let result = Self::write_batch_to_db_with_connection(connection, &batch.events).await;
-                                    batch.notify_completion(&result);
-                                });
-                                pending_handles.push(handle);
-                                
-                                // Clean up completed handles
-                                if pending_handles.len() > 10 {
-                                    pending_handles.retain(|handle| !handle.is_finished());
-                                }
-                            }
-                            Err(e) => {
-                                // Connection pool error - notify batch completion with error
-                                let error_result = Err(anyhow::anyhow!("Failed to get connection: {}", e));
-                                batch.notify_completion(&error_result);
-                            }
-                        }
+                        Self::flush_batch_async(&mut current_batch, &pool, &mut pending_handles,
+                                              #[cfg(test)] &metrics, #[cfg(not(test))] &_metrics).await;
+                        last_flush_time = Instant::now();
                     }
-                }
-                EventStreamMessage::Shutdown => {
-                    // Wait for all pending handles to complete
-                    for handle in pending_handles.drain(..) {
-                        let _ = handle.await;
-                    }
-                    
-                    if !current_batch.is_empty() {
-                        let batch = std::mem::replace(&mut current_batch, EventBatch::new());
-                        
-                        #[cfg(test)]
-                        Self::increment_batch_count(&metrics);
-                        #[cfg(not(test))]
-                        Self::increment_batch_count(&_metrics);
-                        
-                        // Always block on shutdown to ensure completion
-                        Self::flush_batch(&pool, batch).await;
-                    }
-                    break;
                 }
             }
         }
     }
 
-    /// Wait briefly for additional events during medium load
-    async fn wait_for_more_events(
-        rx: &mut mpsc::Receiver<EventStreamMessage>,
+    /// Helper to flush batch asynchronously
+    async fn flush_batch_async(
         current_batch: &mut EventBatch,
-        config: &EventStreamConfig,
-    ) -> bool {
-        let wait_result = timeout(config.max_wait_time, rx.recv()).await;
+        pool: &PgPool,
+        pending_handles: &mut Vec<tokio::task::JoinHandle<()>>,
+        #[cfg(test)] metrics: &Arc<BufferMetrics>,
+        #[cfg(not(test))] _metrics: &(),
+    ) {
+        if current_batch.is_empty() {
+            return;
+        }
         
-        match wait_result {
-            Ok(Some(EventStreamMessage::WriteEvent { event, completion_tx })) => {
-                current_batch.add_event(event, completion_tx);
-                // Check if we should continue waiting or flush now
-                current_batch.len() >= config.max_batch_size || rx.len() < config.adaptive_threshold
+        let batch = std::mem::replace(current_batch, EventBatch::new());
+        
+        #[cfg(test)]
+        Self::increment_batch_count(metrics);
+        #[cfg(not(test))]
+        Self::increment_batch_count(_metrics);
+        
+        // Acquire connection in actor loop for backpressure
+        match pool.get().await {
+            Ok(connection) => {
+                // Spawn with guaranteed connection
+                let handle = tokio::spawn(async move {
+                    let result = Self::write_batch_to_db_with_connection(connection, &batch.events).await;
+                    batch.notify_completion(&result);
+                });
+                pending_handles.push(handle);
+                
+                // Clean up completed handles
+                if pending_handles.len() > 10 {
+                    pending_handles.retain(|handle| !handle.is_finished());
+                }
             }
-            Ok(Some(EventStreamMessage::Shutdown)) => {
-                // Shutdown received, flush current batch
-                true
-            }
-            Ok(None) | Err(_) => {
-                // Channel closed or timeout, flush current batch
-                true
+            Err(e) => {
+                // Connection pool error - notify batch completion with error
+                let error_result = Err(anyhow::anyhow!("Failed to get connection: {}", e));
+                batch.notify_completion(&error_result);
             }
         }
     }
