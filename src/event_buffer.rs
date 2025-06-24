@@ -6,6 +6,7 @@ use serde_json::Value as JsonValue;
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(test)]
 use std::sync::Arc;
+use std::sync::OnceLock;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{timeout, Duration};
 use tokio_postgres::types::Json;
@@ -338,13 +339,45 @@ impl EventBuffer {
             return;
         }
 
-        let result = Self::write_batch_to_db(pool, &batch.events).await;
+        let result = if batch.events.len() == 1 {
+            Self::write_single_event_to_db(pool, &batch.events[0]).await
+        } else {
+            Self::write_batch_to_db(pool, &batch.events).await
+        };
         
         if let Err(e) = &result {
             log::error!("Failed to flush {} events: {}", batch.events.len(), e);
         }
         
         batch.notify_completion(&result);
+    }
+
+    /// Optimized single event write using prepared statement
+    async fn write_single_event_to_db(pool: &PgPool, event: &EventRecord) -> Result<()> {
+        static PREPARED_STMT: OnceLock<String> = OnceLock::new();
+        
+        let stmt_sql = PREPARED_STMT.get_or_init(|| {
+            "INSERT INTO events (domain, task_instance_id, flow_instance_id, event_type, created_at, metadata) VALUES ($1, $2, $3, $4, $5, $6)".to_string()
+        });
+
+        let client = pool.get().await?;
+        let stmt = client.prepare(stmt_sql).await?;
+        
+        let json_metadata = Json(&event.metadata);
+        
+        client.execute(
+            &stmt,
+            &[
+                &event.domain,
+                &event.task_instance_id,
+                &event.flow_instance_id,
+                &event.event_type,
+                &event.created_at,
+                &json_metadata,
+            ],
+        ).await?;
+
+        Ok(())
     }
 
     /// Batch write using single transaction
