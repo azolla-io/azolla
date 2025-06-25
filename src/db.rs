@@ -48,7 +48,6 @@ pub type PgPool = deadpool_postgres::Pool;
 pub fn create_pool(settings: &Settings) -> Result<PgPool> {
     let pg_config = settings.database.url.parse::<tokio_postgres::Config>()?;
 
-    // Check if SSL is disabled in the connection string
     if pg_config.get_ssl_mode() == tokio_postgres::config::SslMode::Disable {
         let manager = Manager::new(pg_config, NoTls);
         let pool = Pool::builder(manager)
@@ -57,7 +56,6 @@ pub fn create_pool(settings: &Settings) -> Result<PgPool> {
         Ok(pool)
     } else {
         let mut builder = SslConnector::builder(SslMethod::tls())?;
-        // Accept self-signed certs (tests only!)
         builder.set_verify(SslVerifyMode::NONE);
         let connector = MakeTlsConnector::new(builder.build());
 

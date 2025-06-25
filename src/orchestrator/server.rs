@@ -8,7 +8,6 @@ use uuid::Uuid;
 use chrono::Utc;
 use std::sync::Arc;
 
-// Import the generated protobuf code
 pub mod azolla {
     tonic::include_proto!("azolla");
 }
@@ -16,7 +15,6 @@ pub mod azolla {
 use azolla::azolla_server::{Azolla, AzollaServer};
 use azolla::*;
 
-// Event types for the events table
 const EVENT_TASK_CREATED: i16 = 1;
 const EVENT_TASK_STARTED: i16 = 2;
 const EVENT_TASK_ENDED: i16 = 3;
@@ -95,7 +93,6 @@ impl Azolla for MyAzollaService {
             .as_ref()
             .and_then(|id_str| Uuid::parse_str(id_str).ok());
 
-        // Create event record for adaptive batching
         let event_metadata = serde_json::json!({
             "task_id": task_id,
             "task_name": req.name,
@@ -115,7 +112,6 @@ impl Azolla for MyAzollaService {
             metadata: event_metadata,
         };
 
-        // Write event using adaptive batching - returns when batch is committed
         self.event_stream
             .write_event(event_record)
             .await
@@ -124,7 +120,6 @@ impl Azolla for MyAzollaService {
                 Status::internal("Failed to write event")
             })?;
 
-        // Update the in-memory TaskSet (source of truth for current state)
         let task = Task {
             id: task_id,
             name: req.name.clone(),
@@ -133,11 +128,10 @@ impl Azolla for MyAzollaService {
             retry_policy,
             args: req.args,
             kwargs,
-            status: 0, // Created status
+            status: 0,
             attempts: Vec::new(),
         };
 
-        // Get or create the domain and insert the task
         {
             let domain_actor = self.registry.get_or_create_domain(&req.domain);
             domain_actor.upsert_task(task).await.map_err(|e| {
@@ -156,7 +150,6 @@ impl Azolla for MyAzollaService {
         &self,
         _request: Request<WaitForTaskRequest>,
     ) -> Result<Response<WaitForTaskResponse>, Status> {
-        // Placeholder implementation
         Ok(Response::new(WaitForTaskResponse {
             status: "COMPLETED".to_string(),
         }))
@@ -166,7 +159,6 @@ impl Azolla for MyAzollaService {
         &self,
         _request: Request<CreateFlowRequest>,
     ) -> Result<Response<CreateFlowResponse>, Status> {
-        // Placeholder implementation
         let flow_id = Uuid::new_v4();
         Ok(Response::new(CreateFlowResponse { flow_id: flow_id.to_string() }))
     }
@@ -175,7 +167,6 @@ impl Azolla for MyAzollaService {
         &self,
         _request: Request<WaitForFlowRequest>,
     ) -> Result<Response<WaitForFlowResponse>, Status> {
-        // Placeholder implementation
         Ok(Response::new(WaitForFlowResponse {
             status: "COMPLETED".to_string(),
         }))
@@ -185,7 +176,6 @@ impl Azolla for MyAzollaService {
         &self,
         _request: Request<PublishTaskEventRequest>,
     ) -> Result<Response<PublishTaskEventResponse>, Status> {
-        // Placeholder implementation
         Ok(Response::new(PublishTaskEventResponse { success: true }))
     }
 
@@ -193,7 +183,6 @@ impl Azolla for MyAzollaService {
         &self,
         _request: Request<PublishFlowEventRequest>,
     ) -> Result<Response<PublishFlowEventResponse>, Status> {
-        // Placeholder implementation
         Ok(Response::new(PublishFlowEventResponse { success: true }))
     }
 }
@@ -201,10 +190,8 @@ impl Azolla for MyAzollaService {
 pub async fn create_server(pool: PgPool) -> Result<(MyAzollaService, AzollaServer<MyAzollaService>)> {
     let service = MyAzollaService::new(pool);
     
-    // Initialize the TaskSetRegistry by loading from database
     service.initialize().await?;
     
-    // Clone the service for the server (since AzollaServer takes ownership)
     let server = AzollaServer::new(service.clone());
     
     Ok((service, server))
