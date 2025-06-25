@@ -8,7 +8,7 @@ macro_rules! db_test {
                 runners::AsyncRunner,
                 GenericImage, ImageExt,
             };
-            use azolla::db::{Settings, create_pool, run_migrations, Database, Server};
+            use azolla_orchestrator::db::{Settings, create_pool, run_migrations, Database, Server, EventStream};
 
             // 1. Start a fresh Postgres container using testcontainers
             let container = GenericImage::new("postgres", "16-alpine")
@@ -38,6 +38,7 @@ macro_rules! db_test {
             let settings = Settings {
                 database: Database { url: db_url, pool_size: 8 },
                 server: Server { port: 0 }, // dummy
+                event_stream: EventStream::default(),
             };
             let pool = create_pool(&settings).unwrap();
 
