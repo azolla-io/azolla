@@ -3,6 +3,10 @@ name = "azolla"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "azolla-orchestrator"
+path = "src/orchestrator/main.rs"
+
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 tonic = "0.11"

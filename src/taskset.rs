@@ -48,7 +48,6 @@ pub struct Task {
 }
 
 impl Task {
-    /// Reuse memory allocations
     pub fn clear(&mut self) {
         self.id = Uuid::nil();
         self.name.clear();
@@ -176,7 +175,6 @@ impl TaskSet {
         }
     }
 
-    /// Remove gaps (expensive)
     pub fn compact(&mut self) {
         if self.gaps.is_empty() {
             return;
