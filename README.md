@@ -87,11 +87,11 @@ Azolla provides idiomatic clients for multiple languages:
 #### Start the Orchestrator
 ```bash
 # Install the Azolla Orchestrator
-cargo install azolla-server
-azolla orchestrator --db-url postgres://...
+cargo install azolla-orchestrator
+azolla-orchestrator --database-url postgresql://...
 
 # Or using Docker
-docker pull azolla/azolla:latest
+docker pull azolla/azolla-orchestrator:latest
 ```
 
 #### Run a Worker
@@ -192,19 +192,15 @@ Azolla ensures strong durability guarantees:
 ```toml
 [database]
 url = "postgresql://localhost/azolla"
-max_connections = 100
 
 [server]
-bind_address = "0.0.0.0:52710"
-web_ui_port = 8080
+port = 52710
 
-[scheduler]
-batch_size = 1000
-poll_interval = "100ms"
-
-[observability]
-metrics_enabled = true
-tracing_endpoint = "http://jaeger:14268"
+[event_stream]
+max_batch_size = 100
+adaptive_threshold = 10
+max_wait_time_ms = 1
+channel_capacity = 1000
 ```
 
 **Client Configuration:**

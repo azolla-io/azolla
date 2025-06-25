@@ -2,8 +2,9 @@ use anyhow::Result;
 use tonic::transport::Server;
 use tokio::signal;
 
-use azolla::db::{create_pool, run_migrations, Settings};
-use azolla::orchestrator::create_server;
+use azolla_orchestrator::db::{create_pool, run_migrations, Settings};
+use azolla_orchestrator::orchestrator::create_server;
+use azolla_orchestrator::event_stream::EventStreamConfig;
 
 /// Wait for shutdown signal (CTRL+C or SIGTERM)
 async fn shutdown_signal() {
@@ -49,7 +50,8 @@ async fn main() -> Result<()> {
     
     run_migrations(&pool).await?;
 
-    let (service, grpc_server) = create_server(pool).await?;
+    let event_stream_config = EventStreamConfig::from(&settings.event_stream);
+    let (service, grpc_server) = create_server(pool, event_stream_config).await?;
     
     log::info!("Azolla Orchestrator listening on {}", addr);
 

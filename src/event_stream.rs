@@ -33,6 +33,17 @@ impl Default for EventStreamConfig {
     }
 }
 
+impl From<&crate::db::EventStream> for EventStreamConfig {
+    fn from(config: &crate::db::EventStream) -> Self {
+        Self {
+            max_batch_size: config.max_batch_size,
+            adaptive_threshold: config.adaptive_threshold,
+            max_wait_time: Duration::from_millis(config.max_wait_time_ms),
+            channel_capacity: config.channel_capacity,
+        }
+    }
+}
+
 /// Event record for the events table
 #[derive(Debug, Clone)]
 pub struct EventRecord {
@@ -101,15 +112,6 @@ pub struct EventStream {
     metrics: Arc<StreamMetrics>,
 }
 
-impl Clone for EventStream {
-    fn clone(&self) -> Self {
-        Self {
-            tx: self.tx.clone(),
-            _handle: tokio::spawn(async {}),
-            metrics: self.metrics.clone(),
-        }
-    }
-}
 
 #[derive(Debug)]
 struct StreamMetrics {

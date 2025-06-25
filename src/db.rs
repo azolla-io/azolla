@@ -24,9 +24,30 @@ pub struct Server {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct EventStream {
+    pub max_batch_size: usize,
+    pub adaptive_threshold: usize,
+    pub max_wait_time_ms: u64,
+    pub channel_capacity: usize,
+}
+
+impl Default for EventStream {
+    fn default() -> Self {
+        Self {
+            max_batch_size: 100,
+            adaptive_threshold: 10,
+            max_wait_time_ms: 1,
+            channel_capacity: 1000,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct Settings {
     pub database: Database,
     pub server: Server,
+    #[serde(default)]
+    pub event_stream: EventStream,
 }
 
 fn default_pool_size() -> usize {

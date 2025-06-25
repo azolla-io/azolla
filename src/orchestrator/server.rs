@@ -29,8 +29,8 @@ pub struct MyAzollaService {
 }
 
 impl MyAzollaService {
-    pub fn new(pool: PgPool) -> Self {
-        let event_stream = Arc::new(EventStream::new(pool.clone(), EventStreamConfig::default()));
+    pub fn new(pool: PgPool, event_stream_config: EventStreamConfig) -> Self {
+        let event_stream = Arc::new(EventStream::new(pool.clone(), event_stream_config));
         Self { 
             pool,
             registry: Arc::new(TaskSetRegistry::new()),
@@ -85,13 +85,15 @@ impl Azolla for MyAzollaService {
 
         let task_id = Uuid::new_v4();
         let retry_policy: serde_json::Value = serde_json::from_str(&req.retry_policy)
-            .unwrap_or(serde_json::json!({}));
+            .map_err(|e| Status::invalid_argument(format!("Invalid retry_policy JSON: {}", e)))?;
         let kwargs: serde_json::Value = serde_json::from_str(&req.kwargs)
-            .unwrap_or(serde_json::json!({}));
+            .map_err(|e| Status::invalid_argument(format!("Invalid kwargs JSON: {}", e)))?;
 
-        let flow_instance_id = req.flow_instance_id
-            .as_ref()
-            .and_then(|id_str| Uuid::parse_str(id_str).ok());
+        let flow_instance_id = match req.flow_instance_id {
+            Some(ref id_str) => Some(Uuid::parse_str(id_str)
+                .map_err(|e| Status::invalid_argument(format!("Invalid flow_instance_id UUID: {}", e)))?),
+            None => None,
+        };
 
         let event_metadata = serde_json::json!({
             "task_id": task_id,
@@ -187,8 +189,8 @@ impl Azolla for MyAzollaService {
     }
 }
 
-pub async fn create_server(pool: PgPool) -> Result<(MyAzollaService, AzollaServer<MyAzollaService>)> {
-    let service = MyAzollaService::new(pool);
+pub async fn create_server(pool: PgPool, event_stream_config: EventStreamConfig) -> Result<(MyAzollaService, AzollaServer<MyAzollaService>)> {
+    let service = MyAzollaService::new(pool, event_stream_config);
     
     service.initialize().await?;
     

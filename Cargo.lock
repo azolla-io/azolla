@@ -206,7 +206,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "azolla"
+name = "azolla-orchestrator"
 version = "0.1.0"
 dependencies = [
  "anyhow",
