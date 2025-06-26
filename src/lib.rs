@@ -2,6 +2,15 @@ pub mod db;
 pub mod taskset;
 pub mod event_stream;
 pub mod orchestrator;
+pub mod shepherd;
+
+// Event type constants
+pub const EVENT_TASK_CREATED: i16 = 1;
+pub const EVENT_TASK_STARTED: i16 = 2;
+pub const EVENT_TASK_ENDED: i16 = 3;
+pub const EVENT_TASK_ATTEMPT_STARTED: i16 = 4;
+pub const EVENT_TASK_ATTEMPT_ENDED: i16 = 5;
+pub const EVENT_SHEPHERD_REGISTERED: i16 = 6;
 
 #[cfg(test)]
 #[macro_export]

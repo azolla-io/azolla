@@ -23,6 +23,18 @@ service Azolla {
   rpc PublishFlowEvent(PublishFlowEventRequest) returns (PublishFlowEventResponse);
 }
 
+// Dispatch service for shepherd connections.
+service Dispatch {
+  // Establishes a bi-directional stream between shepherd and orchestrator.
+  rpc Stream(stream ClientMsg) returns (stream ServerMsg);
+}
+
+// Worker service exposed by shepherd for workers to report results.
+service Worker {
+  // Workers call this to report task completion.
+  rpc ReportResult(ReportResultRequest) returns (ReportResultResponse);
+}
+
 // --- Message Definitions ---
 
 message CreateTaskRequest {
@@ -88,4 +100,95 @@ message PublishFlowEventRequest {
 
 message PublishFlowEventResponse {
   bool success = 1;
+}
+
+// --- Shepherd/Dispatch Messages ---
+
+message ClientMsg {
+  oneof kind {
+    Hello hello = 1;
+    Ack ack = 2;
+    Status status = 3;
+    TaskResult task_result = 4;
+  }
+}
+
+message ServerMsg {
+  oneof kind {
+    Task task = 1;
+    Ping ping = 2;
+  }
+}
+
+message Hello {
+  string shepherd_uuid = 1;
+  uint32 max_concurrency = 2;
+}
+
+message Ack {
+  string task_id = 1;
+}
+
+message Status {
+  uint32 current_load = 1;
+  uint32 available_capacity = 2;
+}
+
+message Task {
+  string task_id = 1;
+  string name = 2;
+  repeated string args = 3;
+  string kwargs = 4; // JSON string
+  optional uint64 memory_limit = 5; // bytes
+  optional uint32 cpu_limit = 6; // millicores
+}
+
+message Ping {
+  int64 timestamp = 1;
+}
+
+message TaskResult {
+  string task_id = 1;
+  oneof result_type {
+    SuccessResult success = 2;
+    ErrorResult error = 3;
+  }
+}
+
+message SuccessResult {
+  AnyValue result = 1;
+}
+
+message ErrorResult {
+  string type = 1;        // e.g., "ValueError"
+  string message = 2;     // human-readable
+  string code = 3;        // optional, app-specific
+  string stacktrace = 4;  // optional
+  StructValue data = 5;   // optional structured context
+}
+
+message AnyValue {
+  oneof value {
+    string string_value = 1;
+    int64 int_value = 2;
+    double double_value = 3;
+    bool bool_value = 4;
+    string json_value = 5; // For complex objects
+  }
+}
+
+message StructValue {
+  string json_data = 1; // JSON representation of structured data
+}
+
+// --- Worker Messages ---
+
+message ReportResultRequest {
+  string task_id = 1;
+  TaskResult result = 2;
+}
+
+message ReportResultResponse {
+  bool success = 1;
+  string message = 2;
 } 
