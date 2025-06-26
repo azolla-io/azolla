@@ -15,7 +15,7 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use crate::db::PgPool;
 use futures::StreamExt;
 use rayon::prelude::*;
@@ -23,6 +23,9 @@ use std::sync::Arc;
 use tokio_postgres::Row;
 use uuid::Uuid;
 use tokio::sync::{mpsc, oneshot};
+use dashmap::DashMap;
+use crate::{EVENT_TASK_CREATED, EVENT_TASK_STARTED, EVENT_TASK_ENDED, 
+            EVENT_TASK_ATTEMPT_STARTED, EVENT_TASK_ATTEMPT_ENDED};
 
 use log::{info, debug};
 
@@ -419,12 +422,17 @@ impl TaskSetActor {
 
 pub struct TaskSetRegistry {
     domains: std::sync::Mutex<HashMap<String, TaskSetActor>>,
+    // Shepherd tracking
+    task_to_shepherd: DashMap<Uuid, Uuid>, // task_id -> shepherd_uuid
+    shepherd_tasks: DashMap<Uuid, HashSet<Uuid>>, // shepherd_uuid -> task_ids
 }
 
 impl TaskSetRegistry {
     pub fn new() -> Self {
         Self {
             domains: std::sync::Mutex::new(HashMap::new()),
+            task_to_shepherd: DashMap::new(),
+            shepherd_tasks: DashMap::new(),
         }
     }
     
@@ -523,6 +531,117 @@ impl TaskSetRegistry {
         stats
     }
 
+    /// Track that a task has been dispatched to a shepherd
+    pub fn track_task_dispatch(&self, task_id: Uuid, shepherd_uuid: Uuid) {
+        self.task_to_shepherd.insert(task_id, shepherd_uuid);
+        self.shepherd_tasks
+            .entry(shepherd_uuid)
+            .or_insert_with(HashSet::new)
+            .insert(task_id);
+        log::debug!("Tracked task {} dispatched to shepherd {}", task_id, shepherd_uuid);
+    }
+    
+    /// Remove task from shepherd tracking (when task completes)
+    pub fn untrack_task(&self, task_id: Uuid) {
+        if let Some((_, shepherd_uuid)) = self.task_to_shepherd.remove(&task_id) {
+            if let Some(mut tasks) = self.shepherd_tasks.get_mut(&shepherd_uuid) {
+                tasks.remove(&task_id);
+                if tasks.is_empty() {
+                    drop(tasks);
+                    self.shepherd_tasks.remove(&shepherd_uuid);
+                }
+            }
+            log::debug!("Untracked task {} from shepherd {}", task_id, shepherd_uuid);
+        }
+    }
+    
+    /// Get all tasks assigned to a shepherd
+    pub fn get_shepherd_tasks(&self, shepherd_uuid: Uuid) -> Vec<Uuid> {
+        self.shepherd_tasks
+            .get(&shepherd_uuid)
+            .map(|tasks| tasks.clone().into_iter().collect())
+            .unwrap_or_default()
+    }
+    
+    /// Fail all tasks from a dead shepherd
+    pub async fn fail_shepherd_tasks(&self, shepherd_uuid: Uuid, event_stream: &crate::event_stream::EventStream) -> Result<()> {
+        let task_ids = self.get_shepherd_tasks(shepherd_uuid);
+        
+        log::info!("Failing {} tasks from dead shepherd {}", task_ids.len(), shepherd_uuid);
+        
+        for task_id in task_ids {
+            // Use existing find_task method to get task details and determine domain
+            if let Some(task) = self.find_task(task_id).await {
+                // Find which domain contains this task
+                if let Some(domain_actor) = self.get_domain_for_task(task_id).await {
+                    let domain = domain_actor.domain().to_string();
+                    
+                    // Create failure event
+                    let event_metadata = serde_json::json!({
+                        "task_id": task_id,
+                        "failure_reason": "shepherd_crashed",
+                        "failed_shepherd": shepherd_uuid,
+                        "failed_at": Utc::now(),
+                        "error_type": "InfrastructureError",
+                        "error_message": "Shepherd connection lost and timed out",
+                        "auto_failed": true
+                    });
+                    
+                    let event_record = crate::event_stream::EventRecord {
+                        domain: domain.clone(),
+                        task_instance_id: Some(task_id),
+                        flow_instance_id: task.flow_instance_id,
+                        event_type: EVENT_TASK_ATTEMPT_ENDED,
+                        created_at: Utc::now(),
+                        metadata: event_metadata,
+                    };
+                    
+                    // Write failure event first
+                    if let Err(e) = event_stream.write_event(event_record).await {
+                        log::error!("Failed to write task failure event for {}: {}", task_id, e);
+                        continue;
+                    }
+                    
+                    // Placeholder for task failure handling in domain actor
+                    if let Err(e) = self.handle_task_failure(&domain_actor, task_id, "shepherd_crashed").await {
+                        log::error!("Failed to update TaskSet for failed task {}: {}", task_id, e);
+                    }
+                    
+                    // Remove from tracking
+                    self.untrack_task(task_id);
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Helper to get domain actor for a specific task
+    async fn get_domain_for_task(&self, task_id: Uuid) -> Option<TaskSetActor> {
+        let domain_actors: Vec<_> = {
+            let domains = self.domains.lock().unwrap();
+            domains.values().map(|actor| TaskSetActor {
+                sender: actor.sender.clone(),
+                domain: actor.domain.clone(),
+            }).collect()
+        };
+        
+        for actor in domain_actors {
+            if let Ok(Some(_)) = actor.get_task(task_id).await {
+                return Some(actor);
+            }
+        }
+        None
+    }
+    
+    /// Placeholder method for handling task failure
+    async fn handle_task_failure(&self, _domain_actor: &TaskSetActor, task_id: Uuid, failure_reason: &str) -> Result<()> {
+        log::info!("Task {} failed due to: {}", task_id, failure_reason);
+        // TODO: Update task status, handle retry logic integration with scheduler
+        // For now, just log the failure
+        Ok(())
+    }
+
     /// Load tasks from database
     pub async fn load_from_db(&self, pool: &PgPool) -> Result<()> {
         log::info!("Starting to load tasks from database...");
@@ -596,6 +715,9 @@ impl TaskSetRegistry {
             *domains_guard = domain_actors;
         }
         
+        // TODO: Reconstruct shepherd assignments from unconsumed events
+        // This will replay events after the last materialization to rebuild shepherd tracking state
+        
         log::info!("Successfully loaded {} domains.", self.len());
         Ok(())
     }
@@ -657,11 +779,11 @@ impl TaskSetRegistry {
                 FROM events e
                 WHERE e.event_id > $1 
                   AND e.event_id <= $2
-                  AND e.event_type = 1
+                  AND e.event_type = $3
                   AND e.task_instance_id IS NOT NULL
                 ON CONFLICT (id, domain) DO NOTHING
                 "#,
-                &[&last_processed_event_id, &max_event_id]
+                &[&last_processed_event_id, &max_event_id, &EVENT_TASK_CREATED]
             )
             .await?;
             
@@ -677,10 +799,10 @@ impl TaskSetRegistry {
                   AND task_instance.domain = e.domain
                   AND e.event_id > $1 
                   AND e.event_id <= $2
-                  AND e.event_type = 2
+                  AND e.event_type = $3
                   AND e.task_instance_id IS NOT NULL
                 "#,
-                &[&last_processed_event_id, &max_event_id]
+                &[&last_processed_event_id, &max_event_id, &EVENT_TASK_STARTED]
             )
             .await?;
             
@@ -696,10 +818,10 @@ impl TaskSetRegistry {
                   AND task_instance.domain = e.domain
                   AND e.event_id > $1 
                   AND e.event_id <= $2
-                  AND e.event_type = 3
+                  AND e.event_type = $3
                   AND e.task_instance_id IS NOT NULL
                 "#,
-                &[&last_processed_event_id, &max_event_id]
+                &[&last_processed_event_id, &max_event_id, &EVENT_TASK_ENDED]
             )
             .await?;
             
@@ -718,12 +840,12 @@ impl TaskSetRegistry {
                 FROM events e
                 WHERE e.event_id > $1 
                   AND e.event_id <= $2
-                  AND e.event_type = 4
+                  AND e.event_type = $3
                   AND e.task_instance_id IS NOT NULL
                 ON CONFLICT (task_instance_id, domain, attempt) 
                 DO UPDATE SET start_time = EXCLUDED.start_time
                 "#,
-                &[&last_processed_event_id, &max_event_id]
+                &[&last_processed_event_id, &max_event_id, &EVENT_TASK_ATTEMPT_STARTED]
             )
             .await?;
             
@@ -742,10 +864,10 @@ impl TaskSetRegistry {
                   AND task_attempts.attempt = COALESCE((e.metadata->>'attempt')::int, 1)
                   AND e.event_id > $1 
                   AND e.event_id <= $2
-                  AND e.event_type = 5
+                  AND e.event_type = $3
                   AND e.task_instance_id IS NOT NULL
                 "#,
-                &[&last_processed_event_id, &max_event_id]
+                &[&last_processed_event_id, &max_event_id, &EVENT_TASK_ATTEMPT_ENDED]
             )
             .await?;
             
