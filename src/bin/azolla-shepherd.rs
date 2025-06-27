@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::signal;
 use tokio::sync::{mpsc, watch};
 
-use azolla_orchestrator::shepherd::{
+use azolla::shepherd::{
     load_config, start_worker_service, StreamHandler, TaskManager, ProcessMonitor
 };
 
@@ -164,10 +164,10 @@ async fn main() -> Result<()> {
             let mut completion_rx = completion_rx;
             while let Some(event) = completion_rx.recv().await {
                 match event {
-                    azolla_orchestrator::shepherd::TaskCompletionEvent::TaskCompleted(task_id) => {
+                    azolla::shepherd::TaskCompletionEvent::TaskCompleted(task_id) => {
                         log::info!("Task {} completed (TODO: notify task manager)", task_id);
                     }
-                    azolla_orchestrator::shepherd::TaskCompletionEvent::TaskFailed(task_id, error) => {
+                    azolla::shepherd::TaskCompletionEvent::TaskFailed(task_id, error) => {
                         log::warn!("Task {} failed: {} (TODO: notify task manager)", task_id, error);
                     }
                 }

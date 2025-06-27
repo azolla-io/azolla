@@ -3,8 +3,8 @@ use clap::Parser;
 use std::time::Instant;
 
 // Import the azolla modules
-use azolla_orchestrator::db::{create_pool, Settings, PgPool};
-use azolla_orchestrator::taskset::TaskSetRegistry;
+use azolla::db::{create_pool, Settings, PgPool};
+use azolla::taskset::TaskSetRegistry;
 
 #[derive(Parser)]
 #[command(name = "merge_events")]
