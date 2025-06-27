@@ -236,9 +236,8 @@ impl StreamHandler {
             Some(server_msg::Kind::Ping(ping)) => {
                 debug!("Received ping with timestamp: {}", ping.timestamp);
                 
-                // Send ping event to task manager (for logging/monitoring)
-                self.event_sender.send(StreamEvent::PingReceived)
-                    .map_err(|e| anyhow::anyhow!("Failed to forward ping: {}", e))?;
+                // Handle ping events locally in stream_handler
+                // No need to forward to task_manager
             }
             None => {
                 warn!("Received empty server message");
