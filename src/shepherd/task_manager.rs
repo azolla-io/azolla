@@ -1,14 +1,14 @@
 use anyhow::Result;
-use tokio::sync::{mpsc, watch};
-use tokio::process::Command;
-use tokio::time::Duration;
-use uuid::Uuid;
-use log::{info, warn, error, debug};
+use chrono::{DateTime, Utc};
+use log::{debug, error, info, warn};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use chrono::{DateTime, Utc};
+use tokio::process::Command;
+use tokio::sync::{mpsc, watch};
+use tokio::time::Duration;
+use uuid::Uuid;
 
-use crate::shepherd::{ShepherdConfig, IncomingTask, StreamEvent};
+use crate::shepherd::{IncomingTask, ShepherdConfig, StreamEvent};
 
 #[derive(Debug, Clone)]
 pub struct TaskInfo {
@@ -72,7 +72,7 @@ impl TaskManager {
 
     pub async fn start(mut self) -> Result<()> {
         info!("Starting task manager for shepherd {}", self.config.uuid);
-        
+
         loop {
             tokio::select! {
                 event = self.event_receiver.recv() => {
@@ -88,7 +88,7 @@ impl TaskManager {
                         }
                     }
                 }
-                
+
                 _ = self.shutdown_receiver.changed() => {
                     if *self.shutdown_receiver.borrow() {
                         info!("Task manager received shutdown signal");
@@ -96,13 +96,13 @@ impl TaskManager {
                     }
                 }
             }
-            
+
             self.process_queue().await?;
             self.update_stats();
         }
-        
+
         self.shutdown().await?;
-        
+
         info!("Task manager stopped");
         Ok(())
     }
@@ -112,14 +112,14 @@ impl TaskManager {
             StreamEvent::TaskReceived(task) => {
                 info!("Received task: {} ({})", task.task_id, task.name);
                 self.stats.total_tasks_received += 1;
-                
+
                 self.task_queue.push_back(task);
-                
+
                 let queue_size = self.task_queue.len() as u32;
                 if queue_size > self.stats.max_queue_size_reached {
                     self.stats.max_queue_size_reached = queue_size;
                 }
-                
+
                 debug!("Task queued. Queue size: {}", self.task_queue.len());
             }
             _ => {
@@ -128,7 +128,7 @@ impl TaskManager {
                 debug!("Ignoring non-TaskReceived stream event");
             }
         }
-        
+
         Ok(())
     }
 
@@ -137,28 +137,31 @@ impl TaskManager {
     async fn process_queue(&mut self) -> Result<()> {
         let current_running = self.running_tasks.len() as u32;
         let available_capacity = self.config.max_concurrency.saturating_sub(current_running);
-        
+
         if available_capacity == 0 {
             return Ok(());
         }
-        
+
         let tasks_to_start = std::cmp::min(available_capacity, self.task_queue.len() as u32);
-        
+
         for _ in 0..tasks_to_start {
             if let Some(task) = self.task_queue.pop_front() {
                 self.start_task(task).await?;
             }
         }
-        
+
         Ok(())
     }
 
     /// Start a task by spawning a worker process and monitoring task
     async fn start_task(&mut self, task: IncomingTask) -> Result<()> {
         let task_id = task.task_id;
-        
-        info!("Starting worker process for task: {} ({})", task_id, task.name);
-        
+
+        info!(
+            "Starting worker process for task: {} ({})",
+            task_id, task.name
+        );
+
         // Create task info
         let task_info = TaskInfo {
             task: task.clone(),
@@ -167,23 +170,24 @@ impl TaskManager {
             status: TaskStatus::Running,
             process_id: None, // Will be set by the monitoring task
         };
-        
+
         // Add to running tasks
         self.running_tasks.insert(task_id, task_info);
-        
+
         // Update load counter
         let new_load = self.running_tasks.len() as u32;
-        self.current_load.store(new_load, std::sync::atomic::Ordering::SeqCst);
-        
+        self.current_load
+            .store(new_load, std::sync::atomic::Ordering::SeqCst);
+
         // Spawn a dedicated task to handle process spawning and monitoring
         let config = self.config.clone();
         let current_load = self.current_load.clone();
         tokio::spawn(async move {
             Self::spawn_and_monitor_process(task_id, task, config, current_load).await;
         });
-        
+
         info!("Monitoring task spawned for task: {}", task_id);
-        
+
         Ok(())
     }
 
@@ -195,39 +199,51 @@ impl TaskManager {
         current_load: Arc<std::sync::atomic::AtomicU32>,
     ) {
         let start_time = Utc::now();
-        
+
         // Build command
         let mut cmd = Command::new(&config.worker_binary_path);
-        cmd.arg("--task-id").arg(task_id.to_string())
-           .arg("--name").arg(&task.name)
-           .arg("--args").arg(match serde_json::to_string(&task.args) {
-               Ok(args_json) => args_json,
-               Err(e) => {
-                   error!("Failed to serialize task args for {}: {}", task_id, e);
-                   current_load.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-                   return;
-               }
-           })
-           .arg("--kwargs").arg(&task.kwargs)
-           .arg("--shepherd-endpoint").arg(config.worker_service_endpoint());
-        
+        cmd.arg("--task-id")
+            .arg(task_id.to_string())
+            .arg("--name")
+            .arg(&task.name)
+            .arg("--args")
+            .arg(match serde_json::to_string(&task.args) {
+                Ok(args_json) => args_json,
+                Err(e) => {
+                    error!("Failed to serialize task args for {}: {}", task_id, e);
+                    current_load.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                    return;
+                }
+            })
+            .arg("--kwargs")
+            .arg(&task.kwargs)
+            .arg("--shepherd-endpoint")
+            .arg(config.worker_service_endpoint());
+
         if let Some(memory_limit) = task.memory_limit {
             cmd.env("AZOLLA_MEMORY_LIMIT", memory_limit.to_string());
         }
         if let Some(cpu_limit) = task.cpu_limit {
             cmd.env("AZOLLA_CPU_LIMIT", cpu_limit.to_string());
         }
-        
+
         cmd.current_dir(".");
         cmd.env("RUST_LOG", "info");
-        
-        debug!("Spawning worker: {} {:?}", config.worker_binary_path, cmd.as_std().get_args().collect::<Vec<_>>());
-        
+
+        debug!(
+            "Spawning worker: {} {:?}",
+            config.worker_binary_path,
+            cmd.as_std().get_args().collect::<Vec<_>>()
+        );
+
         // Spawn the process
         let mut child = match cmd.spawn() {
             Ok(child) => {
                 let process_id = child.id();
-                info!("Worker process started for task {}: PID {:?}", task_id, process_id);
+                info!(
+                    "Worker process started for task {}: PID {:?}",
+                    task_id, process_id
+                );
                 child
             }
             Err(e) => {
@@ -236,10 +252,10 @@ impl TaskManager {
                 return;
             }
         };
-        
+
         // Monitor the process
         let timeout_duration = config.worker_timeout.unwrap_or(Duration::from_secs(300));
-        
+
         let result = tokio::select! {
             // Wait for process to complete
             status = child.wait() => {
@@ -247,10 +263,10 @@ impl TaskManager {
                     Ok(exit_status) => {
                         let success = exit_status.success();
                         let exit_code = exit_status.code();
-                        
-                        info!("Process for task {} exited: success={}, code={:?}", 
+
+                        info!("Process for task {} exited: success={}, code={:?}",
                               task_id, success, exit_code);
-                        
+
                         if success {
                             (true, None)
                         } else {
@@ -264,40 +280,45 @@ impl TaskManager {
                     }
                 }
             }
-            
+
             // Timeout handling
             _ = tokio::time::sleep(timeout_duration) => {
                 warn!("Task {} timed out after {:?}", task_id, timeout_duration);
-                
+
                 // Kill the process
                 if let Err(e) = child.kill().await {
                     error!("Failed to kill timed out process for task {}: {}", task_id, e);
                 }
-                
+
                 (false, Some(format!("Task timed out after {:?}", timeout_duration)))
             }
         };
-        
+
         // Calculate execution time
         let execution_time = Utc::now().signed_duration_since(start_time);
         let execution_ms = execution_time.num_milliseconds() as f64;
-        
+
         // Update load counter
         current_load.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-        
+
         let (success, error) = result;
         if success {
-            info!("Task {} completed successfully in {:.2}ms", task_id, execution_ms);
+            info!(
+                "Task {} completed successfully in {:.2}ms",
+                task_id, execution_ms
+            );
         } else {
             let error_msg = error.unwrap_or_else(|| "Unknown error".to_string());
-            warn!("Task {} failed after {:.2}ms: {}", task_id, execution_ms, error_msg);
+            warn!(
+                "Task {} failed after {:.2}ms: {}",
+                task_id, execution_ms, error_msg
+            );
         }
-        
+
         // Note: In this simplified architecture, we don't update TaskManager state
         // from individual monitoring tasks to avoid shared state issues.
         // Statistics and task state are handled differently.
     }
-
 
     /// Update statistics
     fn update_stats(&mut self) {
@@ -339,31 +360,34 @@ impl TaskManager {
     /// Graceful shutdown
     async fn shutdown(&mut self) -> Result<()> {
         info!("Shutting down task manager...");
-        
+
         let running_count = self.running_tasks.len();
         if running_count > 0 {
             info!("Waiting for {} running tasks to complete...", running_count);
-            
+
             // In the new architecture, individual monitoring tasks handle process termination
             // We just wait a reasonable time for them to finish
             let shutdown_timeout = Duration::from_secs(10);
             tokio::time::sleep(shutdown_timeout).await;
-            
+
             let remaining_count = self.running_tasks.len();
             if remaining_count > 0 {
-                warn!("Force shutdown with {} tasks still tracked as running", remaining_count);
+                warn!(
+                    "Force shutdown with {} tasks still tracked as running",
+                    remaining_count
+                );
             }
         }
-        
+
         // Clear all tasks
         let queued_count = self.task_queue.len();
         self.task_queue.clear();
         self.running_tasks.clear();
-        
+
         if queued_count > 0 {
             warn!("Discarded {} queued tasks during shutdown", queued_count);
         }
-        
+
         info!("Task manager shutdown complete");
         Ok(())
     }
@@ -415,26 +439,25 @@ mod tests {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (_shutdown_tx, shutdown_rx) = watch::channel(false);
         let current_load = Arc::new(std::sync::atomic::AtomicU32::new(0));
-        
-        let mut task_manager = TaskManager::new(
-            config,
-            event_rx,
-            shutdown_rx,
-            current_load,
-        );
-        
+
+        let mut task_manager = TaskManager::new(config, event_rx, shutdown_rx, current_load);
+
         // Send a task
         let task = create_test_task("test_task");
-        event_tx.send(StreamEvent::TaskReceived(task.clone())).unwrap();
-        
+        event_tx
+            .send(StreamEvent::TaskReceived(task.clone()))
+            .unwrap();
+
         // Handle the event
         if let Ok(Some(event)) = tokio::time::timeout(
             std::time::Duration::from_millis(100),
-            task_manager.event_receiver.recv()
-        ).await {
+            task_manager.event_receiver.recv(),
+        )
+        .await
+        {
             task_manager.handle_stream_event(event).await.unwrap();
         }
-        
+
         // Verify task was queued
         assert_eq!(task_manager.task_queue.len(), 1);
         assert_eq!(task_manager.stats.total_tasks_received, 1);
@@ -446,23 +469,19 @@ mod tests {
         let (_event_tx, event_rx) = mpsc::unbounded_channel();
         let (_shutdown_tx, shutdown_rx) = watch::channel(false);
         let current_load = Arc::new(std::sync::atomic::AtomicU32::new(0));
-        
-        let mut task_manager = TaskManager::new(
-            config,
-            event_rx,
-            shutdown_rx,
-            current_load.clone(),
-        );
-        
+
+        let mut task_manager =
+            TaskManager::new(config, event_rx, shutdown_rx, current_load.clone());
+
         // Add 3 tasks to queue
         task_manager.task_queue.push_back(create_test_task("task1"));
         task_manager.task_queue.push_back(create_test_task("task2"));
         task_manager.task_queue.push_back(create_test_task("task3"));
-        
+
         // Test queue management
         let initial_queue_size = task_manager.task_queue.len();
         assert_eq!(initial_queue_size, 3);
-        
+
         // Verify initial state
         assert_eq!(task_manager.running_tasks.len(), 0);
         assert_eq!(current_load.load(std::sync::atomic::Ordering::SeqCst), 0);
@@ -474,14 +493,10 @@ mod tests {
         let (_event_tx, event_rx) = mpsc::unbounded_channel();
         let (_shutdown_tx, shutdown_rx) = watch::channel(false);
         let current_load = Arc::new(std::sync::atomic::AtomicU32::new(0));
-        
-        let mut task_manager = TaskManager::new(
-            config,
-            event_rx,
-            shutdown_rx,
-            current_load.clone(),
-        );
-        
+
+        let mut task_manager =
+            TaskManager::new(config, event_rx, shutdown_rx, current_load.clone());
+
         // Create a task and add it to running tasks directly for testing
         let task = create_test_task("test_task");
         let task_id = task.task_id;
@@ -493,11 +508,13 @@ mod tests {
             process_id: Some(12345),
         };
         task_manager.running_tasks.insert(task_id, task_info);
-        task_manager.current_load.store(1, std::sync::atomic::Ordering::SeqCst);
-        
+        task_manager
+            .current_load
+            .store(1, std::sync::atomic::Ordering::SeqCst);
+
         assert_eq!(task_manager.running_tasks.len(), 1);
         assert_eq!(current_load.load(std::sync::atomic::Ordering::SeqCst), 1);
-        
+
         // In the new architecture, individual monitoring tasks handle completion
         // This test just verifies task tracking works
         assert!(task_manager.running_tasks.contains_key(&task_id));
@@ -509,30 +526,28 @@ mod tests {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (_shutdown_tx, shutdown_rx) = watch::channel(false);
         let current_load = Arc::new(std::sync::atomic::AtomicU32::new(0));
-        
-        let mut task_manager = TaskManager::new(
-            config,
-            event_rx,
-            shutdown_rx,
-            current_load.clone(),
-        );
-        
+
+        let mut task_manager =
+            TaskManager::new(config, event_rx, shutdown_rx, current_load.clone());
+
         // Test that only TaskReceived events are processed
         let task = create_test_task("test_task");
-        event_tx.send(StreamEvent::TaskReceived(task.clone())).unwrap();
+        event_tx
+            .send(StreamEvent::TaskReceived(task.clone()))
+            .unwrap();
         event_tx.send(StreamEvent::PingReceived).unwrap(); // Should be ignored
         event_tx.send(StreamEvent::ConnectionLost).unwrap(); // Should be ignored
-        
+
         // Handle events
         let event1 = task_manager.event_receiver.recv().await.unwrap();
         task_manager.handle_stream_event(event1).await.unwrap();
-        
+
         let event2 = task_manager.event_receiver.recv().await.unwrap();
         task_manager.handle_stream_event(event2).await.unwrap();
-        
+
         let event3 = task_manager.event_receiver.recv().await.unwrap();
         task_manager.handle_stream_event(event3).await.unwrap();
-        
+
         // Only the TaskReceived event should have been processed
         assert_eq!(task_manager.task_queue.len(), 1);
         assert_eq!(task_manager.stats.total_tasks_received, 1);
@@ -544,17 +559,12 @@ mod tests {
         let (_event_tx, event_rx) = mpsc::unbounded_channel();
         let (_shutdown_tx, shutdown_rx) = watch::channel(false);
         let current_load = Arc::new(std::sync::atomic::AtomicU32::new(0));
-        
-        let task_manager = TaskManager::new(
-            config,
-            event_rx,
-            shutdown_rx,
-            current_load,
-        );
-        
+
+        let task_manager = TaskManager::new(config, event_rx, shutdown_rx, current_load);
+
         assert_eq!(task_manager.load_ratio(), 0.0);
         assert!(task_manager.has_capacity());
-        
+
         // The running_tasks would be updated in real usage
         // This test just verifies the calculation logic
     }

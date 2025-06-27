@@ -3,7 +3,7 @@
 
 ## Requirements
 1. **Write-heavy workload**: Frequent event processing updates to tasks
-2. **Concurrent access**: Multiple gRPC handlers accessing same Task simultaneously  
+2. **Concurrent access**: Multiple gRPC handlers accessing same Task simultaneously
 3. **High performance**: High throughput with low latency
 
 ## Design Solution
@@ -12,22 +12,24 @@
 3. **Single-threaded processing**: No contention within domain, consistent latency
 */
 
+use crate::db::PgPool;
+use crate::{
+    EVENT_TASK_ATTEMPT_ENDED, EVENT_TASK_ATTEMPT_STARTED, EVENT_TASK_CREATED, EVENT_TASK_ENDED,
+    EVENT_TASK_STARTED,
+};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use serde_json::Value as JsonValue;
-use std::collections::{HashMap, HashSet};
-use crate::db::PgPool;
+use dashmap::DashMap;
 use futures::StreamExt;
 use rayon::prelude::*;
+use serde_json::Value as JsonValue;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use tokio::sync::{mpsc, oneshot};
 use tokio_postgres::Row;
 use uuid::Uuid;
-use tokio::sync::{mpsc, oneshot};
-use dashmap::DashMap;
-use crate::{EVENT_TASK_CREATED, EVENT_TASK_STARTED, EVENT_TASK_ENDED, 
-            EVENT_TASK_ATTEMPT_STARTED, EVENT_TASK_ATTEMPT_ENDED};
 
-use log::{info, debug};
+use log::{debug, info};
 
 #[derive(Debug, Clone)]
 pub struct TaskAttempt {
@@ -48,6 +50,12 @@ pub struct Task {
     pub kwargs: JsonValue,
     pub status: i16,
     pub attempts: Vec<TaskAttempt>,
+}
+
+impl Default for Task {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Task {
@@ -105,9 +113,7 @@ impl TaskSet {
     }
 
     pub fn get_task(&self, id: Uuid) -> Option<&Task> {
-        self.id_to_index
-            .get(&id)
-            .map(|&index| &self.tasks[index])
+        self.id_to_index.get(&id).map(|&index| &self.tasks[index])
     }
 
     pub fn get_task_mut(&mut self, id: Uuid) -> Option<&mut Task> {
@@ -118,7 +124,7 @@ impl TaskSet {
 
     pub fn upsert_task(&mut self, task: Task) {
         let id = task.id;
-        
+
         match self.id_to_index.entry(id) {
             std::collections::hash_map::Entry::Occupied(entry) => {
                 let index = *entry.get();
@@ -185,7 +191,7 @@ impl TaskSet {
 
         let mut new_tasks = Vec::with_capacity(self.id_to_index.len());
         let mut new_id_to_index = HashMap::with_capacity(self.id_to_index.len());
-        
+
         // Create a temporary default task for swapping
         let mut temp_task = Task::new();
 
@@ -271,15 +277,15 @@ impl TaskSetActor {
         let taskset = TaskSet::new(domain.clone());
         Self::from_taskset(taskset)
     }
-    
+
     /// Create actor from existing TaskSet
     pub fn from_taskset(taskset: TaskSet) -> Self {
         let (sender, mut receiver) = mpsc::channel(1000);
         let domain = taskset.domain().to_string();
-        
+
         tokio::spawn(async move {
             let mut taskset = taskset;
-            
+
             while let Some(command) = receiver.recv().await {
                 match command {
                     TaskSetCommand::GetTask { id, respond_to } => {
@@ -308,7 +314,8 @@ impl TaskSetActor {
                     }
                     TaskSetCommand::AllTasks { respond_to } => {
                         let task_ids: Vec<Uuid> = taskset.all_tasks().map(|t| t.id).collect();
-                        let tasks: Vec<Task> = task_ids.into_iter()
+                        let tasks: Vec<Task> = task_ids
+                            .into_iter()
                             .filter_map(|id| taskset.get_task(id).cloned())
                             .collect();
                         let _ = respond_to.send(tasks);
@@ -328,93 +335,126 @@ impl TaskSetActor {
                 }
             }
         });
-        
+
         Self { sender, domain }
     }
-    
+
     pub fn domain(&self) -> &str {
         &self.domain
     }
-    
+
     pub async fn get_task(&self, id: Uuid) -> Result<Option<Task>, ActorError> {
         let (tx, rx) = oneshot::channel();
         let cmd = TaskSetCommand::GetTask { id, respond_to: tx };
-        
-        self.sender.send(cmd).await.map_err(|_| ActorError::ChannelClosed)?;
+
+        self.sender
+            .send(cmd)
+            .await
+            .map_err(|_| ActorError::ChannelClosed)?;
         rx.await.map_err(|_| ActorError::ResponseLost)
     }
-    
+
     pub async fn get_task_status(&self, id: Uuid) -> Result<Option<i16>, ActorError> {
         let (tx, rx) = oneshot::channel();
         let cmd = TaskSetCommand::GetTaskStatus { id, respond_to: tx };
-        
-        self.sender.send(cmd).await.map_err(|_| ActorError::ChannelClosed)?;
+
+        self.sender
+            .send(cmd)
+            .await
+            .map_err(|_| ActorError::ChannelClosed)?;
         rx.await.map_err(|_| ActorError::ResponseLost)
     }
-    
+
     pub async fn upsert_task(&self, task: Task) -> Result<(), ActorError> {
         let (tx, rx) = oneshot::channel();
-        let cmd = TaskSetCommand::UpsertTask { task, respond_to: tx };
-        
-        self.sender.send(cmd).await.map_err(|_| ActorError::ChannelClosed)?;
+        let cmd = TaskSetCommand::UpsertTask {
+            task,
+            respond_to: tx,
+        };
+
+        self.sender
+            .send(cmd)
+            .await
+            .map_err(|_| ActorError::ChannelClosed)?;
         rx.await.map_err(|_| ActorError::ResponseLost)?;
         Ok(())
     }
-    
+
     pub async fn delete_task(&self, id: Uuid) -> Result<bool, ActorError> {
         let (tx, rx) = oneshot::channel();
         let cmd = TaskSetCommand::DeleteTask { id, respond_to: tx };
-        
-        self.sender.send(cmd).await.map_err(|_| ActorError::ChannelClosed)?;
+
+        self.sender
+            .send(cmd)
+            .await
+            .map_err(|_| ActorError::ChannelClosed)?;
         rx.await.map_err(|_| ActorError::ResponseLost)
     }
-    
+
     pub async fn stats(&self) -> Result<TaskSetStats, ActorError> {
         let (tx, rx) = oneshot::channel();
         let cmd = TaskSetCommand::GetStats { respond_to: tx };
-        
-        self.sender.send(cmd).await.map_err(|_| ActorError::ChannelClosed)?;
+
+        self.sender
+            .send(cmd)
+            .await
+            .map_err(|_| ActorError::ChannelClosed)?;
         rx.await.map_err(|_| ActorError::ResponseLost)
     }
-    
+
     pub async fn len(&self) -> Result<usize, ActorError> {
         let (tx, rx) = oneshot::channel();
         let cmd = TaskSetCommand::Len { respond_to: tx };
-        
-        self.sender.send(cmd).await.map_err(|_| ActorError::ChannelClosed)?;
+
+        self.sender
+            .send(cmd)
+            .await
+            .map_err(|_| ActorError::ChannelClosed)?;
         rx.await.map_err(|_| ActorError::ResponseLost)
     }
-    
+
     pub async fn all_tasks(&self) -> Result<Vec<Task>, ActorError> {
         let (tx, rx) = oneshot::channel();
         let cmd = TaskSetCommand::AllTasks { respond_to: tx };
-        
-        self.sender.send(cmd).await.map_err(|_| ActorError::ChannelClosed)?;
+
+        self.sender
+            .send(cmd)
+            .await
+            .map_err(|_| ActorError::ChannelClosed)?;
         rx.await.map_err(|_| ActorError::ResponseLost)
     }
-    
+
     pub async fn is_empty(&self) -> Result<bool, ActorError> {
         let (tx, rx) = oneshot::channel();
         let cmd = TaskSetCommand::IsEmpty { respond_to: tx };
-        
-        self.sender.send(cmd).await.map_err(|_| ActorError::ChannelClosed)?;
+
+        self.sender
+            .send(cmd)
+            .await
+            .map_err(|_| ActorError::ChannelClosed)?;
         rx.await.map_err(|_| ActorError::ResponseLost)
     }
-    
+
     pub async fn compact(&self) -> Result<(), ActorError> {
         let (tx, rx) = oneshot::channel();
         let cmd = TaskSetCommand::Compact { respond_to: tx };
-        
-        self.sender.send(cmd).await.map_err(|_| ActorError::ChannelClosed)?;
+
+        self.sender
+            .send(cmd)
+            .await
+            .map_err(|_| ActorError::ChannelClosed)?;
         rx.await.map_err(|_| ActorError::ResponseLost)?;
         Ok(())
     }
-    
+
     pub async fn reset(&self) -> Result<(), ActorError> {
         let (tx, rx) = oneshot::channel();
         let cmd = TaskSetCommand::Reset { respond_to: tx };
-        
-        self.sender.send(cmd).await.map_err(|_| ActorError::ChannelClosed)?;
+
+        self.sender
+            .send(cmd)
+            .await
+            .map_err(|_| ActorError::ChannelClosed)?;
         rx.await.map_err(|_| ActorError::ResponseLost)?;
         Ok(())
     }
@@ -435,10 +475,10 @@ impl TaskSetRegistry {
             shepherd_tasks: DashMap::new(),
         }
     }
-    
+
     pub fn get_or_create_domain(&self, domain: &str) -> TaskSetActor {
         let mut domains = self.domains.lock().unwrap();
-        
+
         if let Some(actor) = domains.get(domain) {
             TaskSetActor {
                 sender: actor.sender.clone(),
@@ -454,7 +494,7 @@ impl TaskSetRegistry {
             actor
         }
     }
-    
+
     pub fn get_domain(&self, domain: &str) -> Option<TaskSetActor> {
         let domains = self.domains.lock().unwrap();
         domains.get(domain).map(|actor| TaskSetActor {
@@ -462,16 +502,19 @@ impl TaskSetRegistry {
             domain: domain.to_string(),
         })
     }
-    
+
     pub async fn find_task(&self, id: Uuid) -> Option<Task> {
         let domain_actors: Vec<_> = {
             let domains = self.domains.lock().unwrap();
-            domains.values().map(|actor| TaskSetActor {
-                sender: actor.sender.clone(),
-                domain: actor.domain.clone(),
-            }).collect()
+            domains
+                .values()
+                .map(|actor| TaskSetActor {
+                    sender: actor.sender.clone(),
+                    domain: actor.domain.clone(),
+                })
+                .collect()
         };
-        
+
         for actor in domain_actors {
             if let Ok(Some(task)) = actor.get_task(id).await {
                 return Some(task);
@@ -479,31 +522,34 @@ impl TaskSetRegistry {
         }
         None
     }
-    
+
     pub fn domains(&self) -> Vec<String> {
         let domains = self.domains.lock().unwrap();
         domains.keys().cloned().collect()
     }
-    
+
     pub fn len(&self) -> usize {
         let domains = self.domains.lock().unwrap();
         domains.len()
     }
-    
+
     pub fn is_empty(&self) -> bool {
         let domains = self.domains.lock().unwrap();
         domains.is_empty()
     }
-    
+
     pub async fn total_tasks(&self) -> usize {
         let domain_actors: Vec<_> = {
             let domains = self.domains.lock().unwrap();
-            domains.values().map(|actor| TaskSetActor {
-                sender: actor.sender.clone(),
-                domain: actor.domain.clone(),
-            }).collect()
+            domains
+                .values()
+                .map(|actor| TaskSetActor {
+                    sender: actor.sender.clone(),
+                    domain: actor.domain.clone(),
+                })
+                .collect()
         };
-        
+
         let mut total = 0;
         for actor in domain_actors {
             if let Ok(len) = actor.len().await {
@@ -512,16 +558,24 @@ impl TaskSetRegistry {
         }
         total
     }
-    
+
     pub async fn all_stats(&self) -> Vec<(String, TaskSetStats)> {
         let domain_actors: Vec<_> = {
             let domains = self.domains.lock().unwrap();
-            domains.iter().map(|(name, actor)| (name.clone(), TaskSetActor {
-                sender: actor.sender.clone(),
-                domain: actor.domain.clone(),
-            })).collect()
+            domains
+                .iter()
+                .map(|(name, actor)| {
+                    (
+                        name.clone(),
+                        TaskSetActor {
+                            sender: actor.sender.clone(),
+                            domain: actor.domain.clone(),
+                        },
+                    )
+                })
+                .collect()
         };
-        
+
         let mut stats = Vec::new();
         for (name, actor) in domain_actors {
             if let Ok(actor_stats) = actor.stats().await {
@@ -536,11 +590,15 @@ impl TaskSetRegistry {
         self.task_to_shepherd.insert(task_id, shepherd_uuid);
         self.shepherd_tasks
             .entry(shepherd_uuid)
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(task_id);
-        log::debug!("Tracked task {} dispatched to shepherd {}", task_id, shepherd_uuid);
+        log::debug!(
+            "Tracked task {} dispatched to shepherd {}",
+            task_id,
+            shepherd_uuid
+        );
     }
-    
+
     /// Remove task from shepherd tracking (when task completes)
     pub fn untrack_task(&self, task_id: Uuid) {
         if let Some((_, shepherd_uuid)) = self.task_to_shepherd.remove(&task_id) {
@@ -554,7 +612,7 @@ impl TaskSetRegistry {
             log::debug!("Untracked task {} from shepherd {}", task_id, shepherd_uuid);
         }
     }
-    
+
     /// Get all tasks assigned to a shepherd
     pub fn get_shepherd_tasks(&self, shepherd_uuid: Uuid) -> Vec<Uuid> {
         self.shepherd_tasks
@@ -562,20 +620,28 @@ impl TaskSetRegistry {
             .map(|tasks| tasks.clone().into_iter().collect())
             .unwrap_or_default()
     }
-    
+
     /// Fail all tasks from a dead shepherd
-    pub async fn fail_shepherd_tasks(&self, shepherd_uuid: Uuid, event_stream: &crate::event_stream::EventStream) -> Result<()> {
+    pub async fn fail_shepherd_tasks(
+        &self,
+        shepherd_uuid: Uuid,
+        event_stream: &crate::event_stream::EventStream,
+    ) -> Result<()> {
         let task_ids = self.get_shepherd_tasks(shepherd_uuid);
-        
-        log::info!("Failing {} tasks from dead shepherd {}", task_ids.len(), shepherd_uuid);
-        
+
+        log::info!(
+            "Failing {} tasks from dead shepherd {}",
+            task_ids.len(),
+            shepherd_uuid
+        );
+
         for task_id in task_ids {
             // Use existing find_task method to get task details and determine domain
             if let Some(task) = self.find_task(task_id).await {
                 // Find which domain contains this task
                 if let Some(domain_actor) = self.get_domain_for_task(task_id).await {
                     let domain = domain_actor.domain().to_string();
-                    
+
                     // Create failure event
                     let event_metadata = serde_json::json!({
                         "task_id": task_id,
@@ -586,7 +652,7 @@ impl TaskSetRegistry {
                         "error_message": "Shepherd connection lost and timed out",
                         "auto_failed": true
                     });
-                    
+
                     let event_record = crate::event_stream::EventRecord {
                         domain: domain.clone(),
                         task_instance_id: Some(task_id),
@@ -595,37 +661,47 @@ impl TaskSetRegistry {
                         created_at: Utc::now(),
                         metadata: event_metadata,
                     };
-                    
+
                     // Write failure event first
                     if let Err(e) = event_stream.write_event(event_record).await {
                         log::error!("Failed to write task failure event for {}: {}", task_id, e);
                         continue;
                     }
-                    
+
                     // Placeholder for task failure handling in domain actor
-                    if let Err(e) = self.handle_task_failure(&domain_actor, task_id, "shepherd_crashed").await {
-                        log::error!("Failed to update TaskSet for failed task {}: {}", task_id, e);
+                    if let Err(e) = self
+                        .handle_task_failure(&domain_actor, task_id, "shepherd_crashed")
+                        .await
+                    {
+                        log::error!(
+                            "Failed to update TaskSet for failed task {}: {}",
+                            task_id,
+                            e
+                        );
                     }
-                    
+
                     // Remove from tracking
                     self.untrack_task(task_id);
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Helper to get domain actor for a specific task
     async fn get_domain_for_task(&self, task_id: Uuid) -> Option<TaskSetActor> {
         let domain_actors: Vec<_> = {
             let domains = self.domains.lock().unwrap();
-            domains.values().map(|actor| TaskSetActor {
-                sender: actor.sender.clone(),
-                domain: actor.domain.clone(),
-            }).collect()
+            domains
+                .values()
+                .map(|actor| TaskSetActor {
+                    sender: actor.sender.clone(),
+                    domain: actor.domain.clone(),
+                })
+                .collect()
         };
-        
+
         for actor in domain_actors {
             if let Ok(Some(_)) = actor.get_task(task_id).await {
                 return Some(actor);
@@ -633,9 +709,14 @@ impl TaskSetRegistry {
         }
         None
     }
-    
+
     /// Placeholder method for handling task failure
-    async fn handle_task_failure(&self, _domain_actor: &TaskSetActor, task_id: Uuid, failure_reason: &str) -> Result<()> {
+    async fn handle_task_failure(
+        &self,
+        _domain_actor: &TaskSetActor,
+        task_id: Uuid,
+        failure_reason: &str,
+    ) -> Result<()> {
         log::info!("Task {} failed due to: {}", task_id, failure_reason);
         // TODO: Update task status, handle retry logic integration with scheduler
         // For now, just log the failure
@@ -714,10 +795,10 @@ impl TaskSetRegistry {
             let mut domains_guard = self.domains.lock().unwrap();
             *domains_guard = domain_actors;
         }
-        
+
         // TODO: Reconstruct shepherd assignments from unconsumed events
         // This will replay events after the last materialization to rebuild shepherd tracking state
-        
+
         log::info!("Successfully loaded {} domains.", self.len());
         Ok(())
     }
@@ -725,23 +806,27 @@ impl TaskSetRegistry {
     /// Sync events to database tables
     pub async fn merge_events_to_db(&self, pool: &PgPool) -> Result<()> {
         let mut client = pool.get().await?;
-        
+
         let transaction = client.transaction().await?;
-        
+
         let cursor_row = transaction
             .query_opt("SELECT last_event_id FROM merge_cursor LIMIT 1", &[])
             .await?;
-            
-        let last_processed_event_id = cursor_row
-            .map(|row| row.get::<_, i64>(0))
-            .unwrap_or(0);
-            
-        debug!("Starting event merge from event_id: {}", last_processed_event_id);
-        
+
+        let last_processed_event_id = cursor_row.map(|row| row.get::<_, i64>(0)).unwrap_or(0);
+
+        debug!(
+            "Starting event merge from event_id: {}",
+            last_processed_event_id
+        );
+
         let max_event_row = transaction
-            .query_opt("SELECT MAX(event_id) FROM events WHERE event_id > $1", &[&last_processed_event_id])
+            .query_opt(
+                "SELECT MAX(event_id) FROM events WHERE event_id > $1",
+                &[&last_processed_event_id],
+            )
             .await?;
-            
+
         let max_event_id = match max_event_row {
             Some(row) => match row.get::<_, Option<i64>>(0) {
                 Some(id) => id,
@@ -755,9 +840,12 @@ impl TaskSetRegistry {
                 return Ok(());
             }
         };
-        
-        info!("Processing events from {} to {} using server-side SQL", last_processed_event_id, max_event_id);
-        
+
+        info!(
+            "Processing events from {} to {} using server-side SQL",
+            last_processed_event_id, max_event_id
+        );
+
         let task_created_count = transaction
             .execute(
                 r#"
@@ -786,9 +874,9 @@ impl TaskSetRegistry {
                 &[&last_processed_event_id, &max_event_id, &EVENT_TASK_CREATED]
             )
             .await?;
-            
+
         debug!("Merged {} task creation events", task_created_count);
-        
+
         let task_started_count = transaction
             .execute(
                 r#"
@@ -802,12 +890,12 @@ impl TaskSetRegistry {
                   AND e.event_type = $3
                   AND e.task_instance_id IS NOT NULL
                 "#,
-                &[&last_processed_event_id, &max_event_id, &EVENT_TASK_STARTED]
+                &[&last_processed_event_id, &max_event_id, &EVENT_TASK_STARTED],
             )
             .await?;
-            
+
         debug!("Merged {} task started events", task_started_count);
-        
+
         let task_ended_count = transaction
             .execute(
                 r#"
@@ -821,12 +909,12 @@ impl TaskSetRegistry {
                   AND e.event_type = $3
                   AND e.task_instance_id IS NOT NULL
                 "#,
-                &[&last_processed_event_id, &max_event_id, &EVENT_TASK_ENDED]
+                &[&last_processed_event_id, &max_event_id, &EVENT_TASK_ENDED],
             )
             .await?;
-            
+
         debug!("Merged {} task ended events", task_ended_count);
-        
+
         let attempt_started_count = transaction
             .execute(
                 r#"
@@ -845,12 +933,19 @@ impl TaskSetRegistry {
                 ON CONFLICT (task_instance_id, domain, attempt) 
                 DO UPDATE SET start_time = EXCLUDED.start_time
                 "#,
-                &[&last_processed_event_id, &max_event_id, &EVENT_TASK_ATTEMPT_STARTED]
+                &[
+                    &last_processed_event_id,
+                    &max_event_id,
+                    &EVENT_TASK_ATTEMPT_STARTED,
+                ],
             )
             .await?;
-            
-        debug!("Merged {} task attempt started events", attempt_started_count);
-        
+
+        debug!(
+            "Merged {} task attempt started events",
+            attempt_started_count
+        );
+
         let attempt_ended_count = transaction
             .execute(
                 r#"
@@ -867,30 +962,36 @@ impl TaskSetRegistry {
                   AND e.event_type = $3
                   AND e.task_instance_id IS NOT NULL
                 "#,
-                &[&last_processed_event_id, &max_event_id, &EVENT_TASK_ATTEMPT_ENDED]
+                &[
+                    &last_processed_event_id,
+                    &max_event_id,
+                    &EVENT_TASK_ATTEMPT_ENDED,
+                ],
             )
             .await?;
-            
+
         debug!("Merged {} task attempt ended events", attempt_ended_count);
-        
+
         if max_event_id > last_processed_event_id {
-            transaction
-                .execute("DELETE FROM merge_cursor", &[])
-                .await?;
-                
+            transaction.execute("DELETE FROM merge_cursor", &[]).await?;
+
             transaction
                 .execute(
                     "INSERT INTO merge_cursor (last_event_id) VALUES ($1)",
-                    &[&max_event_id]
+                    &[&max_event_id],
                 )
                 .await?;
-                
+
             info!("Updated merge cursor to event_id: {}", max_event_id);
         }
-        
+
         transaction.commit().await?;
-        
-        let total_events = task_created_count + task_started_count + task_ended_count + attempt_started_count + attempt_ended_count;
+
+        let total_events = task_created_count
+            + task_started_count
+            + task_ended_count
+            + attempt_started_count
+            + attempt_ended_count;
         info!("Successfully merged {} events using server-side SQL (task_created: {}, task_started: {}, task_ended: {}, attempt_started: {}, attempt_ended: {})", 
               total_events, task_created_count, task_started_count, task_ended_count, attempt_started_count, attempt_ended_count);
         Ok(())
@@ -929,7 +1030,7 @@ mod tests {
     #[test]
     fn test_upsert_and_get() {
         let mut task_set = TaskSet::new("test_domain".to_string());
-        
+
         let task_id = Uuid::new_v4();
         let task = Task {
             id: task_id,
@@ -942,9 +1043,9 @@ mod tests {
             status: 1,
             attempts: Vec::new(),
         };
-        
+
         task_set.upsert_task(task);
-        
+
         assert_eq!(task_set.len(), 1);
         assert!(task_set.get_task(task_id).is_some());
         assert!(task_set.get_task(Uuid::new_v4()).is_none());
@@ -953,7 +1054,7 @@ mod tests {
     #[test]
     fn test_delete() {
         let mut task_set = TaskSet::new("test_domain".to_string());
-        
+
         let task_id = Uuid::new_v4();
         let task = Task {
             id: task_id,
@@ -966,21 +1067,21 @@ mod tests {
             status: 1,
             attempts: Vec::new(),
         };
-        
+
         task_set.upsert_task(task);
         assert_eq!(task_set.len(), 1);
-        
+
         assert!(task_set.delete_task(task_id));
         assert_eq!(task_set.len(), 0);
         assert!(task_set.get_task(task_id).is_none());
-        
+
         assert_eq!(task_set.gaps.len(), 1);
     }
 
     #[test]
     fn test_gap_reuse() {
         let mut task_set = TaskSet::new("test_domain".to_string());
-        
+
         let task1_id = Uuid::new_v4();
         let task1 = Task {
             id: task1_id,
@@ -993,10 +1094,10 @@ mod tests {
             status: 1,
             attempts: Vec::new(),
         };
-        
+
         task_set.upsert_task(task1);
         task_set.delete_task(task1_id);
-        
+
         let task2_id = Uuid::new_v4();
         let task2 = Task {
             id: task2_id,
@@ -1009,10 +1110,10 @@ mod tests {
             status: 1,
             attempts: Vec::new(),
         };
-        
+
         task_set.upsert_task(task2);
-        
+
         assert_eq!(task_set.len(), 1);
         assert_eq!(task_set.gaps.len(), 0);
     }
-} 
+}

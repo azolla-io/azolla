@@ -3,12 +3,14 @@ macro_rules! db_test {
     ($test_name:ident, $body:expr) => {
         #[tokio::test]
         async fn $test_name() {
+            use azolla::db::{
+                create_pool, run_migrations, Database, EventStream, Server, Settings,
+            };
             use testcontainers::{
                 core::{IntoContainerPort, WaitFor},
                 runners::AsyncRunner,
                 GenericImage, ImageExt,
             };
-            use azolla::db::{Settings, create_pool, run_migrations, Database, Server, EventStream};
 
             // 1. Start a fresh Postgres container using testcontainers
             let container = GenericImage::new("postgres", "16-alpine")
@@ -36,7 +38,10 @@ macro_rules! db_test {
 
             // 3. Create your settings struct and pool
             let settings = Settings {
-                database: Database { url: db_url, pool_size: 8 },
+                database: Database {
+                    url: db_url,
+                    pool_size: 8,
+                },
                 server: Server { port: 0 }, // dummy
                 event_stream: EventStream::default(),
             };
@@ -51,4 +56,4 @@ macro_rules! db_test {
             // 6. Container is dropped here, cleaning up DB
         }
     };
-} 
+}

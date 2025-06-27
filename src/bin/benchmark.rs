@@ -45,21 +45,14 @@ struct ZipfianDistribution {
 
 impl ZipfianDistribution {
     fn new(num_domains: usize) -> Self {
-        let domains: Vec<String> = (0..num_domains)
-            .map(|i| format!("domain_{}", i))
-            .collect();
+        let domains: Vec<String> = (0..num_domains).map(|i| format!("domain_{}", i)).collect();
 
         // Generate zipfian weights: weight_i = 1/(i+1)
-        let weights: Vec<f64> = (0..num_domains)
-            .map(|i| 1.0 / (i + 1) as f64)
-            .collect();
+        let weights: Vec<f64> = (0..num_domains).map(|i| 1.0 / (i + 1) as f64).collect();
 
         // Normalize weights to sum to 1.0
         let total_weight: f64 = weights.iter().sum();
-        let normalized_weights: Vec<f64> = weights
-            .iter()
-            .map(|w| w / total_weight)
-            .collect();
+        let normalized_weights: Vec<f64> = weights.iter().map(|w| w / total_weight).collect();
 
         // Create cumulative weights for sampling
         let mut cumulative_weights = Vec::new();
@@ -77,18 +70,16 @@ impl ZipfianDistribution {
 
     fn select_domain(&self, rng: &mut impl Rng) -> &str {
         let rand_val: f64 = rng.gen();
-        
+
         for (i, &cum_weight) in self.cumulative_weights.iter().enumerate() {
             if rand_val <= cum_weight {
                 return &self.domains[i];
             }
         }
-        
+
         // Fallback to last domain (should not happen with proper cumulative weights)
         &self.domains[self.domains.len() - 1]
     }
-
-
 }
 
 struct BenchmarkStats {
@@ -168,9 +159,18 @@ impl BenchmarkStats {
             println!("  Average: {:.2}ms", avg_latency.as_secs_f64() * 1000.0);
             println!("  Minimum: {:.2}ms", min_latency.as_secs_f64() * 1000.0);
             println!("  Maximum: {:.2}ms", max_latency.as_secs_f64() * 1000.0);
-            println!("  P50: {:.2}ms", self.calculate_percentile(50.0).as_secs_f64() * 1000.0);
-            println!("  P95: {:.2}ms", self.calculate_percentile(95.0).as_secs_f64() * 1000.0);
-            println!("  P99: {:.2}ms", self.calculate_percentile(99.0).as_secs_f64() * 1000.0);
+            println!(
+                "  P50: {:.2}ms",
+                self.calculate_percentile(50.0).as_secs_f64() * 1000.0
+            );
+            println!(
+                "  P95: {:.2}ms",
+                self.calculate_percentile(95.0).as_secs_f64() * 1000.0
+            );
+            println!(
+                "  P99: {:.2}ms",
+                self.calculate_percentile(99.0).as_secs_f64() * 1000.0
+            );
             println!();
         }
 
@@ -194,7 +194,7 @@ async fn create_grpc_client(server_addr: &str) -> Result<AzollaClient<Channel>> 
     let channel = tonic::transport::Channel::from_shared(server_addr.to_string())?
         .connect()
         .await?;
-    
+
     Ok(AzollaClient::new(channel))
 }
 
@@ -204,8 +204,14 @@ fn generate_random_task_data(
     counter: usize,
     rng: &mut impl Rng,
 ) -> CreateTaskRequest {
-    let task_name = format!("{}_{}_{}_{}", task_prefix, domain, counter, rng.gen::<u16>());
-    
+    let task_name = format!(
+        "{}_{}_{}_{}",
+        task_prefix,
+        domain,
+        counter,
+        rng.gen::<u16>()
+    );
+
     // Generate random retry policy as JSON string
     let max_retries = rng.gen_range(1..=5);
     let retry_policy_json = json!({
@@ -216,9 +222,7 @@ fn generate_random_task_data(
 
     // Generate random args (1-3 elements)
     let num_args = rng.gen_range(1..=3);
-    let args: Vec<String> = (0..num_args)
-        .map(|i| format!("arg_{}", i))
-        .collect();
+    let args: Vec<String> = (0..num_args).map(|i| format!("arg_{}", i)).collect();
 
     // Generate random kwargs (1-3 key-value pairs)
     let num_kwargs = rng.gen_range(1..=3);
@@ -226,7 +230,7 @@ fn generate_random_task_data(
     for i in 0..num_kwargs {
         kwargs_obj.insert(
             format!("key_{}", i),
-            json!(format!("value_{}", rng.gen::<u16>()))
+            json!(format!("value_{}", rng.gen::<u16>())),
         );
     }
 
@@ -240,21 +244,13 @@ fn generate_random_task_data(
     }
 }
 
-fn generate_all_requests(
-    args: &Args,
-    zipf: &ZipfianDistribution,
-) -> Vec<CreateTaskRequest> {
+fn generate_all_requests(args: &Args, zipf: &ZipfianDistribution) -> Vec<CreateTaskRequest> {
     let mut requests = Vec::with_capacity(args.requests);
     let mut rng = thread_rng();
 
     for i in 0..args.requests {
         let domain = zipf.select_domain(&mut rng);
-        let request = generate_random_task_data(
-            &args.task_prefix,
-            domain,
-            i,
-            &mut rng,
-        );
+        let request = generate_random_task_data(&args.task_prefix, domain, i, &mut rng);
         requests.push(request);
     }
 
@@ -275,12 +271,9 @@ async fn benchmark_worker(
         let request = &requests[i];
         let domain = request.domain.clone();
         let start = Instant::now();
-        
+
         // Add timeout to prevent hanging requests
-        let result = timeout(
-            Duration::from_secs(30),
-            client.create_task(request.clone())
-        ).await;
+        let result = timeout(Duration::from_secs(30), client.create_task(request.clone())).await;
 
         let latency = match result {
             Ok(Ok(_)) => Some(start.elapsed()),
@@ -295,7 +288,7 @@ async fn benchmark_worker(
 
 async fn run_benchmark(args: Args) -> Result<()> {
     println!("Connecting to server: {}", args.server);
-    
+
     // Test connection first
     let test_client = create_grpc_client(&args.server).await?;
     drop(test_client);
@@ -303,10 +296,10 @@ async fn run_benchmark(args: Args) -> Result<()> {
 
     println!("\nGenerating {} requests...", args.requests);
     let zipf = ZipfianDistribution::new(args.domains);
-    
+
     // Pre-generate all requests
     let all_requests = Arc::new(generate_all_requests(&args, &zipf));
-    
+
     println!("Starting benchmark...");
     println!("Requests: {}", args.requests);
     println!("Concurrency: {}", args.concurrency);
@@ -318,14 +311,14 @@ async fn run_benchmark(args: Args) -> Result<()> {
     // Calculate chunk boundaries
     let mut chunk_boundaries = Vec::new();
     let mut start_idx = 0;
-    
+
     for worker_id in 0..args.concurrency {
         let worker_request_count = if worker_id < remaining_requests {
             requests_per_worker + 1
         } else {
             requests_per_worker
         };
-        
+
         let end_idx = start_idx + worker_request_count;
         chunk_boundaries.push((start_idx, end_idx));
         start_idx = end_idx;
@@ -335,15 +328,15 @@ async fn run_benchmark(args: Args) -> Result<()> {
 
     // Create concurrent workers
     let mut handles = Vec::new();
-    
-    for (_worker_id, (start_idx, end_idx)) in chunk_boundaries.into_iter().enumerate() {
+
+    for (start_idx, end_idx) in chunk_boundaries.into_iter() {
         let client = create_grpc_client(&args.server).await?;
         let requests_ref = Arc::clone(&all_requests);
-        
+
         let handle = tokio::spawn(async move {
             benchmark_worker(client, requests_ref, start_idx, end_idx).await
         });
-        
+
         handles.push(handle);
     }
 
@@ -365,11 +358,11 @@ async fn run_benchmark(args: Args) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    
+
     if let Err(e) = run_benchmark(args).await {
         eprintln!("Benchmark failed: {}", e);
         std::process::exit(1);
     }
 
     Ok(())
-} 
+}
