@@ -441,37 +441,8 @@ impl EventStream {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     // TODO: Fix db_test macro import issue
     // use crate::db_test;
-    use chrono::Utc;
-    use serde_json::json;
-    use uuid::Uuid;
-
-    /// Helper function to create test event
-    fn create_test_event(domain: &str, task_name: &str) -> EventRecord {
-        EventRecord {
-            domain: domain.to_string(),
-            task_instance_id: Some(Uuid::new_v4()),
-            flow_instance_id: None,
-            event_type: 1,
-            created_at: Utc::now(),
-            metadata: json!({
-                "task_name": task_name,
-                "created_by": "unit_test"
-            }),
-        }
-    }
-
-    /// Helper to count events in database
-    async fn count_events(pool: &crate::db::PgPool, domain: &str) -> i64 {
-        let client = pool.get().await.unwrap();
-        let row = client
-            .query_one("SELECT COUNT(*) FROM events WHERE domain = $1", &[&domain])
-            .await
-            .unwrap();
-        row.get(0)
-    }
 
     /*
     // TODO: Fix db_test macro issue - commenting out tests for now
