@@ -19,12 +19,12 @@ macro_rules! db_test {
     ($test_name:ident, $body:expr) => {
         #[tokio::test]
         async fn $test_name() {
-            use crate::db::{create_pool, run_migrations, Database, Server, Settings};
             use testcontainers::{
                 core::{IntoContainerPort, WaitFor},
                 runners::AsyncRunner,
                 GenericImage, ImageExt,
             };
+            use $crate::db::{create_pool, run_migrations, Database, Server, Settings};
 
             // 1. Start a fresh Postgres container using testcontainers
             let container = GenericImage::new("postgres", "16-alpine")

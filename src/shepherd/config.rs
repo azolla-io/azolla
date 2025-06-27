@@ -231,15 +231,18 @@ mod tests {
 
     #[test]
     fn test_config_validation_errors() {
-        let mut config = ShepherdConfig::default();
-
         // Test invalid concurrency
-        config.max_concurrency = 0;
+        let config = ShepherdConfig {
+            max_concurrency: 0,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
 
         // Test invalid port
-        config.max_concurrency = 1;
-        config.worker_grpc_port = 0;
+        let config = ShepherdConfig {
+            worker_grpc_port: 0,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 }
