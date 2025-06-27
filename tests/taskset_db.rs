@@ -1,5 +1,5 @@
 mod common;
-use azolla_orchestrator::{db::PgPool, taskset::TaskSetRegistry};
+use azolla::{db::PgPool, taskset::TaskSetRegistry};
 use chrono::Utc;
 use uuid::Uuid;
 use serde_json::json;

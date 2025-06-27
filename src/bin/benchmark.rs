@@ -9,7 +9,7 @@ use serde_json::json;
 use tokio::time::timeout;
 use tonic::transport::Channel;
 
-use azolla_orchestrator::proto::orchestrator;
+use azolla::proto::orchestrator;
 use orchestrator::azolla_client::AzollaClient;
 use orchestrator::*;
 

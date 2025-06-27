@@ -6,7 +6,7 @@ use tonic::Request;
 use uuid::Uuid;
 use serde_json::Value;
 
-use azolla_orchestrator::proto::{common, shepherd};
+use azolla::proto::{common, shepherd};
 use shepherd::worker_client::WorkerClient;
 use shepherd::*;
 
