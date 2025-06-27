@@ -8,12 +8,9 @@ use uuid::Uuid;
 use chrono::Utc;
 use std::sync::Arc;
 
-pub mod azolla {
-    tonic::include_proto!("azolla");
-}
-
-use azolla::azolla_server::{Azolla, AzollaServer};
-use azolla::*;
+use crate::proto::orchestrator;
+use orchestrator::azolla_server::{Azolla, AzollaServer};
+use orchestrator::*;
 
 use crate::{EVENT_TASK_CREATED, EVENT_TASK_STARTED, EVENT_TASK_ENDED, 
             EVENT_TASK_ATTEMPT_STARTED, EVENT_TASK_ATTEMPT_ENDED, EVENT_SHEPHERD_REGISTERED};

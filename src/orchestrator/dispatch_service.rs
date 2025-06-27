@@ -10,12 +10,9 @@ use futures::StreamExt;
 use crate::orchestrator::shepherd_manager::ShepherdManager;
 use crate::taskset::TaskSetRegistry;
 
-pub mod azolla {
-    tonic::include_proto!("azolla");
-}
-
-use azolla::dispatch_server::{Dispatch, DispatchServer};
-use azolla::*;
+use crate::proto::{common, orchestrator};
+use orchestrator::dispatch_server::{Dispatch, DispatchServer};
+use orchestrator::*;
 
 pub struct DispatchService {
     shepherd_manager: Arc<ShepherdManager>,
@@ -98,8 +95,8 @@ async fn handle_shepherd_connection(
             
             _ = ping_interval.tick() => {
                 if shepherd_uuid.is_some() {
-                    let ping = ServerMsg {
-                        kind: Some(server_msg::Kind::Ping(Ping {
+                    let ping = orchestrator::ServerMsg {
+                        kind: Some(orchestrator::server_msg::Kind::Ping(orchestrator::Ping {
                             timestamp: chrono::Utc::now().timestamp(),
                         })),
                     };
@@ -186,7 +183,7 @@ async fn handle_ack_message(
 }
 
 async fn handle_status_message(
-    status: azolla::Status,
+    status: orchestrator::Status,
     shepherd_uuid: &mut Option<Uuid>,
     shepherd_manager: &Arc<ShepherdManager>,
 ) -> Result<()> {
@@ -202,7 +199,7 @@ async fn handle_status_message(
 }
 
 async fn handle_task_result_message(
-    task_result: TaskResult,
+    task_result: common::TaskResult,
     shepherd_uuid: &mut Option<Uuid>,
     shepherd_manager: &Arc<ShepherdManager>,
 ) -> Result<()> {
@@ -235,7 +232,7 @@ pub async fn dispatch_task_to_shepherd(
     memory_limit: Option<u64>,
     cpu_limit: Option<u32>,
 ) -> Result<()> {
-    let task = Task {
+    let task = common::Task {
         task_id: task_id.to_string(),
         name: task_name,
         args,
@@ -244,8 +241,8 @@ pub async fn dispatch_task_to_shepherd(
         cpu_limit,
     };
     
-    let server_msg = ServerMsg {
-        kind: Some(server_msg::Kind::Task(task)),
+    let server_msg = orchestrator::ServerMsg {
+        kind: Some(orchestrator::server_msg::Kind::Task(task)),
     };
     
     tx.send(Ok(server_msg)).await
