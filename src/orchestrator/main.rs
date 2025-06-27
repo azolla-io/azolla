@@ -1,10 +1,10 @@
 use anyhow::Result;
-use tonic::transport::Server;
 use tokio::signal;
+use tonic::transport::Server;
 
 use azolla::db::{create_pool, run_migrations, Settings};
-use azolla::orchestrator::create_server;
 use azolla::event_stream::EventStreamConfig;
+use azolla::orchestrator::create_server;
 
 /// Wait for shutdown signal (CTRL+C or SIGTERM)
 async fn shutdown_signal() {
@@ -41,31 +41,31 @@ async fn main() -> Result<()> {
         std::env::set_var("RUST_LOG", "warn");
     }
     env_logger::init();
-    
+
     let settings = Settings::new().expect("Failed to load settings");
     log::info!("Loaded settings: {:?}", settings);
     let addr = format!("[::1]:{}", settings.server.port).parse()?;
-    
+
     let pool = create_pool(&settings).expect("Failed to create database pool");
-    
+
     run_migrations(&pool).await?;
 
     let event_stream_config = EventStreamConfig::from(&settings.event_stream);
     let (service, grpc_server) = create_server(pool, event_stream_config).await?;
-    
+
     log::info!("Azolla Orchestrator listening on {}", addr);
 
     let server_future = Server::builder()
         .add_service(grpc_server)
         .serve_with_shutdown(addr, shutdown_signal());
-    
+
     let result = server_future.await;
-    
+
     log::info!("Orchestrator terminated, shutting down service...");
     if let Err(e) = service.shutdown().await {
         log::error!("Error during service shutdown: {}", e);
     }
-    
+
     result?;
 
     Ok(())

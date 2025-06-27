@@ -1,10 +1,10 @@
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
+use clap::ArgMatches;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
 use uuid::Uuid;
-use clap::ArgMatches;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShepherdConfig {
@@ -45,26 +45,26 @@ impl ShepherdConfig {
                 self.worker_binary_path
             ));
         }
-        
+
         if self.max_concurrency == 0 {
             return Err(anyhow::anyhow!("max_concurrency must be greater than 0"));
         }
-        
+
         if self.worker_grpc_port == 0 {
             return Err(anyhow::anyhow!("worker_grpc_port must be greater than 0"));
         }
-        
+
         if self.heartbeat_interval.as_secs() == 0 {
             return Err(anyhow::anyhow!("heartbeat_interval must be greater than 0"));
         }
-        
+
         if self.reconnect_backoff.as_secs() == 0 {
             return Err(anyhow::anyhow!("reconnect_backoff must be greater than 0"));
         }
-        
+
         Ok(())
     }
-    
+
     pub fn worker_service_endpoint(&self) -> String {
         format!("http://127.0.0.1:{}", self.worker_grpc_port)
     }
@@ -72,53 +72,53 @@ impl ShepherdConfig {
         if let Some(endpoint) = matches.get_one::<String>("orchestrator") {
             self.orchestrator_endpoint = endpoint.clone();
         }
-        
+
         if let Some(concurrency_str) = matches.get_one::<String>("max-concurrency") {
             if let Ok(concurrency) = concurrency_str.parse::<u32>() {
                 self.max_concurrency = concurrency;
             }
         }
-        
+
         if let Some(port_str) = matches.get_one::<String>("worker-port") {
             if let Ok(port) = port_str.parse::<u16>() {
                 self.worker_grpc_port = port;
             }
         }
-        
+
         if let Some(binary_path) = matches.get_one::<String>("worker-binary") {
             self.worker_binary_path = binary_path.clone();
         }
-        
+
         if let Some(log_level) = matches.get_one::<String>("log-level") {
             self.log_level = Some(log_level.clone());
         }
     }
-    
+
     pub fn apply_env_overrides(&mut self) {
         if let Ok(endpoint) = std::env::var("AZOLLA_ORCHESTRATOR_ENDPOINT") {
             self.orchestrator_endpoint = endpoint;
         }
-        
+
         if let Ok(concurrency_str) = std::env::var("AZOLLA_MAX_CONCURRENCY") {
             if let Ok(concurrency) = concurrency_str.parse::<u32>() {
                 self.max_concurrency = concurrency;
             }
         }
-        
+
         if let Ok(port_str) = std::env::var("AZOLLA_WORKER_PORT") {
             if let Ok(port) = port_str.parse::<u16>() {
                 self.worker_grpc_port = port;
             }
         }
-        
+
         if let Ok(binary_path) = std::env::var("AZOLLA_WORKER_BINARY") {
             self.worker_binary_path = binary_path;
         }
-        
+
         if let Ok(log_level) = std::env::var("AZOLLA_LOG_LEVEL") {
             self.log_level = Some(log_level);
         }
-        
+
         if let Ok(timeout_str) = std::env::var("AZOLLA_WORKER_TIMEOUT") {
             if let Ok(timeout_secs) = timeout_str.parse::<u64>() {
                 self.worker_timeout = Some(Duration::from_secs(timeout_secs));
@@ -130,46 +130,47 @@ impl ShepherdConfig {
 /// Load configuration: CLI args > env vars > config file > defaults
 pub fn load_config(config_path: Option<&str>, matches: &ArgMatches) -> Result<ShepherdConfig> {
     let mut config = ShepherdConfig::default();
-    
+
     if let Some(path) = config_path {
         if Path::new(path).exists() {
             let file_content = fs::read_to_string(path)
                 .with_context(|| format!("Failed to read config file: {}", path))?;
-            
+
             let file_config: ShepherdConfig = toml::from_str(&file_content)
                 .with_context(|| format!("Failed to parse config file: {}", path))?;
-            
+
             let original_uuid = config.uuid;
             config = file_config;
             config.uuid = original_uuid;
-            
+
             log::info!("Loaded configuration from file: {}", path);
         } else {
             log::info!("Config file not found: {}, using defaults", path);
         }
     }
-    
+
     config.apply_env_overrides();
     config.apply_cli_overrides(matches);
-    
-    config.validate()
+
+    config
+        .validate()
         .with_context(|| "Configuration validation failed")?;
-    
+
     log::info!("Configuration loaded successfully");
     log::debug!("Final config: {:?}", config);
-    
+
     Ok(config)
 }
 
 /// Create a sample configuration file
 pub fn create_sample_config(path: &str) -> Result<()> {
     let config = ShepherdConfig::default();
-    let toml_content = toml::to_string_pretty(&config)
-        .context("Failed to serialize default config")?;
-    
+    let toml_content =
+        toml::to_string_pretty(&config).context("Failed to serialize default config")?;
+
     fs::write(path, toml_content)
         .with_context(|| format!("Failed to write sample config to: {}", path))?;
-    
+
     println!("Sample configuration written to: {}", path);
     Ok(())
 }
@@ -212,7 +213,7 @@ mod tests {
     fn test_config_serialization() {
         let config = ShepherdConfig::default();
         let toml_str = toml::to_string(&config).unwrap();
-        
+
         // Should be able to deserialize back
         let parsed: ShepherdConfig = toml::from_str(&toml_str).unwrap();
         assert_eq!(config.orchestrator_endpoint, parsed.orchestrator_endpoint);
@@ -231,11 +232,11 @@ mod tests {
     #[test]
     fn test_config_validation_errors() {
         let mut config = ShepherdConfig::default();
-        
+
         // Test invalid concurrency
         config.max_concurrency = 0;
         assert!(config.validate().is_err());
-        
+
         // Test invalid port
         config.max_concurrency = 1;
         config.worker_grpc_port = 0;

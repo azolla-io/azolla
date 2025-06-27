@@ -1,19 +1,18 @@
 use crate::db::PgPool;
-use crate::taskset::{TaskSetRegistry, Task};
-use crate::event_stream::{EventStream, EventStreamConfig, EventRecord};
+use crate::event_stream::{EventRecord, EventStream, EventStreamConfig};
+use crate::taskset::{Task, TaskSetRegistry};
 use anyhow::Result;
-use tonic::{Request, Response, Status};
-use log::info;
-use uuid::Uuid;
 use chrono::Utc;
+use log::info;
 use std::sync::Arc;
+use tonic::{Request, Response, Status};
+use uuid::Uuid;
 
 use crate::proto::orchestrator;
 use orchestrator::azolla_server::{Azolla, AzollaServer};
 use orchestrator::*;
 
-use crate::{EVENT_TASK_CREATED, EVENT_TASK_STARTED, EVENT_TASK_ENDED, 
-            EVENT_TASK_ATTEMPT_STARTED, EVENT_TASK_ATTEMPT_ENDED, EVENT_SHEPHERD_REGISTERED};
+use crate::EVENT_TASK_CREATED;
 
 #[derive(Clone)]
 pub struct MyAzollaService {
@@ -25,7 +24,7 @@ pub struct MyAzollaService {
 impl MyAzollaService {
     pub fn new(pool: PgPool, event_stream_config: EventStreamConfig) -> Self {
         let event_stream = Arc::new(EventStream::new(pool.clone(), event_stream_config));
-        Self { 
+        Self {
             pool,
             registry: Arc::new(TaskSetRegistry::new()),
             event_stream,
@@ -37,8 +36,10 @@ impl MyAzollaService {
         // Note: We initialize from task_instance table, but new operations only write to events table
         // A separate periodic process will sync events back to task_instance table
         self.registry.load_from_db(&self.pool).await?;
-        info!("TaskSetRegistry initialized with {} domains (from task_instance table)", 
-              self.registry.domains().len());
+        info!(
+            "TaskSetRegistry initialized with {} domains (from task_instance table)",
+            self.registry.domains().len()
+        );
         Ok(())
     }
 
@@ -52,7 +53,7 @@ impl MyAzollaService {
     pub async fn merge_events_to_db(&self) -> Result<()> {
         self.registry.merge_events_to_db(&self.pool).await
     }
-    
+
     /// Shutdown the service and print metrics
     pub async fn shutdown(&self) -> Result<()> {
         log::info!("Shutting down Azolla Orchestrator service...");
@@ -84,8 +85,9 @@ impl Azolla for MyAzollaService {
             .map_err(|e| Status::invalid_argument(format!("Invalid kwargs JSON: {}", e)))?;
 
         let flow_instance_id = match req.flow_instance_id {
-            Some(ref id_str) => Some(Uuid::parse_str(id_str)
-                .map_err(|e| Status::invalid_argument(format!("Invalid flow_instance_id UUID: {}", e)))?),
+            Some(ref id_str) => Some(Uuid::parse_str(id_str).map_err(|e| {
+                Status::invalid_argument(format!("Invalid flow_instance_id UUID: {}", e))
+            })?),
             None => None,
         };
 
@@ -130,15 +132,19 @@ impl Azolla for MyAzollaService {
 
         {
             let domain_actor = self.registry.get_or_create_domain(&req.domain);
-            domain_actor.upsert_task(task).await.map_err(|e| {
-                Status::internal(format!("Failed to upsert task: {:?}", e))
-            })?;
+            domain_actor
+                .upsert_task(task)
+                .await
+                .map_err(|e| Status::internal(format!("Failed to upsert task: {:?}", e)))?;
         }
 
-        info!("Successfully created task {} in domain {} (event-sourced)", task_id, req.domain);
-        
-        Ok(Response::new(CreateTaskResponse { 
-            task_id: task_id.to_string() 
+        info!(
+            "Successfully created task {} in domain {} (event-sourced)",
+            task_id, req.domain
+        );
+
+        Ok(Response::new(CreateTaskResponse {
+            task_id: task_id.to_string(),
         }))
     }
 
@@ -156,7 +162,9 @@ impl Azolla for MyAzollaService {
         _request: Request<CreateFlowRequest>,
     ) -> Result<Response<CreateFlowResponse>, Status> {
         let flow_id = Uuid::new_v4();
-        Ok(Response::new(CreateFlowResponse { flow_id: flow_id.to_string() }))
+        Ok(Response::new(CreateFlowResponse {
+            flow_id: flow_id.to_string(),
+        }))
     }
 
     async fn wait_for_flow(
@@ -183,12 +191,15 @@ impl Azolla for MyAzollaService {
     }
 }
 
-pub async fn create_server(pool: PgPool, event_stream_config: EventStreamConfig) -> Result<(MyAzollaService, AzollaServer<MyAzollaService>)> {
+pub async fn create_server(
+    pool: PgPool,
+    event_stream_config: EventStreamConfig,
+) -> Result<(MyAzollaService, AzollaServer<MyAzollaService>)> {
     let service = MyAzollaService::new(pool, event_stream_config);
-    
+
     service.initialize().await?;
-    
+
     let server = AzollaServer::new(service.clone());
-    
+
     Ok((service, server))
-} 
+}

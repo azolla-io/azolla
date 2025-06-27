@@ -112,7 +112,6 @@ pub struct EventStream {
     metrics: Arc<StreamMetrics>,
 }
 
-
 #[derive(Debug)]
 struct StreamMetrics {
     flushes_due_to_timeout: AtomicU64,
@@ -125,7 +124,7 @@ struct StreamMetrics {
 impl EventStream {
     pub fn new(pool: PgPool, config: EventStreamConfig) -> Self {
         let (tx, rx) = mpsc::channel(config.channel_capacity);
-        
+
         let metrics = Arc::new(StreamMetrics {
             flushes_due_to_timeout: AtomicU64::new(0),
             flushes_due_to_max_batch_size: AtomicU64::new(0),
@@ -133,14 +132,9 @@ impl EventStream {
             total_events_flushed: AtomicU64::new(0),
             total_flush_count: AtomicU64::new(0),
         });
-        
-        let handle = tokio::spawn(Self::run_adaptive_stream(
-            pool, 
-            config, 
-            rx,
-            metrics.clone()
-        ));
-        
+
+        let handle = tokio::spawn(Self::run_adaptive_stream(pool, config, rx, metrics.clone()));
+
         Self {
             tx,
             _handle: handle,
@@ -151,7 +145,7 @@ impl EventStream {
     /// Write event and return when the containing batch is committed
     pub async fn write_event(&self, event: EventRecord) -> Result<()> {
         let (completion_tx, completion_rx) = oneshot::channel();
-        
+
         self.tx
             .send(EventStreamMessage::WriteEvent {
                 event,
@@ -159,7 +153,7 @@ impl EventStream {
             })
             .await
             .map_err(|_| anyhow::anyhow!("EventStream channel closed"))?;
-        
+
         completion_rx
             .await
             .map_err(|_| anyhow::anyhow!("EventStream completion channel closed"))?
@@ -167,7 +161,7 @@ impl EventStream {
 
     pub async fn shutdown(&self) -> Result<()> {
         self.print_metrics();
-        
+
         self.tx
             .send(EventStreamMessage::Shutdown)
             .await
@@ -179,11 +173,15 @@ impl EventStream {
     }
 
     pub fn get_flushes_due_to_max_batch_size(&self) -> u64 {
-        self.metrics.flushes_due_to_max_batch_size.load(Ordering::Relaxed)
+        self.metrics
+            .flushes_due_to_max_batch_size
+            .load(Ordering::Relaxed)
     }
 
     pub fn get_flushes_due_to_low_queue(&self) -> u64 {
-        self.metrics.flushes_due_to_low_queue.load(Ordering::Relaxed)
+        self.metrics
+            .flushes_due_to_low_queue
+            .load(Ordering::Relaxed)
     }
 
     pub fn get_average_batch_size(&self) -> f64 {
@@ -203,35 +201,68 @@ impl EventStream {
         let low_queue_flushes = self.get_flushes_due_to_low_queue();
         let avg_batch_size = self.get_average_batch_size();
         let total_flushes = timeout_flushes + max_batch_flushes + low_queue_flushes;
-        
+
         // Use eprintln to ensure metrics are always visible, regardless of log level
         eprintln!("=== EventStream Metrics Summary ===");
         eprintln!("Total flushes: {}", total_flushes);
-        eprintln!("  Due to timeout: {} ({:.1}%)", timeout_flushes, 
-                  if total_flushes > 0 { (timeout_flushes as f64 / total_flushes as f64) * 100.0 } else { 0.0 });
-        eprintln!("  Due to max batch size: {} ({:.1}%)", max_batch_flushes,
-                  if total_flushes > 0 { (max_batch_flushes as f64 / total_flushes as f64) * 100.0 } else { 0.0 });
-        eprintln!("  Due to low queue: {} ({:.1}%)", low_queue_flushes,
-                  if total_flushes > 0 { (low_queue_flushes as f64 / total_flushes as f64) * 100.0 } else { 0.0 });
+        eprintln!(
+            "  Due to timeout: {} ({:.1}%)",
+            timeout_flushes,
+            if total_flushes > 0 {
+                (timeout_flushes as f64 / total_flushes as f64) * 100.0
+            } else {
+                0.0
+            }
+        );
+        eprintln!(
+            "  Due to max batch size: {} ({:.1}%)",
+            max_batch_flushes,
+            if total_flushes > 0 {
+                (max_batch_flushes as f64 / total_flushes as f64) * 100.0
+            } else {
+                0.0
+            }
+        );
+        eprintln!(
+            "  Due to low queue: {} ({:.1}%)",
+            low_queue_flushes,
+            if total_flushes > 0 {
+                (low_queue_flushes as f64 / total_flushes as f64) * 100.0
+            } else {
+                0.0
+            }
+        );
         eprintln!("Average batch size: {:.2}", avg_batch_size);
         eprintln!("======================================");
     }
 
     fn record_flush_due_to_timeout(metrics: &Arc<StreamMetrics>, batch_size: usize) {
-        metrics.flushes_due_to_timeout.fetch_add(1, Ordering::Relaxed);
-        metrics.total_events_flushed.fetch_add(batch_size as u64, Ordering::Relaxed);
+        metrics
+            .flushes_due_to_timeout
+            .fetch_add(1, Ordering::Relaxed);
+        metrics
+            .total_events_flushed
+            .fetch_add(batch_size as u64, Ordering::Relaxed);
         metrics.total_flush_count.fetch_add(1, Ordering::Relaxed);
     }
 
     fn record_flush_due_to_max_batch_size(metrics: &Arc<StreamMetrics>, batch_size: usize) {
-        metrics.flushes_due_to_max_batch_size.fetch_add(1, Ordering::Relaxed);
-        metrics.total_events_flushed.fetch_add(batch_size as u64, Ordering::Relaxed);
+        metrics
+            .flushes_due_to_max_batch_size
+            .fetch_add(1, Ordering::Relaxed);
+        metrics
+            .total_events_flushed
+            .fetch_add(batch_size as u64, Ordering::Relaxed);
         metrics.total_flush_count.fetch_add(1, Ordering::Relaxed);
     }
 
     fn record_flush_due_to_low_queue(metrics: &Arc<StreamMetrics>, batch_size: usize) {
-        metrics.flushes_due_to_low_queue.fetch_add(1, Ordering::Relaxed);
-        metrics.total_events_flushed.fetch_add(batch_size as u64, Ordering::Relaxed);
+        metrics
+            .flushes_due_to_low_queue
+            .fetch_add(1, Ordering::Relaxed);
+        metrics
+            .total_events_flushed
+            .fetch_add(batch_size as u64, Ordering::Relaxed);
         metrics.total_flush_count.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -248,47 +279,61 @@ impl EventStream {
 
         loop {
             let msg_result = timeout(config.max_wait_time, rx.recv()).await;
-            
-            match msg_result {
-                Ok(Some(msg)) => {
-                    match msg {
-                        EventStreamMessage::WriteEvent { event, completion_tx } => {
-                            current_batch.add_event(event, completion_tx);
 
-                            if current_batch.len() >= config.max_batch_size {
-                                Self::record_flush_due_to_max_batch_size(&metrics, current_batch.len());
-                                
-                                Self::flush_batch_async(&mut current_batch, &pool, &mut pending_handles).await;
-                                last_flush_time = Instant::now();
-                            } else if rx.len() < config.adaptive_threshold {
-                                Self::record_flush_due_to_low_queue(&metrics, current_batch.len());
-                                
-                                Self::flush_batch_async(&mut current_batch, &pool, &mut pending_handles).await;
-                                last_flush_time = Instant::now();
-                            }
-                        }
-                        EventStreamMessage::Shutdown => {
-                            for handle in pending_handles.drain(..) {
-                                let _ = handle.await;
-                            }
-                            
-                            if !current_batch.is_empty() {
-                                let batch = std::mem::replace(&mut current_batch, EventBatch::new());
-                                
-                                Self::flush_batch(&pool, batch).await;
-                            }
-                            break;
+            match msg_result {
+                Ok(Some(msg)) => match msg {
+                    EventStreamMessage::WriteEvent {
+                        event,
+                        completion_tx,
+                    } => {
+                        current_batch.add_event(event, completion_tx);
+
+                        if current_batch.len() >= config.max_batch_size {
+                            Self::record_flush_due_to_max_batch_size(&metrics, current_batch.len());
+
+                            Self::flush_batch_async(
+                                &mut current_batch,
+                                &pool,
+                                &mut pending_handles,
+                            )
+                            .await;
+                            last_flush_time = Instant::now();
+                        } else if rx.len() < config.adaptive_threshold {
+                            Self::record_flush_due_to_low_queue(&metrics, current_batch.len());
+
+                            Self::flush_batch_async(
+                                &mut current_batch,
+                                &pool,
+                                &mut pending_handles,
+                            )
+                            .await;
+                            last_flush_time = Instant::now();
                         }
                     }
-                }
+                    EventStreamMessage::Shutdown => {
+                        for handle in pending_handles.drain(..) {
+                            let _ = handle.await;
+                        }
+
+                        if !current_batch.is_empty() {
+                            let batch = std::mem::replace(&mut current_batch, EventBatch::new());
+
+                            Self::flush_batch(&pool, batch).await;
+                        }
+                        break;
+                    }
+                },
                 Ok(None) => {
                     break;
                 }
                 Err(_) => {
-                    if !current_batch.is_empty() && last_flush_time.elapsed() >= config.max_wait_time {
+                    if !current_batch.is_empty()
+                        && last_flush_time.elapsed() >= config.max_wait_time
+                    {
                         Self::record_flush_due_to_timeout(&metrics, current_batch.len());
-                        
-                        Self::flush_batch_async(&mut current_batch, &pool, &mut pending_handles).await;
+
+                        Self::flush_batch_async(&mut current_batch, &pool, &mut pending_handles)
+                            .await;
                         last_flush_time = Instant::now();
                     }
                 }
@@ -305,17 +350,18 @@ impl EventStream {
         if current_batch.is_empty() {
             return;
         }
-        
+
         let batch = std::mem::replace(current_batch, EventBatch::new());
-        
+
         match pool.get().await {
             Ok(connection) => {
                 let handle = tokio::spawn(async move {
-                    let result = Self::write_batch_to_db_with_connection(connection, &batch.events).await;
+                    let result =
+                        Self::write_batch_to_db_with_connection(connection, &batch.events).await;
                     batch.notify_completion(&result);
                 });
                 pending_handles.push(handle);
-                
+
                 if pending_handles.len() > 10 {
                     pending_handles.retain(|handle| !handle.is_finished());
                 }
@@ -336,14 +382,13 @@ impl EventStream {
             Ok(client) => Self::write_batch_to_db_with_connection(client, &batch.events).await,
             Err(e) => Err(anyhow::anyhow!("Failed to get connection: {}", e)),
         };
-        
+
         if let Err(e) = &result {
             log::error!("Failed to flush {} events: {}", batch.events.len(), e);
         }
-        
+
         batch.notify_completion(&result);
     }
-
 
     /// Write using connection acquired in actor loop for backpressure
     async fn write_batch_to_db_with_connection(
@@ -359,14 +404,14 @@ impl EventStream {
                AS t(domain, task_instance_id, flow_instance_id, event_type, created_at, metadata)"#;
 
         let stmt = client.prepare(UNNEST_INSERT_STMT).await?;
-        
+
         let mut domains = Vec::with_capacity(events.len());
         let mut task_ids = Vec::with_capacity(events.len());
         let mut flow_ids = Vec::with_capacity(events.len());
         let mut event_types = Vec::with_capacity(events.len());
         let mut created_ats = Vec::with_capacity(events.len());
         let mut json_metadatas = Vec::with_capacity(events.len());
-        
+
         for event in events {
             domains.push(event.domain.clone());
             task_ids.push(event.task_instance_id);
@@ -376,17 +421,19 @@ impl EventStream {
             json_metadatas.push(Json(&event.metadata));
         }
 
-        client.execute(
-            &stmt,
-            &[
-                &domains,
-                &task_ids,
-                &flow_ids,
-                &event_types,
-                &created_ats,
-                &json_metadatas,
-            ],
-        ).await?;
+        client
+            .execute(
+                &stmt,
+                &[
+                    &domains,
+                    &task_ids,
+                    &flow_ids,
+                    &event_types,
+                    &created_ats,
+                    &json_metadatas,
+                ],
+            )
+            .await?;
 
         Ok(())
     }
@@ -421,7 +468,8 @@ mod tests {
         let client = pool.get().await.unwrap();
         let row = client
             .query_one("SELECT COUNT(*) FROM events WHERE domain = $1", &[&domain])
-            .await.unwrap();
+            .await
+            .unwrap();
         row.get(0)
     }
 
@@ -436,22 +484,22 @@ mod tests {
         };
 
         let event_stream = EventStream::new(pool.clone(), config);
-        
+
         // Single event should trigger immediate flush (low load)
         let event = create_test_event("low_load_domain", "single_task");
         let result = event_stream.write_event(event).await;
-        
+
         assert!(result.is_ok(), "Single event write should succeed");
-        
+
         // Shutdown to ensure all async flushes complete
         event_stream.shutdown().await.unwrap();
-        
+
         // Verify adaptive batching metrics - should be flush due to low queue
         assert_eq!(event_stream.get_flushes_due_to_low_queue(), 1, "Should have 1 flush due to low queue");
         assert_eq!(event_stream.get_flushes_due_to_max_batch_size(), 0, "Should not flush due to max batch size");
         assert_eq!(event_stream.get_flushes_due_to_timeout(), 0, "Should not flush due to timeout");
         assert_eq!(event_stream.get_average_batch_size(), 1.0, "Average batch size should be 1.0");
-        
+
         // Verify event was written to database
         let count = count_events(&pool, "low_load_domain").await;
         assert_eq!(count, 1, "One event should be written to database");
@@ -466,24 +514,24 @@ mod tests {
         };
 
         let event_stream = EventStream::new(pool.clone(), config);
-        
+
         // Send events one at a time to see if batching works properly
         for i in 0..5 {
             let event = create_test_event("high_load_domain", &format!("task_{}", i));
             let result = event_stream.write_event(event).await;
             assert!(result.is_ok(), "Event write should succeed");
         }
-        
+
         // Shutdown to ensure all async flushes complete
         event_stream.shutdown().await.unwrap();
-        
+
         // Verify all events were written
         let count = count_events(&pool, "high_load_domain").await;
         assert_eq!(count, 5, "All 5 events should be written");
-        
+
         // The batching behavior depends on timing - we just verify events were processed
-        let total_flushes = event_stream.get_flushes_due_to_low_queue() + 
-                          event_stream.get_flushes_due_to_max_batch_size() + 
+        let total_flushes = event_stream.get_flushes_due_to_low_queue() +
+                          event_stream.get_flushes_due_to_max_batch_size() +
                           event_stream.get_flushes_due_to_timeout();
         assert!(total_flushes >= 1, "Should have at least 1 flush");
         assert!(total_flushes <= 5, "Should not exceed number of events");
@@ -499,19 +547,19 @@ mod tests {
         };
 
         let event_stream = EventStream::new(pool.clone(), config);
-        
+
         // Multiple concurrent writers to test thread safety
         let num_writers = 10;
         let events_per_writer = 5;
         let mut handles = Vec::new();
-        
+
         for writer_id in 0..num_writers {
             let buffer = event_stream.clone();
             let handle = tokio::spawn(async move {
                 let mut results = Vec::new();
                 for event_id in 0..events_per_writer {
                     let event = create_test_event(
-                        "concurrent_domain", 
+                        "concurrent_domain",
                         &format!("writer_{}_event_{}", writer_id, event_id)
                     );
                     let result = buffer.write_event(event).await;
@@ -521,7 +569,7 @@ mod tests {
             });
             handles.push(handle);
         }
-        
+
         // Wait for all writers to complete
         for handle in handles {
             let results = handle.await.unwrap();
@@ -529,29 +577,29 @@ mod tests {
                 assert!(result.is_ok(), "Concurrent write should succeed");
             }
         }
-        
+
         // Shutdown to ensure all async flushes complete
         event_stream.shutdown().await.unwrap();
-        
+
         // Verify efficient batching occurred
         let total_events = num_writers * events_per_writer;
-        let total_flushes = event_stream.get_flushes_due_to_low_queue() + 
-                          event_stream.get_flushes_due_to_max_batch_size() + 
+        let total_flushes = event_stream.get_flushes_due_to_low_queue() +
+                          event_stream.get_flushes_due_to_max_batch_size() +
                           event_stream.get_flushes_due_to_timeout();
-        
+
         // Should have fewer flushes than total events (proving batching efficiency)
-        assert!(total_flushes < total_events as u64, 
+        assert!(total_flushes < total_events as u64,
                 "Should have fewer flushes ({}) than total events ({})", total_flushes, total_events);
         assert!(total_flushes >= 1, "Should have at least 1 flush");
-        
+
         // Verify average batch size makes sense
         let avg_batch_size = event_stream.get_average_batch_size();
         assert!(avg_batch_size >= 1.0, "Average batch size should be at least 1.0");
         assert!(avg_batch_size <= total_events as f64, "Average batch size should not exceed total events");
-        
+
         // Verify total event count (data consistency)
         let count = count_events(&pool, "concurrent_domain").await;
-        assert_eq!(count, total_events as i64, 
+        assert_eq!(count, total_events as i64,
                    "All events from concurrent writers should be written");
     }));
     */

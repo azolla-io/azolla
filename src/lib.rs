@@ -1,9 +1,9 @@
 pub mod db;
-pub mod taskset;
 pub mod event_stream;
 pub mod orchestrator;
-pub mod shepherd;
 pub mod proto;
+pub mod shepherd;
+pub mod taskset;
 
 // Event type constants
 pub const EVENT_TASK_CREATED: i16 = 1;
@@ -19,12 +19,12 @@ macro_rules! db_test {
     ($test_name:ident, $body:expr) => {
         #[tokio::test]
         async fn $test_name() {
+            use crate::db::{create_pool, run_migrations, Database, Server, Settings};
             use testcontainers::{
                 core::{IntoContainerPort, WaitFor},
                 runners::AsyncRunner,
                 GenericImage, ImageExt,
             };
-            use crate::db::{Settings, create_pool, run_migrations, Database, Server};
 
             // 1. Start a fresh Postgres container using testcontainers
             let container = GenericImage::new("postgres", "16-alpine")
@@ -52,7 +52,10 @@ macro_rules! db_test {
 
             // 3. Create your settings struct and pool
             let settings = Settings {
-                database: Database { url: db_url, pool_size: 8 },
+                database: Database {
+                    url: db_url,
+                    pool_size: 8,
+                },
                 server: Server { port: 0 }, // dummy
             };
             let pool = create_pool(&settings).unwrap();
@@ -66,4 +69,4 @@ macro_rules! db_test {
             // 6. Container is dropped here, cleaning up DB
         }
     };
-} 
+}
