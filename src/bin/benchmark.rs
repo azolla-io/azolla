@@ -9,13 +9,9 @@ use serde_json::json;
 use tokio::time::timeout;
 use tonic::transport::Channel;
 
-// Import the generated protobuf code
-pub mod azolla {
-    tonic::include_proto!("azolla");
-}
-
-use azolla::azolla_client::AzollaClient;
-use azolla::*;
+use azolla_orchestrator::proto::orchestrator;
+use orchestrator::azolla_client::AzollaClient;
+use orchestrator::*;
 
 #[derive(Parser)]
 #[command(name = "benchmark")]

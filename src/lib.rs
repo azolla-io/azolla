@@ -3,6 +3,7 @@ pub mod taskset;
 pub mod event_stream;
 pub mod orchestrator;
 pub mod shepherd;
+pub mod proto;
 
 // Event type constants
 pub const EVENT_TASK_CREATED: i16 = 1;

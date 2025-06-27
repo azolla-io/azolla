@@ -6,12 +6,9 @@ use tonic::Request;
 use uuid::Uuid;
 use serde_json::Value;
 
-pub mod azolla {
-    tonic::include_proto!("azolla");
-}
-
-use azolla::worker_client::WorkerClient;
-use azolla::*;
+use azolla_orchestrator::proto::{common, shepherd};
+use shepherd::worker_client::WorkerClient;
+use shepherd::*;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -96,7 +93,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn execute_task(task_name: &str, args: &Value, kwargs: &Value) -> TaskResult {
+async fn execute_task(task_name: &str, args: &Value, kwargs: &Value) -> common::TaskResult {
     info!("Executing task: {}", task_name);
     
     // Simulate task execution time
@@ -113,14 +110,14 @@ async fn execute_task(task_name: &str, args: &Value, kwargs: &Value) -> TaskResu
     
     if should_fail {
         info!("Task {} simulated failure", task_name);
-        TaskResult {
+        common::TaskResult {
             task_id: "".to_string(), // Will be set by caller
-            result_type: Some(task_result::ResultType::Error(ErrorResult {
+            result_type: Some(common::task_result::ResultType::Error(common::ErrorResult {
                 r#type: "SimulatedError".to_string(),
                 message: format!("Task {} was configured to fail", task_name),
                 code: "SIMULATED_FAILURE".to_string(),
                 stacktrace: "".to_string(),
-                data: Some(StructValue {
+                data: Some(common::StructValue {
                     json_data: serde_json::json!({
                         "task_name": task_name,
                         "args": args,
@@ -139,35 +136,35 @@ async fn execute_task(task_name: &str, args: &Value, kwargs: &Value) -> TaskResu
                 if let Some(arr) = args.as_array() {
                     if let Some(first_arg) = arr.first() {
                         match first_arg {
-                            Value::String(s) => AnyValue {
-                                value: Some(any_value::Value::StringValue(s.clone())),
+                            Value::String(s) => common::AnyValue {
+                                value: Some(common::any_value::Value::StringValue(s.clone())),
                             },
                             Value::Number(n) => {
                                 if let Some(i) = n.as_i64() {
-                                    AnyValue {
-                                        value: Some(any_value::Value::IntValue(i)),
+                                    common::AnyValue {
+                                        value: Some(common::any_value::Value::IntValue(i)),
                                     }
                                 } else {
-                                    AnyValue {
-                                        value: Some(any_value::Value::DoubleValue(n.as_f64().unwrap_or(0.0))),
+                                    common::AnyValue {
+                                        value: Some(common::any_value::Value::DoubleValue(n.as_f64().unwrap_or(0.0))),
                                     }
                                 }
                             }
-                            Value::Bool(b) => AnyValue {
-                                value: Some(any_value::Value::BoolValue(*b)),
+                            Value::Bool(b) => common::AnyValue {
+                                value: Some(common::any_value::Value::BoolValue(*b)),
                             },
-                            _ => AnyValue {
-                                value: Some(any_value::Value::JsonValue(first_arg.to_string())),
+                            _ => common::AnyValue {
+                                value: Some(common::any_value::Value::JsonValue(first_arg.to_string())),
                             },
                         }
                     } else {
-                        AnyValue {
-                            value: Some(any_value::Value::StringValue("empty_args".to_string())),
+                        common::AnyValue {
+                            value: Some(common::any_value::Value::StringValue("empty_args".to_string())),
                         }
                     }
                 } else {
-                    AnyValue {
-                        value: Some(any_value::Value::StringValue("no_args".to_string())),
+                    common::AnyValue {
+                        value: Some(common::any_value::Value::StringValue("no_args".to_string())),
                     }
                 }
             }
@@ -175,28 +172,28 @@ async fn execute_task(task_name: &str, args: &Value, kwargs: &Value) -> TaskResu
                 // Add two numbers from kwargs
                 let a = kwargs.get("a").and_then(|v| v.as_f64()).unwrap_or(0.0);
                 let b = kwargs.get("b").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                AnyValue {
-                    value: Some(any_value::Value::DoubleValue(a + b)),
+                common::AnyValue {
+                    value: Some(common::any_value::Value::DoubleValue(a + b)),
                 }
             }
             "count_args" => {
                 // Count the number of arguments
                 let count = args.as_array().map(|arr| arr.len()).unwrap_or(0) as i64;
-                AnyValue {
-                    value: Some(any_value::Value::IntValue(count)),
+                common::AnyValue {
+                    value: Some(common::any_value::Value::IntValue(count)),
                 }
             }
             _ => {
                 // Default: return success message
-                AnyValue {
-                    value: Some(any_value::Value::StringValue(format!("Task {} completed", task_name))),
+                common::AnyValue {
+                    value: Some(common::any_value::Value::StringValue(format!("Task {} completed", task_name))),
                 }
             }
         };
         
-        TaskResult {
+        common::TaskResult {
             task_id: "".to_string(), // Will be set by caller
-            result_type: Some(task_result::ResultType::Success(SuccessResult {
+            result_type: Some(common::task_result::ResultType::Success(common::SuccessResult {
                 result: Some(result_value),
             })),
         }
@@ -205,7 +202,7 @@ async fn execute_task(task_name: &str, args: &Value, kwargs: &Value) -> TaskResu
 
 async fn report_result_to_shepherd(
     task_id: Uuid,
-    mut result: TaskResult,
+    mut result: common::TaskResult,
     shepherd_endpoint: &str,
 ) -> Result<()> {
     // Set the task ID in the result

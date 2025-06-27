@@ -4,17 +4,14 @@ use uuid::Uuid;
 use log::{info, warn, error, debug};
 use tokio::sync::mpsc;
 
-pub mod azolla {
-    tonic::include_proto!("azolla");
-}
-
-use azolla::worker_server::{Worker, WorkerServer};
-use azolla::*;
+use crate::proto::{common, shepherd};
+use shepherd::worker_server::{Worker, WorkerServer};
+use shepherd::*;
 
 #[derive(Debug, Clone)]
 pub struct TaskResultMessage {
     pub task_id: Uuid,
-    pub result: TaskResult,
+    pub result: common::TaskResult,
 }
 pub struct WorkerService {
     result_sender: mpsc::UnboundedSender<TaskResultMessage>,
@@ -57,11 +54,11 @@ impl Worker for WorkerService {
         }
         
         let success = match &result.result_type {
-            Some(task_result::ResultType::Success(_)) => {
+            Some(common::task_result::ResultType::Success(_)) => {
                 info!("Task {} completed successfully", task_id);
                 true
             }
-            Some(task_result::ResultType::Error(error_result)) => {
+            Some(common::task_result::ResultType::Error(error_result)) => {
                 warn!("Task {} failed: {} - {}", 
                       task_id, error_result.r#type, error_result.message);
                 false
@@ -130,11 +127,11 @@ mod tests {
         let task_id = Uuid::new_v4();
         let request = Request::new(ReportResultRequest {
             task_id: task_id.to_string(),
-            result: Some(TaskResult {
+            result: Some(common::TaskResult {
                 task_id: task_id.to_string(),
-                result_type: Some(task_result::ResultType::Success(SuccessResult {
-                    result: Some(AnyValue {
-                        value: Some(any_value::Value::StringValue("test result".to_string())),
+                result_type: Some(common::task_result::ResultType::Success(common::SuccessResult {
+                    result: Some(common::AnyValue {
+                        value: Some(common::any_value::Value::StringValue("test result".to_string())),
                     }),
                 })),
             }),
@@ -159,9 +156,9 @@ mod tests {
         let task_id = Uuid::new_v4();
         let request = Request::new(ReportResultRequest {
             task_id: task_id.to_string(),
-            result: Some(TaskResult {
+            result: Some(common::TaskResult {
                 task_id: task_id.to_string(),
-                result_type: Some(task_result::ResultType::Error(ErrorResult {
+                result_type: Some(common::task_result::ResultType::Error(common::ErrorResult {
                     r#type: "TestError".to_string(),
                     message: "Test error message".to_string(),
                     code: "TEST_ERROR".to_string(),
@@ -189,9 +186,9 @@ mod tests {
         
         let request = Request::new(ReportResultRequest {
             task_id: "invalid-uuid".to_string(),
-            result: Some(TaskResult {
+            result: Some(common::TaskResult {
                 task_id: "invalid-uuid".to_string(),
-                result_type: Some(task_result::ResultType::Success(SuccessResult {
+                result_type: Some(common::task_result::ResultType::Success(common::SuccessResult {
                     result: None,
                 })),
             }),
@@ -232,9 +229,9 @@ mod tests {
         
         let request = Request::new(ReportResultRequest {
             task_id: task_id.to_string(),
-            result: Some(TaskResult {
+            result: Some(common::TaskResult {
                 task_id: different_id.to_string(),
-                result_type: Some(task_result::ResultType::Success(SuccessResult {
+                result_type: Some(common::task_result::ResultType::Success(common::SuccessResult {
                     result: None,
                 })),
             }),

@@ -8,10 +8,9 @@ use std::sync::Arc;
 use futures::StreamExt;
 
 use crate::shepherd::{ShepherdConfig, TaskResultMessage};
-use crate::shepherd::worker_service::azolla;
-
-use azolla::dispatch_client::DispatchClient;
-use azolla::*;
+use crate::proto::{common, orchestrator};
+use orchestrator::dispatch_client::DispatchClient;
+use orchestrator::*;
 
 #[derive(Debug, Clone)]
 pub struct IncomingTask {
@@ -271,7 +270,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_incoming_task_parsing() {
-        let task = azolla::Task {
+        let task = common::Task {
             task_id: Uuid::new_v4().to_string(),
             name: "test_task".to_string(),
             args: vec!["arg1".to_string(), "arg2".to_string()],
