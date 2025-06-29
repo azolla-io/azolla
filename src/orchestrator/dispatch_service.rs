@@ -2,6 +2,7 @@ use anyhow::Result;
 use futures::StreamExt;
 use log::{debug, error, info, warn};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Streaming};
@@ -17,6 +18,7 @@ use orchestrator::*;
 pub struct DispatchService {
     shepherd_manager: Arc<ShepherdManager>,
     task_registry: Arc<TaskSetRegistry>,
+    liveness_probe_threshold: Duration,
 }
 
 impl DispatchService {
@@ -24,9 +26,18 @@ impl DispatchService {
         shepherd_manager: Arc<ShepherdManager>,
         task_registry: Arc<TaskSetRegistry>,
     ) -> Self {
+        Self::with_liveness_probe_threshold(shepherd_manager, task_registry, 1000)
+    }
+
+    pub fn with_liveness_probe_threshold(
+        shepherd_manager: Arc<ShepherdManager>,
+        task_registry: Arc<TaskSetRegistry>,
+        liveness_probe_threshold_ms: u64,
+    ) -> Self {
         Self {
             shepherd_manager,
             task_registry,
+            liveness_probe_threshold: Duration::from_millis(liveness_probe_threshold_ms),
         }
     }
 
@@ -49,12 +60,14 @@ impl Dispatch for DispatchService {
         let shepherd_manager = self.shepherd_manager.clone();
         let task_registry = self.task_registry.clone();
 
+        let liveness_probe_threshold = self.liveness_probe_threshold;
         tokio::spawn(async move {
             if let Err(e) = handle_shepherd_connection(
                 client_stream,
                 tx.clone(),
                 shepherd_manager,
                 task_registry,
+                liveness_probe_threshold,
             )
             .await
             {
@@ -75,15 +88,22 @@ async fn handle_shepherd_connection(
     tx: mpsc::Sender<Result<ServerMsg, tonic::Status>>,
     shepherd_manager: Arc<ShepherdManager>,
     _task_registry: Arc<TaskSetRegistry>,
+    liveness_probe_threshold: Duration,
 ) -> Result<()> {
     let mut shepherd_uuid: Option<Uuid> = None;
-    let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+    let mut last_message_time = Instant::now();
+    let mut ping_check_interval = tokio::time::interval(liveness_probe_threshold / 2);
 
     loop {
         tokio::select! {
             message = client_stream.next() => {
                 match message {
                     Some(Ok(client_msg)) => {
+                        last_message_time = Instant::now();
+                        if let Some(uuid) = shepherd_uuid {
+                            shepherd_manager.mark_shepherd_alive(uuid);
+                        }
+
                         if let Err(e) = handle_client_message(
                             client_msg,
                             &mut shepherd_uuid,
@@ -105,17 +125,22 @@ async fn handle_shepherd_connection(
                 }
             }
 
-            _ = ping_interval.tick() => {
-                if shepherd_uuid.is_some() {
-                    let ping = orchestrator::ServerMsg {
-                        kind: Some(orchestrator::server_msg::Kind::Ping(orchestrator::Ping {
-                            timestamp: chrono::Utc::now().timestamp(),
-                        })),
-                    };
+            _ = ping_check_interval.tick() => {
+                if let Some(uuid) = shepherd_uuid {
+                    let elapsed = last_message_time.elapsed();
+                    if elapsed > liveness_probe_threshold {
+                        let ping = orchestrator::ServerMsg {
+                            kind: Some(orchestrator::server_msg::Kind::Ping(orchestrator::Ping {
+                                timestamp: chrono::Utc::now().timestamp(),
+                            })),
+                        };
 
-                    if tx.send(Ok(ping)).await.is_err() {
-                        debug!("Failed to send ping, shepherd likely disconnected");
-                        break;
+                        if tx.send(Ok(ping)).await.is_err() {
+                            debug!("Failed to send ping, shepherd likely disconnected");
+                            break;
+                        }
+
+                        debug!("Sent ping to shepherd {} after {}ms of inactivity", uuid, elapsed.as_millis());
                     }
                 }
             }
@@ -123,8 +148,11 @@ async fn handle_shepherd_connection(
     }
 
     if let Some(uuid) = shepherd_uuid {
-        info!("Shepherd {} disconnected, cleaning up", uuid);
-        shepherd_manager.remove_shepherd(uuid);
+        info!(
+            "Shepherd {} connection dropped, marking as temporarily unavailable",
+            uuid
+        );
+        shepherd_manager.mark_shepherd_disconnected(uuid);
     }
 
     Ok(())
@@ -181,11 +209,9 @@ async fn handle_hello_message(
 async fn handle_ack_message(
     ack: Ack,
     shepherd_uuid: &mut Option<Uuid>,
-    shepherd_manager: &Arc<ShepherdManager>,
+    _shepherd_manager: &Arc<ShepherdManager>,
 ) -> Result<()> {
     if let Some(uuid) = shepherd_uuid {
-        shepherd_manager.mark_shepherd_alive(*uuid);
-
         let task_id = Uuid::parse_str(&ack.task_id)
             .map_err(|e| anyhow::anyhow!("Invalid task ID in ack: {}", e))?;
 
@@ -224,11 +250,9 @@ async fn handle_status_message(
 async fn handle_task_result_message(
     task_result: common::TaskResult,
     shepherd_uuid: &mut Option<Uuid>,
-    shepherd_manager: &Arc<ShepherdManager>,
+    _shepherd_manager: &Arc<ShepherdManager>,
 ) -> Result<()> {
     if let Some(uuid) = shepherd_uuid {
-        shepherd_manager.mark_shepherd_alive(*uuid);
-
         let task_id = Uuid::parse_str(&task_result.task_id)
             .map_err(|e| anyhow::anyhow!("Invalid task ID in result: {}", e))?;
 
