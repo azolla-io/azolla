@@ -2,6 +2,8 @@ use anyhow::Result;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use dashmap::DashMap;
 use log::{error, info, warn};
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
@@ -12,6 +14,49 @@ use crate::taskset::TaskSetRegistry;
 use crate::EVENT_SHEPHERD_REGISTERED;
 
 const SHEPHERD_TIMEOUT_SECS: u64 = 300; // 5 minutes
+
+/// Entry for priority queue in find_best_shepherd
+/// Implements Ord to create a min-heap based on load_ratio
+#[derive(Debug, Clone, PartialEq)]
+struct ShepherdLoadEntry {
+    uuid: Uuid,
+    load_ratio: f64,
+    available_capacity: u32,
+    current_load: u32,
+}
+
+impl Eq for ShepherdLoadEntry {}
+
+impl PartialOrd for ShepherdLoadEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ShepherdLoadEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Reverse comparison for min-heap behavior (BinaryHeap is max-heap by default)
+        // Primary: lower load ratio is better
+        let load_cmp = other
+            .load_ratio
+            .partial_cmp(&self.load_ratio)
+            .unwrap_or(Ordering::Equal);
+
+        if load_cmp != Ordering::Equal {
+            return load_cmp;
+        }
+
+        // Secondary: higher available capacity is better (tie-breaker)
+        let capacity_cmp = self.available_capacity.cmp(&other.available_capacity);
+
+        if capacity_cmp != Ordering::Equal {
+            return capacity_cmp;
+        }
+
+        // Tertiary: UUID for consistent ordering (deterministic tie-breaking)
+        self.uuid.cmp(&other.uuid)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum ShepherdConnectionStatus {
@@ -88,12 +133,28 @@ impl ShepherdManager {
         }
     }
 
-    /// Register a new shepherd connection
+    /// Register a new shepherd connection or reconnect existing one
     pub async fn register_shepherd(&self, uuid: Uuid, max_concurrency: u32) -> Result<()> {
+        // Check if this is a reconnection
+        if let Some(existing_shepherd) = self.shepherds.get(&uuid) {
+            if matches!(
+                existing_shepherd.status,
+                ShepherdConnectionStatus::Disconnected
+            ) {
+                info!(
+                    "Shepherd {} reconnecting (was temporarily unavailable)",
+                    uuid
+                );
+                self.mark_shepherd_reconnected(uuid);
+                return Ok(());
+            }
+        }
+
+        // New shepherd registration
         let shepherd_status = ShepherdStatus::new(uuid, max_concurrency);
 
         info!(
-            "Registering shepherd {} with max_concurrency={}",
+            "Registering new shepherd {} with max_concurrency={}",
             uuid, max_concurrency
         );
 
@@ -139,6 +200,26 @@ impl ShepherdManager {
         }
     }
 
+    /// Mark shepherd as temporarily unavailable (connection dropped but might reconnect)
+    pub fn mark_shepherd_disconnected(&self, uuid: Uuid) {
+        if let Some(mut shepherd) = self.shepherds.get_mut(&uuid) {
+            shepherd.status = ShepherdConnectionStatus::Disconnected;
+            info!(
+                "Marked shepherd {} as temporarily unavailable (connection dropped)",
+                uuid
+            );
+        }
+    }
+
+    /// Mark shepherd as reconnected and available again
+    pub fn mark_shepherd_reconnected(&self, uuid: Uuid) {
+        if let Some(mut shepherd) = self.shepherds.get_mut(&uuid) {
+            shepherd.status = ShepherdConnectionStatus::Connected;
+            shepherd.update_last_seen();
+            info!("Marked shepherd {} as reconnected and available", uuid);
+        }
+    }
+
     /// Get shepherd status
     pub fn get_shepherd(&self, uuid: Uuid) -> Option<ShepherdStatus> {
         self.shepherds.get(&uuid).map(|s| s.clone())
@@ -153,10 +234,12 @@ impl ShepherdManager {
             .collect()
     }
 
-    /// Find the best shepherd for task dispatch based on load
+    /// Find the best shepherd for task dispatch based on load using a priority queue
+    /// Returns the shepherd with the lowest load ratio among those with available capacity
     pub fn find_best_shepherd(&self) -> Option<Uuid> {
-        let mut best_shepherd: Option<(Uuid, f64)> = None;
+        let mut heap = BinaryHeap::new();
 
+        // Collect all available shepherds into a max heap (we'll use reverse ordering)
         for entry in self.shepherds.iter() {
             let shepherd = entry.value();
 
@@ -164,20 +247,17 @@ impl ShepherdManager {
             if matches!(shepherd.status, ShepherdConnectionStatus::Connected)
                 && shepherd.available_capacity() > 0
             {
-                let load_ratio = shepherd.load_ratio();
-
-                match best_shepherd {
-                    None => best_shepherd = Some((shepherd.uuid, load_ratio)),
-                    Some((_, best_ratio)) => {
-                        if load_ratio < best_ratio {
-                            best_shepherd = Some((shepherd.uuid, load_ratio));
-                        }
-                    }
-                }
+                heap.push(ShepherdLoadEntry {
+                    uuid: shepherd.uuid,
+                    load_ratio: shepherd.load_ratio(),
+                    available_capacity: shepherd.available_capacity(),
+                    current_load: shepherd.current_load,
+                });
             }
         }
 
-        best_shepherd.map(|(uuid, _)| uuid)
+        // Return the shepherd with the lowest load ratio (top of min heap)
+        heap.pop().map(|entry| entry.uuid)
     }
 
     /// Remove shepherd when it disconnects
@@ -187,35 +267,36 @@ impl ShepherdManager {
         }
     }
 
-    /// Start the health checker background task
+    /// Start the dead shepherd cleanup background task
     pub async fn start_health_checker(self: Arc<Self>) {
         let mut interval = time::interval(Duration::from_secs(60)); // Check every minute
 
         loop {
             interval.tick().await;
-            if let Err(e) = self.check_shepherd_health().await {
-                error!("Error during shepherd health check: {}", e);
+            if let Err(e) = self.cleanup_dead_shepherds().await {
+                error!("Error during dead shepherd cleanup: {}", e);
             }
         }
     }
 
-    /// Check all shepherds for timeout and fail their tasks
-    async fn check_shepherd_health(&self) -> Result<()> {
+    /// Check disconnected shepherds for timeout and fail their tasks
+    async fn cleanup_dead_shepherds(&self) -> Result<()> {
         let now = Utc::now();
         let timeout = ChronoDuration::seconds(SHEPHERD_TIMEOUT_SECS as i64);
         let mut dead_shepherds = Vec::new();
 
-        // Find dead shepherds
+        // Find shepherds that have been disconnected too long
         for entry in self.shepherds.iter() {
             let shepherd_uuid = *entry.key();
             let shepherd = entry.value();
 
-            if matches!(shepherd.status, ShepherdConnectionStatus::Connected) {
+            // Only check disconnected shepherds - they've already been marked as unavailable
+            if matches!(shepherd.status, ShepherdConnectionStatus::Disconnected) {
                 let time_since_last_seen = now.signed_duration_since(shepherd.last_seen);
 
                 if time_since_last_seen > timeout {
                     warn!(
-                        "Shepherd {} detected as dead (last seen {} seconds ago)",
+                        "Shepherd {} has been disconnected too long (last seen {} seconds ago), cleaning up tasks",
                         shepherd_uuid,
                         time_since_last_seen.num_seconds()
                     );
@@ -224,13 +305,8 @@ impl ShepherdManager {
             }
         }
 
-        // Process dead shepherds
+        // Process dead shepherds - fail their tasks and remove them completely
         for shepherd_uuid in dead_shepherds {
-            // Mark as disconnected
-            if let Some(mut shepherd) = self.shepherds.get_mut(&shepherd_uuid) {
-                shepherd.status = ShepherdConnectionStatus::Disconnected;
-            }
-
             // Fail all tasks assigned to this shepherd
             if let Err(e) = self
                 .task_registry
@@ -242,6 +318,9 @@ impl ShepherdManager {
                     shepherd_uuid, e
                 );
             }
+
+            // Remove shepherd completely (they've been disconnected too long)
+            self.remove_shepherd(shepherd_uuid);
         }
 
         Ok(())
@@ -288,4 +367,224 @@ pub struct ShepherdManagerStats {
     pub total_capacity: u32,
     pub total_load: u32,
     pub utilization: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    fn create_test_manager() -> ShepherdManager {
+        use crate::db::{create_pool, Database, Server, Settings};
+        use crate::event_stream::{EventStream, EventStreamConfig};
+
+        let task_registry = Arc::new(TaskSetRegistry::new());
+
+        // Create minimal settings for testing - we'll skip event stream writing
+        let settings = Settings {
+            database: Database {
+                url: "postgres://dummy:dummy@localhost/dummy".to_string(),
+                pool_size: 1,
+            },
+            server: Server { port: 0 },
+            event_stream: crate::db::EventStream::default(),
+        };
+
+        // Create a dummy pool that won't actually connect
+        let pool = create_pool(&settings).unwrap_or_else(|_| {
+            // Create a minimal pool for testing
+            use deadpool_postgres::{Manager, Pool};
+            let config = "postgres://dummy:dummy@localhost/dummy".parse().unwrap();
+            let manager = Manager::new(config, tokio_postgres::NoTls);
+            Pool::builder(manager).max_size(1).build().unwrap()
+        });
+
+        let event_stream_config = EventStreamConfig::default();
+        let event_stream = Arc::new(EventStream::new(pool, event_stream_config));
+        ShepherdManager::new(task_registry, event_stream)
+    }
+
+    // Helper function to manually add shepherds for testing without event stream
+    fn add_test_shepherd(manager: &ShepherdManager, uuid: Uuid, max_concurrency: u32) {
+        let shepherd_status = ShepherdStatus::new(uuid, max_concurrency);
+        manager.shepherds.insert(uuid, shepherd_status);
+    }
+
+    #[tokio::test]
+    async fn test_find_best_shepherd_selects_lowest_load() {
+        let manager = create_test_manager();
+
+        let uuid1 = Uuid::new_v4();
+        let uuid2 = Uuid::new_v4();
+        let uuid3 = Uuid::new_v4();
+
+        add_test_shepherd(&manager, uuid1, 10);
+        add_test_shepherd(&manager, uuid2, 10);
+        add_test_shepherd(&manager, uuid3, 10);
+
+        // Different load ratios: 20%, 80%, 50%
+        manager.update_shepherd_status(uuid1, 2, 8); // 20% - should be selected
+        manager.update_shepherd_status(uuid2, 8, 2); // 80%
+        manager.update_shepherd_status(uuid3, 5, 5); // 50%
+
+        assert_eq!(manager.find_best_shepherd(), Some(uuid1));
+    }
+
+    #[tokio::test]
+    async fn test_find_best_shepherd_ignores_unavailable() {
+        let manager = create_test_manager();
+
+        let uuid1 = Uuid::new_v4();
+        let uuid2 = Uuid::new_v4();
+        let uuid3 = Uuid::new_v4();
+
+        add_test_shepherd(&manager, uuid1, 10);
+        add_test_shepherd(&manager, uuid2, 10);
+        add_test_shepherd(&manager, uuid3, 10);
+
+        // uuid1: full capacity, uuid2: disconnected, uuid3: available
+        manager.update_shepherd_status(uuid1, 10, 0); // Full capacity
+        manager.update_shepherd_status(uuid2, 3, 7); // Good load but will disconnect
+        manager.update_shepherd_status(uuid3, 5, 5); // Available
+
+        // Disconnect uuid2
+        if let Some(mut shepherd) = manager.shepherds.get_mut(&uuid2) {
+            shepherd.status = ShepherdConnectionStatus::Disconnected;
+        }
+
+        assert_eq!(manager.find_best_shepherd(), Some(uuid3));
+    }
+
+    #[tokio::test]
+    async fn test_find_best_shepherd_capacity_tiebreaker() {
+        let manager = create_test_manager();
+
+        let uuid1 = Uuid::new_v4();
+        let uuid2 = Uuid::new_v4();
+
+        add_test_shepherd(&manager, uuid1, 10);
+        add_test_shepherd(&manager, uuid2, 20);
+
+        // Same load ratio (50%) but different available capacity
+        manager.update_shepherd_status(uuid1, 5, 5); // 5 available
+        manager.update_shepherd_status(uuid2, 10, 10); // 10 available - should win tiebreaker
+
+        assert_eq!(manager.find_best_shepherd(), Some(uuid2));
+    }
+
+    #[tokio::test]
+    async fn test_find_best_shepherd_edge_cases() {
+        let manager = create_test_manager();
+
+        // No shepherds
+        assert_eq!(manager.find_best_shepherd(), None);
+
+        // Zero max concurrency
+        let uuid1 = Uuid::new_v4();
+        add_test_shepherd(&manager, uuid1, 0);
+        manager.update_shepherd_status(uuid1, 0, 0);
+        assert_eq!(manager.find_best_shepherd(), None);
+
+        // Normal shepherd
+        let uuid2 = Uuid::new_v4();
+        add_test_shepherd(&manager, uuid2, 10);
+        manager.update_shepherd_status(uuid2, 3, 7);
+        assert_eq!(manager.find_best_shepherd(), Some(uuid2));
+    }
+
+    #[tokio::test]
+    async fn test_find_best_shepherd_deterministic() {
+        let manager = create_test_manager();
+
+        // Multiple shepherds with identical stats
+        let mut uuids = Vec::new();
+        for _ in 0..3 {
+            let uuid = Uuid::new_v4();
+            uuids.push(uuid);
+            add_test_shepherd(&manager, uuid, 10);
+            manager.update_shepherd_status(uuid, 3, 7);
+        }
+
+        // Selection should be consistent
+        let selection1 = manager.find_best_shepherd();
+        let selection2 = manager.find_best_shepherd();
+
+        assert_eq!(selection1, selection2);
+        assert!(selection1.is_some());
+        assert!(uuids.contains(&selection1.unwrap()));
+    }
+
+    #[tokio::test]
+    async fn test_shepherd_reconnection_flow() {
+        let manager = create_test_manager();
+
+        let uuid = Uuid::new_v4();
+
+        // Initial registration
+        add_test_shepherd(&manager, uuid, 10);
+        manager.update_shepherd_status(uuid, 3, 7);
+
+        // Should be available for selection
+        assert_eq!(manager.find_best_shepherd(), Some(uuid));
+
+        // Mark as disconnected (connection drops)
+        manager.mark_shepherd_disconnected(uuid);
+
+        // Should not be available for new tasks
+        assert_eq!(manager.find_best_shepherd(), None);
+
+        // Shepherd should still exist but be marked as disconnected
+        let shepherd = manager.get_shepherd(uuid).unwrap();
+        assert!(matches!(
+            shepherd.status,
+            ShepherdConnectionStatus::Disconnected
+        ));
+
+        // Mark as reconnected
+        manager.mark_shepherd_reconnected(uuid);
+
+        // Should be available again
+        assert_eq!(manager.find_best_shepherd(), Some(uuid));
+
+        // Status should be connected
+        let shepherd = manager.get_shepherd(uuid).unwrap();
+        assert!(matches!(
+            shepherd.status,
+            ShepherdConnectionStatus::Connected
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_mark_shepherd_disconnected_and_reconnected() {
+        let manager = create_test_manager();
+
+        let uuid = Uuid::new_v4();
+
+        // Initial setup using helper function
+        add_test_shepherd(&manager, uuid, 10);
+        manager.update_shepherd_status(uuid, 3, 7);
+        assert_eq!(manager.find_best_shepherd(), Some(uuid));
+
+        // Mark as disconnected
+        manager.mark_shepherd_disconnected(uuid);
+        assert_eq!(manager.find_best_shepherd(), None);
+
+        // Verify shepherd still exists but disconnected
+        let shepherd = manager.get_shepherd(uuid).unwrap();
+        assert!(matches!(
+            shepherd.status,
+            ShepherdConnectionStatus::Disconnected
+        ));
+
+        // Mark as reconnected
+        manager.mark_shepherd_reconnected(uuid);
+
+        // Should be available again
+        assert_eq!(manager.find_best_shepherd(), Some(uuid));
+
+        // Should only have one shepherd entry
+        let shepherds = manager.list_shepherds();
+        assert_eq!(shepherds.len(), 1);
+        assert_eq!(shepherds[0].uuid, uuid);
+    }
 }
