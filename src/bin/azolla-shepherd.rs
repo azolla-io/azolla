@@ -92,7 +92,7 @@ async fn main() -> Result<()> {
         tokio::spawn(async move {
             // TODO: Update start_worker_service to accept shutdown signal
             if let Err(e) = start_worker_service(port, result_sender).await {
-                log::error!("Worker service error: {}", e);
+                log::error!("Worker service error: {e}");
             }
         })
     };
@@ -111,7 +111,7 @@ async fn main() -> Result<()> {
             );
 
             if let Err(e) = stream_handler.start().await {
-                log::error!("Stream handler error: {}", e);
+                log::error!("Stream handler error: {e}");
             }
         })
     };
@@ -125,7 +125,7 @@ async fn main() -> Result<()> {
                 TaskManager::new(config, stream_event_rx, shutdown_rx3, current_load);
 
             if let Err(e) = task_manager.start().await {
-                log::error!("Task manager error: {}", e);
+                log::error!("Task manager error: {e}");
             }
         })
     };
@@ -139,7 +139,7 @@ async fn main() -> Result<()> {
     info!("Shutdown signal received, stopping shepherd...");
 
     if let Err(e) = shutdown_tx.send(true) {
-        log::error!("Failed to send shutdown signal: {}", e);
+        log::error!("Failed to send shutdown signal: {e}");
     }
 
     let _ = tokio::join!(

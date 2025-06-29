@@ -204,7 +204,7 @@ impl EventStream {
 
         // Use eprintln to ensure metrics are always visible, regardless of log level
         eprintln!("=== EventStream Metrics Summary ===");
-        eprintln!("Total flushes: {}", total_flushes);
+        eprintln!("Total flushes: {total_flushes}");
         eprintln!(
             "  Due to timeout: {} ({:.1}%)",
             timeout_flushes,
@@ -232,7 +232,7 @@ impl EventStream {
                 0.0
             }
         );
-        eprintln!("Average batch size: {:.2}", avg_batch_size);
+        eprintln!("Average batch size: {avg_batch_size:.2}");
         eprintln!("======================================");
     }
 

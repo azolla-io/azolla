@@ -134,18 +134,18 @@ pub fn load_config(config_path: Option<&str>, matches: &ArgMatches) -> Result<Sh
     if let Some(path) = config_path {
         if Path::new(path).exists() {
             let file_content = fs::read_to_string(path)
-                .with_context(|| format!("Failed to read config file: {}", path))?;
+                .with_context(|| format!("Failed to read config file: {path}"))?;
 
             let file_config: ShepherdConfig = toml::from_str(&file_content)
-                .with_context(|| format!("Failed to parse config file: {}", path))?;
+                .with_context(|| format!("Failed to parse config file: {path}"))?;
 
             let original_uuid = config.uuid;
             config = file_config;
             config.uuid = original_uuid;
 
-            log::info!("Loaded configuration from file: {}", path);
+            log::info!("Loaded configuration from file: {path}");
         } else {
-            log::info!("Config file not found: {}, using defaults", path);
+            log::info!("Config file not found: {path}, using defaults");
         }
     }
 
@@ -157,7 +157,7 @@ pub fn load_config(config_path: Option<&str>, matches: &ArgMatches) -> Result<Sh
         .with_context(|| "Configuration validation failed")?;
 
     log::info!("Configuration loaded successfully");
-    log::debug!("Final config: {:?}", config);
+    log::debug!("Final config: {config:?}");
 
     Ok(config)
 }
@@ -169,9 +169,9 @@ pub fn create_sample_config(path: &str) -> Result<()> {
         toml::to_string_pretty(&config).context("Failed to serialize default config")?;
 
     fs::write(path, toml_content)
-        .with_context(|| format!("Failed to write sample config to: {}", path))?;
+        .with_context(|| format!("Failed to write sample config to: {path}"))?;
 
-    println!("Sample configuration written to: {}", path);
+    println!("Sample configuration written to: {path}");
     Ok(())
 }
 

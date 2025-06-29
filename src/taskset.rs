@@ -592,11 +592,7 @@ impl TaskSetRegistry {
             .entry(shepherd_uuid)
             .or_default()
             .insert(task_id);
-        log::debug!(
-            "Tracked task {} dispatched to shepherd {}",
-            task_id,
-            shepherd_uuid
-        );
+        log::debug!("Tracked task {task_id} dispatched to shepherd {shepherd_uuid}");
     }
 
     /// Remove task from shepherd tracking (when task completes)
@@ -609,7 +605,7 @@ impl TaskSetRegistry {
                     self.shepherd_tasks.remove(&shepherd_uuid);
                 }
             }
-            log::debug!("Untracked task {} from shepherd {}", task_id, shepherd_uuid);
+            log::debug!("Untracked task {task_id} from shepherd {shepherd_uuid}");
         }
     }
 
@@ -630,9 +626,8 @@ impl TaskSetRegistry {
         let task_ids = self.get_shepherd_tasks(shepherd_uuid);
 
         log::info!(
-            "Failing {} tasks from dead shepherd {}",
-            task_ids.len(),
-            shepherd_uuid
+            "Failing {} tasks from dead shepherd {shepherd_uuid}",
+            task_ids.len()
         );
 
         for task_id in task_ids {
@@ -664,7 +659,7 @@ impl TaskSetRegistry {
 
                     // Write failure event first
                     if let Err(e) = event_stream.write_event(event_record).await {
-                        log::error!("Failed to write task failure event for {}: {}", task_id, e);
+                        log::error!("Failed to write task failure event for {task_id}: {e}");
                         continue;
                     }
 
@@ -673,11 +668,7 @@ impl TaskSetRegistry {
                         .handle_task_failure(&domain_actor, task_id, "shepherd_crashed")
                         .await
                     {
-                        log::error!(
-                            "Failed to update TaskSet for failed task {}: {}",
-                            task_id,
-                            e
-                        );
+                        log::error!("Failed to update TaskSet for failed task {task_id}: {e}");
                     }
 
                     // Remove from tracking
@@ -717,7 +708,7 @@ impl TaskSetRegistry {
         task_id: Uuid,
         failure_reason: &str,
     ) -> Result<()> {
-        log::info!("Task {} failed due to: {}", task_id, failure_reason);
+        log::info!("Task {task_id} failed due to: {failure_reason}");
         // TODO: Update task status, handle retry logic integration with scheduler
         // For now, just log the failure
         Ok(())
@@ -815,10 +806,7 @@ impl TaskSetRegistry {
 
         let last_processed_event_id = cursor_row.map(|row| row.get::<_, i64>(0)).unwrap_or(0);
 
-        debug!(
-            "Starting event merge from event_id: {}",
-            last_processed_event_id
-        );
+        debug!("Starting event merge from event_id: {last_processed_event_id}");
 
         let max_event_row = transaction
             .query_opt(
@@ -842,8 +830,7 @@ impl TaskSetRegistry {
         };
 
         info!(
-            "Processing events from {} to {} using server-side SQL",
-            last_processed_event_id, max_event_id
+            "Processing events from {last_processed_event_id} to {max_event_id} using server-side SQL"
         );
 
         let task_created_count = transaction
@@ -875,7 +862,7 @@ impl TaskSetRegistry {
             )
             .await?;
 
-        debug!("Merged {} task creation events", task_created_count);
+        debug!("Merged {task_created_count} task creation events");
 
         let task_started_count = transaction
             .execute(
@@ -894,7 +881,7 @@ impl TaskSetRegistry {
             )
             .await?;
 
-        debug!("Merged {} task started events", task_started_count);
+        debug!("Merged {task_started_count} task started events");
 
         let task_ended_count = transaction
             .execute(
@@ -913,7 +900,7 @@ impl TaskSetRegistry {
             )
             .await?;
 
-        debug!("Merged {} task ended events", task_ended_count);
+        debug!("Merged {task_ended_count} task ended events");
 
         let attempt_started_count = transaction
             .execute(
@@ -941,10 +928,7 @@ impl TaskSetRegistry {
             )
             .await?;
 
-        debug!(
-            "Merged {} task attempt started events",
-            attempt_started_count
-        );
+        debug!("Merged {attempt_started_count} task attempt started events");
 
         let attempt_ended_count = transaction
             .execute(
@@ -970,7 +954,7 @@ impl TaskSetRegistry {
             )
             .await?;
 
-        debug!("Merged {} task attempt ended events", attempt_ended_count);
+        debug!("Merged {attempt_ended_count} task attempt ended events");
 
         if max_event_id > last_processed_event_id {
             transaction.execute("DELETE FROM merge_cursor", &[]).await?;
@@ -982,7 +966,7 @@ impl TaskSetRegistry {
                 )
                 .await?;
 
-            info!("Updated merge cursor to event_id: {}", max_event_id);
+            info!("Updated merge cursor to event_id: {max_event_id}");
         }
 
         transaction.commit().await?;
@@ -992,8 +976,7 @@ impl TaskSetRegistry {
             + task_ended_count
             + attempt_started_count
             + attempt_ended_count;
-        info!("Successfully merged {} events using server-side SQL (task_created: {}, task_started: {}, task_ended: {}, attempt_started: {}, attempt_ended: {})", 
-              total_events, task_created_count, task_started_count, task_ended_count, attempt_started_count, attempt_ended_count);
+        info!("Successfully merged {total_events} events using server-side SQL (task_created: {task_created_count}, task_started: {task_started_count}, task_ended: {task_ended_count}, attempt_started: {attempt_started_count}, attempt_ended: {attempt_ended_count})");
         Ok(())
     }
 }

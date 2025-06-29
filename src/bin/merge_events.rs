@@ -68,7 +68,7 @@ async fn main() -> Result<()> {
     // Load configuration
     let settings = Settings::new().expect("Failed to load settings");
     if args.verbose {
-        println!("Loaded settings: {:?}", settings);
+        println!("Loaded settings: {settings:?}");
     }
 
     // Create database pool
@@ -104,11 +104,11 @@ async fn main() -> Result<()> {
             println!("✅ Event merge completed successfully");
             println!("📊 Statistics:");
             println!("  Duration: {:.2}s", duration.as_secs_f64());
-            println!("  Events processed: {}", events_processed);
+            println!("  Events processed: {events_processed}");
 
             if events_processed > 0 {
                 let events_per_second = events_processed as f64 / duration.as_secs_f64();
-                println!("  Processing rate: {:.0} events/second", events_per_second);
+                println!("  Processing rate: {events_per_second:.0} events/second");
             }
 
             if args.verbose {

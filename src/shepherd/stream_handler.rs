@@ -76,19 +76,16 @@ impl StreamHandler {
                 }
                 Err(e) => {
                     retry_count += 1;
-                    error!(
-                        "Stream handler connection failed (attempt {}): {}",
-                        retry_count, e
-                    );
+                    error!("Stream handler connection failed (attempt {retry_count}): {e}");
 
                     if let Err(e) = self.event_sender.send(StreamEvent::ConnectionLost) {
-                        error!("Failed to notify task manager of connection loss: {}", e);
+                        error!("Failed to notify task manager of connection loss: {e}");
                     }
 
                     let jitter = Duration::from_millis(fastrand::u64(0..=1000));
                     let total_backoff = backoff + jitter;
 
-                    warn!("Retrying connection in {:?}", total_backoff);
+                    warn!("Retrying connection in {total_backoff:?}");
                     sleep(total_backoff).await;
 
                     backoff = std::cmp::min(backoff * 2, Duration::from_secs(60));
@@ -97,7 +94,7 @@ impl StreamHandler {
         }
 
         if let Err(e) = self.event_sender.send(StreamEvent::Shutdown) {
-            error!("Failed to send shutdown event: {}", e);
+            error!("Failed to send shutdown event: {e}");
         }
 
         info!("Stream handler stopped");
@@ -182,7 +179,7 @@ impl StreamHandler {
                     match message {
                         Some(Ok(server_msg)) => {
                             if let Err(e) = self.handle_server_message(server_msg).await {
-                                error!("Error handling server message: {}", e);
+                                error!("Error handling server message: {e}");
                             }
                         }
                         Some(Err(e)) => {
@@ -200,7 +197,7 @@ impl StreamHandler {
                     match result {
                         Some(task_result) => {
                             if let Err(e) = self.send_task_result(&tx, task_result).await {
-                                error!("Failed to send task result: {}", e);
+                                error!("Failed to send task result: {e}");
                             }
                         }
                         None => {
