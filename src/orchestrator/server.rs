@@ -80,13 +80,13 @@ impl Azolla for MyAzollaService {
 
         let task_id = Uuid::new_v4();
         let retry_policy: serde_json::Value = serde_json::from_str(&req.retry_policy)
-            .map_err(|e| Status::invalid_argument(format!("Invalid retry_policy JSON: {}", e)))?;
+            .map_err(|e| Status::invalid_argument(format!("Invalid retry_policy JSON: {e}")))?;
         let kwargs: serde_json::Value = serde_json::from_str(&req.kwargs)
-            .map_err(|e| Status::invalid_argument(format!("Invalid kwargs JSON: {}", e)))?;
+            .map_err(|e| Status::invalid_argument(format!("Invalid kwargs JSON: {e}")))?;
 
         let flow_instance_id = match req.flow_instance_id {
             Some(ref id_str) => Some(Uuid::parse_str(id_str).map_err(|e| {
-                Status::invalid_argument(format!("Invalid flow_instance_id UUID: {}", e))
+                Status::invalid_argument(format!("Invalid flow_instance_id UUID: {e}"))
             })?),
             None => None,
         };
@@ -114,7 +114,7 @@ impl Azolla for MyAzollaService {
             .write_event(event_record)
             .await
             .map_err(|e| {
-                log::error!("Failed to write event: {}", e);
+                log::error!("Failed to write event: {e}");
                 Status::internal("Failed to write event")
             })?;
 
@@ -135,7 +135,7 @@ impl Azolla for MyAzollaService {
             domain_actor
                 .upsert_task(task)
                 .await
-                .map_err(|e| Status::internal(format!("Failed to upsert task: {:?}", e)))?;
+                .map_err(|e| Status::internal(format!("Failed to upsert task: {e:?}")))?;
         }
 
         info!(

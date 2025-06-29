@@ -45,7 +45,7 @@ struct ZipfianDistribution {
 
 impl ZipfianDistribution {
     fn new(num_domains: usize) -> Self {
-        let domains: Vec<String> = (0..num_domains).map(|i| format!("domain_{}", i)).collect();
+        let domains: Vec<String> = (0..num_domains).map(|i| format!("domain_{i}")).collect();
 
         // Generate zipfian weights: weight_i = 1/(i+1)
         let weights: Vec<f64> = (0..num_domains).map(|i| 1.0 / (i + 1) as f64).collect();
@@ -143,7 +143,7 @@ impl BenchmarkStats {
         let rps = self.successful_requests as f64 / self.total_duration.as_secs_f64();
         let success_rate = (self.successful_requests as f64 / self.total_requests as f64) * 100.0;
 
-        println!("Throughput: {:.0} requests/second", rps);
+        println!("Throughput: {rps:.0} requests/second");
         println!(
             "Success Rate: {:.2}% ({}/{})",
             success_rate, self.successful_requests, self.total_requests
@@ -181,7 +181,7 @@ impl BenchmarkStats {
 
         for (domain, count) in domain_vec.iter().take(10) {
             let percentage = (**count as f64 / self.total_requests as f64) * 100.0;
-            println!("  {}: {} requests ({:.1}%)", domain, count, percentage);
+            println!("  {domain}: {count} requests ({percentage:.1}%)");
         }
 
         if domain_vec.len() > 10 {
@@ -222,14 +222,14 @@ fn generate_random_task_data(
 
     // Generate random args (1-3 elements)
     let num_args = rng.gen_range(1..=3);
-    let args: Vec<String> = (0..num_args).map(|i| format!("arg_{}", i)).collect();
+    let args: Vec<String> = (0..num_args).map(|i| format!("arg_{i}")).collect();
 
     // Generate random kwargs (1-3 key-value pairs)
     let num_kwargs = rng.gen_range(1..=3);
     let mut kwargs_obj = serde_json::Map::new();
     for i in 0..num_kwargs {
         kwargs_obj.insert(
-            format!("key_{}", i),
+            format!("key_{i}"),
             json!(format!("value_{}", rng.gen::<u16>())),
         );
     }
@@ -360,7 +360,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     if let Err(e) = run_benchmark(args).await {
-        eprintln!("Benchmark failed: {}", e);
+        eprintln!("Benchmark failed: {e}");
         std::process::exit(1);
     }
 

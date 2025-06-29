@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
     env_logger::init();
 
     let settings = Settings::new().expect("Failed to load settings");
-    log::info!("Loaded settings: {:?}", settings);
+    log::info!("Loaded settings: {settings:?}");
     let addr = format!("[::1]:{}", settings.server.port).parse()?;
 
     let pool = create_pool(&settings).expect("Failed to create database pool");
@@ -53,7 +53,7 @@ async fn main() -> Result<()> {
     let event_stream_config = EventStreamConfig::from(&settings.event_stream);
     let (service, grpc_server) = create_server(pool, event_stream_config).await?;
 
-    log::info!("Azolla Orchestrator listening on {}", addr);
+    log::info!("Azolla Orchestrator listening on {addr}");
 
     let server_future = Server::builder()
         .add_service(grpc_server)
@@ -63,7 +63,7 @@ async fn main() -> Result<()> {
 
     log::info!("Orchestrator terminated, shutting down service...");
     if let Err(e) = service.shutdown().await {
-        log::error!("Error during service shutdown: {}", e);
+        log::error!("Error during service shutdown: {e}");
     }
 
     result?;

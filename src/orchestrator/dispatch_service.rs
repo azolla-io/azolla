@@ -71,7 +71,7 @@ impl Dispatch for DispatchService {
             )
             .await
             {
-                error!("Shepherd connection error: {}", e);
+                error!("Shepherd connection error: {e}");
                 let _ = tx
                     .send(Err(tonic::Status::internal("Connection failed")))
                     .await;
@@ -110,12 +110,12 @@ async fn handle_shepherd_connection(
                             &shepherd_manager,
                             &tx
                         ).await {
-                            error!("Error handling client message: {}", e);
+                            error!("Error handling client message: {e}");
                             break;
                         }
                     }
                     Some(Err(e)) => {
-                        error!("Error receiving message from shepherd: {}", e);
+                        error!("Error receiving message from shepherd: {e}");
                         break;
                     }
                     None => {
@@ -148,10 +148,7 @@ async fn handle_shepherd_connection(
     }
 
     if let Some(uuid) = shepherd_uuid {
-        info!(
-            "Shepherd {} connection dropped, marking as temporarily unavailable",
-            uuid
-        );
+        info!("Shepherd {uuid} connection dropped, marking as temporarily unavailable");
         shepherd_manager.mark_shepherd_disconnected(uuid);
     }
 
@@ -215,7 +212,7 @@ async fn handle_ack_message(
         let task_id = Uuid::parse_str(&ack.task_id)
             .map_err(|e| anyhow::anyhow!("Invalid task ID in ack: {}", e))?;
 
-        debug!("Received ACK for task {} from shepherd {}", task_id, uuid);
+        debug!("Received ACK for task {task_id} from shepherd {uuid}");
 
         // TODO: Update task dispatch tracking if needed
     } else {
@@ -256,10 +253,7 @@ async fn handle_task_result_message(
         let task_id = Uuid::parse_str(&task_result.task_id)
             .map_err(|e| anyhow::anyhow!("Invalid task ID in result: {}", e))?;
 
-        info!(
-            "Received result for task {} from shepherd {}",
-            task_id, uuid
-        );
+        info!("Received result for task {task_id} from shepherd {uuid}");
 
         // TODO: Process task result - write event, update TaskSet, untrack from shepherd
         // This will be handled by the scheduler component

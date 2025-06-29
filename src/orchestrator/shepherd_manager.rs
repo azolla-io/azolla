@@ -141,10 +141,7 @@ impl ShepherdManager {
                 existing_shepherd.status,
                 ShepherdConnectionStatus::Disconnected
             ) {
-                info!(
-                    "Shepherd {} reconnecting (was temporarily unavailable)",
-                    uuid
-                );
+                info!("Shepherd {uuid} reconnecting (was temporarily unavailable)");
                 self.mark_shepherd_reconnected(uuid);
                 return Ok(());
             }
@@ -153,10 +150,7 @@ impl ShepherdManager {
         // New shepherd registration
         let shepherd_status = ShepherdStatus::new(uuid, max_concurrency);
 
-        info!(
-            "Registering new shepherd {} with max_concurrency={}",
-            uuid, max_concurrency
-        );
+        info!("Registering new shepherd {uuid} with max_concurrency={max_concurrency}");
 
         // Create EVENT_SHEPHERD_REGISTERED event
         let event_metadata = serde_json::json!({
@@ -180,7 +174,7 @@ impl ShepherdManager {
         // Add to in-memory tracking
         self.shepherds.insert(uuid, shepherd_status);
 
-        info!("Successfully registered shepherd {}", uuid);
+        info!("Successfully registered shepherd {uuid}");
         Ok(())
     }
 
@@ -189,7 +183,7 @@ impl ShepherdManager {
         if let Some(mut shepherd) = self.shepherds.get_mut(&uuid) {
             shepherd.update_load(current_load, available_capacity);
         } else {
-            warn!("Received status update from unknown shepherd {}", uuid);
+            warn!("Received status update from unknown shepherd {uuid}");
         }
     }
 
@@ -204,10 +198,7 @@ impl ShepherdManager {
     pub fn mark_shepherd_disconnected(&self, uuid: Uuid) {
         if let Some(mut shepherd) = self.shepherds.get_mut(&uuid) {
             shepherd.status = ShepherdConnectionStatus::Disconnected;
-            info!(
-                "Marked shepherd {} as temporarily unavailable (connection dropped)",
-                uuid
-            );
+            info!("Marked shepherd {uuid} as temporarily unavailable (connection dropped)");
         }
     }
 
@@ -216,7 +207,7 @@ impl ShepherdManager {
         if let Some(mut shepherd) = self.shepherds.get_mut(&uuid) {
             shepherd.status = ShepherdConnectionStatus::Connected;
             shepherd.update_last_seen();
-            info!("Marked shepherd {} as reconnected and available", uuid);
+            info!("Marked shepherd {uuid} as reconnected and available");
         }
     }
 
@@ -263,7 +254,7 @@ impl ShepherdManager {
     /// Remove shepherd when it disconnects
     pub fn remove_shepherd(&self, uuid: Uuid) {
         if self.shepherds.remove(&uuid).is_some() {
-            info!("Removed shepherd {} from tracking", uuid);
+            info!("Removed shepherd {uuid} from tracking");
         }
     }
 
@@ -274,7 +265,7 @@ impl ShepherdManager {
         loop {
             interval.tick().await;
             if let Err(e) = self.cleanup_dead_shepherds().await {
-                error!("Error during dead shepherd cleanup: {}", e);
+                error!("Error during dead shepherd cleanup: {e}");
             }
         }
     }
@@ -313,10 +304,7 @@ impl ShepherdManager {
                 .fail_shepherd_tasks(shepherd_uuid, &self.event_stream)
                 .await
             {
-                error!(
-                    "Failed to fail tasks for dead shepherd {}: {}",
-                    shepherd_uuid, e
-                );
+                error!("Failed to fail tasks for dead shepherd {shepherd_uuid}: {e}");
             }
 
             // Remove shepherd completely (they've been disconnected too long)

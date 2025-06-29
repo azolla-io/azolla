@@ -63,19 +63,16 @@ async fn main() -> Result<()> {
 
     // Validate task ID
     let task_uuid =
-        Uuid::parse_str(task_id).map_err(|e| anyhow::anyhow!("Invalid task ID: {}", e))?;
+        Uuid::parse_str(task_id).map_err(|e| anyhow::anyhow!("Invalid task ID: {e}"))?;
 
     // Parse JSON arguments
     let args: Value =
-        serde_json::from_str(args_json).map_err(|e| anyhow::anyhow!("Invalid args JSON: {}", e))?;
+        serde_json::from_str(args_json).map_err(|e| anyhow::anyhow!("Invalid args JSON: {e}"))?;
     let kwargs: Value = serde_json::from_str(kwargs_json)
-        .map_err(|e| anyhow::anyhow!("Invalid kwargs JSON: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Invalid kwargs JSON: {e}"))?;
 
-    info!(
-        "Worker starting: task_id={}, name={}, shepherd={}",
-        task_uuid, task_name, shepherd_endpoint
-    );
-    info!("Task args: {}, kwargs: {}", args, kwargs);
+    info!("Worker starting: task_id={task_uuid}, name={task_name}, shepherd={shepherd_endpoint}");
+    info!("Task args: {args}, kwargs: {kwargs}");
 
     // Execute the task
     let result = execute_task(task_name, &args, &kwargs).await;
@@ -86,7 +83,7 @@ async fn main() -> Result<()> {
             info!("Successfully reported result to shepherd");
         }
         Err(e) => {
-            error!("Failed to report result to shepherd: {}", e);
+            error!("Failed to report result to shepherd: {e}");
             std::process::exit(1);
         }
     }
@@ -96,7 +93,7 @@ async fn main() -> Result<()> {
 }
 
 async fn execute_task(task_name: &str, args: &Value, kwargs: &Value) -> common::TaskResult {
-    info!("Executing task: {}", task_name);
+    info!("Executing task: {task_name}");
 
     // Simulate task execution time
     let execution_time = match kwargs.get("sleep_duration") {
@@ -114,13 +111,13 @@ async fn execute_task(task_name: &str, args: &Value, kwargs: &Value) -> common::
             .unwrap_or(false);
 
     if should_fail {
-        info!("Task {} simulated failure", task_name);
+        info!("Task {task_name} simulated failure");
         common::TaskResult {
             task_id: "".to_string(), // Will be set by caller
             result_type: Some(common::task_result::ResultType::Error(
                 common::ErrorResult {
                     r#type: "SimulatedError".to_string(),
-                    message: format!("Task {} was configured to fail", task_name),
+                    message: format!("Task {task_name} was configured to fail"),
                     code: "SIMULATED_FAILURE".to_string(),
                     stacktrace: "".to_string(),
                     data: Some(common::StructValue {
@@ -135,7 +132,7 @@ async fn execute_task(task_name: &str, args: &Value, kwargs: &Value) -> common::
             )),
         }
     } else {
-        info!("Task {} completed successfully", task_name);
+        info!("Task {task_name} completed successfully");
 
         // Create a simple result based on task type
         let result_value = match task_name {
@@ -201,8 +198,7 @@ async fn execute_task(task_name: &str, args: &Value, kwargs: &Value) -> common::
                 // Default: return success message
                 common::AnyValue {
                     value: Some(common::any_value::Value::StringValue(format!(
-                        "Task {} completed",
-                        task_name
+                        "Task {task_name} completed"
                     ))),
                 }
             }
@@ -227,12 +223,12 @@ async fn report_result_to_shepherd(
     // Set the task ID in the result
     result.task_id = task_id.to_string();
 
-    info!("Connecting to shepherd at {}", shepherd_endpoint);
+    info!("Connecting to shepherd at {shepherd_endpoint}");
 
     // Connect to shepherd's worker service
     let mut client = WorkerClient::connect(shepherd_endpoint.to_string())
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to connect to shepherd: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to connect to shepherd: {e}"))?;
 
     // Send the result
     let request = Request::new(ReportResultRequest {
@@ -243,7 +239,7 @@ async fn report_result_to_shepherd(
     let response = client
         .report_result(request)
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to report result: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to report result: {e}"))?;
 
     let report_response = response.into_inner();
 

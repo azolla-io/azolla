@@ -79,7 +79,7 @@ impl TaskManager {
                     match event {
                         Some(event) => {
                             if let Err(e) = self.handle_stream_event(event).await {
-                                error!("Error handling stream event: {}", e);
+                                error!("Error handling stream event: {e}");
                             }
                         }
                         None => {
@@ -186,7 +186,7 @@ impl TaskManager {
             Self::spawn_and_monitor_process(task_id, task, config, current_load).await;
         });
 
-        info!("Monitoring task spawned for task: {}", task_id);
+        info!("Monitoring task spawned for task: {task_id}");
 
         Ok(())
     }
@@ -210,7 +210,7 @@ impl TaskManager {
             .arg(match serde_json::to_string(&task.args) {
                 Ok(args_json) => args_json,
                 Err(e) => {
-                    error!("Failed to serialize task args for {}: {}", task_id, e);
+                    error!("Failed to serialize task args for {task_id}: {e}");
                     current_load.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
                     return;
                 }
@@ -240,14 +240,11 @@ impl TaskManager {
         let mut child = match cmd.spawn() {
             Ok(child) => {
                 let process_id = child.id();
-                info!(
-                    "Worker process started for task {}: PID {:?}",
-                    task_id, process_id
-                );
+                info!("Worker process started for task {task_id}: PID {process_id:?}");
                 child
             }
             Err(e) => {
-                error!("Failed to spawn worker process for task {}: {}", task_id, e);
+                error!("Failed to spawn worker process for task {task_id}: {e}");
                 current_load.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
                 return;
             }
@@ -264,33 +261,32 @@ impl TaskManager {
                         let success = exit_status.success();
                         let exit_code = exit_status.code();
 
-                        info!("Process for task {} exited: success={}, code={:?}",
-                              task_id, success, exit_code);
+                        info!("Process for task {task_id} exited: success={success}, code={exit_code:?}");
 
                         if success {
                             (true, None)
                         } else {
-                            let error = format!("Process exited with code: {:?}", exit_code);
+                            let error = format!("Process exited with code: {exit_code:?}");
                             (false, Some(error))
                         }
                     }
                     Err(e) => {
-                        error!("Failed to wait for process {}: {}", task_id, e);
-                        (false, Some(format!("Process wait failed: {}", e)))
+                        error!("Failed to wait for process {task_id}: {e}");
+                        (false, Some(format!("Process wait failed: {e}")))
                     }
                 }
             }
 
             // Timeout handling
             _ = tokio::time::sleep(timeout_duration) => {
-                warn!("Task {} timed out after {:?}", task_id, timeout_duration);
+                warn!("Task {task_id} timed out after {timeout_duration:?}");
 
                 // Kill the process
                 if let Err(e) = child.kill().await {
-                    error!("Failed to kill timed out process for task {}: {}", task_id, e);
+                    error!("Failed to kill timed out process for task {task_id}: {e}");
                 }
 
-                (false, Some(format!("Task timed out after {:?}", timeout_duration)))
+                (false, Some(format!("Task timed out after {timeout_duration:?}")))
             }
         };
 
@@ -303,16 +299,10 @@ impl TaskManager {
 
         let (success, error) = result;
         if success {
-            info!(
-                "Task {} completed successfully in {:.2}ms",
-                task_id, execution_ms
-            );
+            info!("Task {task_id} completed successfully in {execution_ms:.2}ms");
         } else {
             let error_msg = error.unwrap_or_else(|| "Unknown error".to_string());
-            warn!(
-                "Task {} failed after {:.2}ms: {}",
-                task_id, execution_ms, error_msg
-            );
+            warn!("Task {task_id} failed after {execution_ms:.2}ms: {error_msg}");
         }
 
         // Note: In this simplified architecture, we don't update TaskManager state
@@ -363,7 +353,7 @@ impl TaskManager {
 
         let running_count = self.running_tasks.len();
         if running_count > 0 {
-            info!("Waiting for {} running tasks to complete...", running_count);
+            info!("Waiting for {running_count} running tasks to complete...");
 
             // In the new architecture, individual monitoring tasks handle process termination
             // We just wait a reasonable time for them to finish
@@ -372,10 +362,7 @@ impl TaskManager {
 
             let remaining_count = self.running_tasks.len();
             if remaining_count > 0 {
-                warn!(
-                    "Force shutdown with {} tasks still tracked as running",
-                    remaining_count
-                );
+                warn!("Force shutdown with {remaining_count} tasks still tracked as running");
             }
         }
 
@@ -385,7 +372,7 @@ impl TaskManager {
         self.running_tasks.clear();
 
         if queued_count > 0 {
-            warn!("Discarded {} queued tasks during shutdown", queued_count);
+            warn!("Discarded {queued_count} queued tasks during shutdown");
         }
 
         info!("Task manager shutdown complete");

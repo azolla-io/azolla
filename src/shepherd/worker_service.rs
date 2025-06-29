@@ -38,7 +38,7 @@ impl Worker for WorkerService {
         debug!("Received result report for task: {}", req.task_id);
 
         let task_id = Uuid::parse_str(&req.task_id)
-            .map_err(|e| Status::invalid_argument(format!("Invalid task ID: {}", e)))?;
+            .map_err(|e| Status::invalid_argument(format!("Invalid task ID: {e}")))?;
 
         let result = req
             .result
@@ -56,18 +56,18 @@ impl Worker for WorkerService {
 
         let success = match &result.result_type {
             Some(common::task_result::ResultType::Success(_)) => {
-                info!("Task {} completed successfully", task_id);
+                info!("Task {task_id} completed successfully");
                 true
             }
             Some(common::task_result::ResultType::Error(error_result)) => {
                 warn!(
-                    "Task {} failed: {} - {}",
-                    task_id, error_result.r#type, error_result.message
+                    "Task {task_id} failed: {} - {}",
+                    error_result.r#type, error_result.message
                 );
                 false
             }
             None => {
-                error!("Task {} has invalid result type", task_id);
+                error!("Task {task_id} has invalid result type");
                 return Err(Status::invalid_argument("Invalid result type"));
             }
         };
@@ -75,14 +75,11 @@ impl Worker for WorkerService {
         let message = TaskResultMessage { task_id, result };
 
         if let Err(e) = self.result_sender.send(message) {
-            error!("Failed to forward task result to stream handler: {}", e);
+            error!("Failed to forward task result to stream handler: {e}");
             return Err(Status::internal("Failed to process task result"));
         }
 
-        debug!(
-            "Successfully forwarded result for task {} to stream handler",
-            task_id
-        );
+        debug!("Successfully forwarded result for task {task_id} to stream handler");
 
         Ok(Response::new(ReportResultResponse {
             success: true,
@@ -99,20 +96,20 @@ pub async fn start_worker_service(
     port: u16,
     result_sender: mpsc::UnboundedSender<TaskResultMessage>,
 ) -> Result<()> {
-    let addr = format!("127.0.0.1:{}", port)
+    let addr = format!("127.0.0.1:{port}")
         .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid address format: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Invalid address format: {e}"))?;
 
     let worker_service = WorkerService::new(result_sender);
     let server = worker_service.into_server();
 
-    info!("Starting worker service on {}", addr);
+    info!("Starting worker service on {addr}");
 
     tonic::transport::Server::builder()
         .add_service(server)
         .serve(addr)
         .await
-        .map_err(|e| anyhow::anyhow!("Worker service error: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Worker service error: {e}"))?;
 
     Ok(())
 }
