@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::proto::orchestrator;
 use crate::shepherd::{ShepherdConfig, TaskResultMessage};
-use orchestrator::dispatch_client::DispatchClient;
+use orchestrator::cluster_service_client::ClusterServiceClient;
 use orchestrator::*;
 
 #[derive(Debug, Clone)]
@@ -110,7 +110,7 @@ impl StreamHandler {
         let channel = Channel::from_shared(self.config.orchestrator_endpoint.clone())?
             .connect()
             .await?;
-        let mut client = DispatchClient::new(channel);
+        let mut client = ClusterServiceClient::new(channel);
 
         let (tx, rx) = mpsc::channel(100);
         let request = Request::new(tokio_stream::wrappers::ReceiverStream::new(rx));
