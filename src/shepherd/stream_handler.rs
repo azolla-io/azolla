@@ -59,7 +59,7 @@ impl StreamHandler {
         info!("Starting stream handler for shepherd {}", self.config.uuid);
 
         let mut retry_count = 0;
-        let mut backoff = self.config.reconnect_backoff;
+        let mut backoff = self.config.reconnect_backoff();
 
         loop {
             // Check for shutdown
@@ -72,7 +72,7 @@ impl StreamHandler {
                 Ok(_) => {
                     info!("Stream handler connection ended normally");
                     retry_count = 0;
-                    backoff = self.config.reconnect_backoff;
+                    backoff = self.config.reconnect_backoff();
                 }
                 Err(e) => {
                     retry_count += 1;
@@ -131,7 +131,7 @@ impl StreamHandler {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to send hello: {}", e))?;
         let heartbeat_tx = tx.clone();
-        let heartbeat_interval = self.config.heartbeat_interval;
+        let heartbeat_interval = self.config.heartbeat_interval();
         let current_load = self.current_load.clone();
         let max_concurrency = self.config.max_concurrency;
 
@@ -340,15 +340,15 @@ mod tests {
             max_concurrency: 4,
             worker_grpc_port: 50052,
             worker_binary_path: "./test-worker".to_string(),
-            heartbeat_interval: Duration::from_secs(30),
-            reconnect_backoff: Duration::from_secs(5),
-            worker_timeout: Some(Duration::from_secs(300)),
+            heartbeat_interval_secs: 30,
+            reconnect_backoff_secs: 5,
+            worker_timeout_secs: Some(300),
             log_level: Some("info".to_string()),
         };
 
         // Test that configuration values are preserved
         assert_eq!(config.max_concurrency, 4);
-        assert_eq!(config.heartbeat_interval, Duration::from_secs(30));
-        assert_eq!(config.reconnect_backoff, Duration::from_secs(5));
+        assert_eq!(config.heartbeat_interval(), Duration::from_secs(30));
+        assert_eq!(config.reconnect_backoff(), Duration::from_secs(5));
     }
 }

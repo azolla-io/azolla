@@ -251,7 +251,7 @@ impl TaskManager {
         };
 
         // Monitor the process
-        let timeout_duration = config.worker_timeout.unwrap_or(Duration::from_secs(300));
+        let timeout_duration = config.worker_timeout().unwrap_or(Duration::from_secs(300));
 
         let result = tokio::select! {
             // Wait for process to complete
@@ -402,9 +402,9 @@ mod tests {
             max_concurrency: 2,
             worker_grpc_port: 50052,
             worker_binary_path: "./test-worker".to_string(),
-            heartbeat_interval: std::time::Duration::from_secs(30),
-            reconnect_backoff: std::time::Duration::from_secs(5),
-            worker_timeout: Some(std::time::Duration::from_secs(300)),
+            heartbeat_interval_secs: 30,
+            reconnect_backoff_secs: 5,
+            worker_timeout_secs: Some(300),
             log_level: Some("info".to_string()),
         }
     }

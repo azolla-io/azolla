@@ -57,7 +57,7 @@ fn default_pool_size() -> usize {
 impl Settings {
     pub fn new() -> Result<Self, ConfigError> {
         let s = Config::builder()
-            .add_source(File::with_name("config/default").required(false))
+            .add_source(File::with_name("config/orchestrator").required(false))
             .add_source(Environment::with_prefix("AZOLLA").separator("__"))
             .build()?;
         s.try_deserialize()
