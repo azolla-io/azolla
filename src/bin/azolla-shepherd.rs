@@ -20,7 +20,7 @@ async fn main() -> Result<()> {
                 .long("config")
                 .value_name("FILE")
                 .help("Configuration file path")
-                .default_value("shepherd.toml"),
+                .default_value("config/shepherd.toml"),
         )
         .arg(
             Arg::new("orchestrator")

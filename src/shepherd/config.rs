@@ -13,11 +13,9 @@ pub struct ShepherdConfig {
     pub max_concurrency: u32,
     pub worker_grpc_port: u16,
     pub worker_binary_path: String,
-    #[serde(with = "duration_serde")]
-    pub heartbeat_interval: Duration,
-    #[serde(with = "duration_serde")]
-    pub reconnect_backoff: Duration,
-    pub worker_timeout: Option<Duration>,
+    pub heartbeat_interval_secs: u64,
+    pub reconnect_backoff_secs: u64,
+    pub worker_timeout_secs: Option<u64>,
     pub log_level: Option<String>,
 }
 
@@ -29,9 +27,9 @@ impl Default for ShepherdConfig {
             max_concurrency: 4,
             worker_grpc_port: 50052,
             worker_binary_path: "./azolla-worker".to_string(),
-            heartbeat_interval: Duration::from_secs(30),
-            reconnect_backoff: Duration::from_secs(5),
-            worker_timeout: Some(Duration::from_secs(300)), // 5 minutes
+            heartbeat_interval_secs: 30,
+            reconnect_backoff_secs: 5,
+            worker_timeout_secs: Some(300),
             log_level: Some("info".to_string()),
         }
     }
@@ -54,12 +52,16 @@ impl ShepherdConfig {
             return Err(anyhow::anyhow!("worker_grpc_port must be greater than 0"));
         }
 
-        if self.heartbeat_interval.as_secs() == 0 {
-            return Err(anyhow::anyhow!("heartbeat_interval must be greater than 0"));
+        if self.heartbeat_interval_secs == 0 {
+            return Err(anyhow::anyhow!(
+                "heartbeat_interval_secs must be greater than 0"
+            ));
         }
 
-        if self.reconnect_backoff.as_secs() == 0 {
-            return Err(anyhow::anyhow!("reconnect_backoff must be greater than 0"));
+        if self.reconnect_backoff_secs == 0 {
+            return Err(anyhow::anyhow!(
+                "reconnect_backoff_secs must be greater than 0"
+            ));
         }
 
         Ok(())
@@ -67,6 +69,19 @@ impl ShepherdConfig {
 
     pub fn worker_service_endpoint(&self) -> String {
         format!("http://127.0.0.1:{}", self.worker_grpc_port)
+    }
+
+    // Convenience methods to convert to Duration when needed
+    pub fn heartbeat_interval(&self) -> Duration {
+        Duration::from_secs(self.heartbeat_interval_secs)
+    }
+
+    pub fn reconnect_backoff(&self) -> Duration {
+        Duration::from_secs(self.reconnect_backoff_secs)
+    }
+
+    pub fn worker_timeout(&self) -> Option<Duration> {
+        self.worker_timeout_secs.map(Duration::from_secs)
     }
     pub fn apply_cli_overrides(&mut self, matches: &ArgMatches) {
         if let Some(endpoint) = matches.get_one::<String>("orchestrator") {
@@ -121,7 +136,7 @@ impl ShepherdConfig {
 
         if let Ok(timeout_str) = std::env::var("AZOLLA_WORKER_TIMEOUT") {
             if let Ok(timeout_secs) = timeout_str.parse::<u64>() {
-                self.worker_timeout = Some(Duration::from_secs(timeout_secs));
+                self.worker_timeout_secs = Some(timeout_secs);
             }
         }
     }
@@ -173,27 +188,6 @@ pub fn create_sample_config(path: &str) -> Result<()> {
 
     println!("Sample configuration written to: {path}");
     Ok(())
-}
-
-// Custom serialization for Duration fields
-mod duration_serde {
-    use serde::{Deserialize, Deserializer, Serializer};
-    use std::time::Duration;
-
-    pub fn serialize<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_u64(duration.as_secs())
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let secs = u64::deserialize(deserializer)?;
-        Ok(Duration::from_secs(secs))
-    }
 }
 
 #[cfg(test)]
