@@ -12,7 +12,7 @@
 3. **Single-threaded processing**: No contention within domain, consistent latency
 */
 
-use crate::db::PgPool;
+use crate::orchestrator::db::PgPool;
 use crate::{
     EVENT_TASK_ATTEMPT_ENDED, EVENT_TASK_ATTEMPT_STARTED, EVENT_TASK_CREATED, EVENT_TASK_ENDED,
     EVENT_TASK_STARTED,
@@ -621,7 +621,7 @@ impl TaskSetRegistry {
     pub async fn fail_shepherd_tasks(
         &self,
         shepherd_uuid: Uuid,
-        event_stream: &crate::event_stream::EventStream,
+        event_stream: &crate::orchestrator::event_stream::EventStream,
     ) -> Result<()> {
         let task_ids = self.get_shepherd_tasks(shepherd_uuid);
 
@@ -648,7 +648,7 @@ impl TaskSetRegistry {
                         "auto_failed": true
                     });
 
-                    let event_record = crate::event_stream::EventRecord {
+                    let event_record = crate::orchestrator::event_stream::EventRecord {
                         domain: domain.clone(),
                         task_instance_id: Some(task_id),
                         flow_instance_id: task.flow_instance_id,

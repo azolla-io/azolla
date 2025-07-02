@@ -1,6 +1,6 @@
 mod common;
 
-use azolla::{
+use azolla::orchestrator::{
     db::PgPool,
     event_stream::{EventRecord, EventStreamConfig},
 };
@@ -41,7 +41,8 @@ db_test!(
             channel_capacity: 100,
         };
 
-        let event_stream = azolla::event_stream::EventStream::new(pool.clone(), config);
+        let event_stream =
+            azolla::orchestrator::event_stream::EventStream::new(pool.clone(), config);
 
         // Single event should trigger immediate flush (low load)
         let event = create_test_event("low_load_domain", "single_task");
@@ -90,7 +91,8 @@ db_test!(
             channel_capacity: 100,
         };
 
-        let event_stream = azolla::event_stream::EventStream::new(pool.clone(), config);
+        let event_stream =
+            azolla::orchestrator::event_stream::EventStream::new(pool.clone(), config);
 
         // Send events one at a time to see if batching works properly
         for i in 0..5 {
@@ -125,8 +127,9 @@ db_test!(
             channel_capacity: 200,
         };
 
-        let event_stream =
-            std::sync::Arc::new(azolla::event_stream::EventStream::new(pool.clone(), config));
+        let event_stream = std::sync::Arc::new(
+            azolla::orchestrator::event_stream::EventStream::new(pool.clone(), config),
+        );
 
         // Multiple concurrent writers to test thread safety
         let num_writers = 10;
