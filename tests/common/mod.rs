@@ -3,7 +3,7 @@ macro_rules! db_test {
     ($test_name:ident, $body:expr) => {
         #[tokio::test]
         async fn $test_name() {
-            use azolla::db::{
+            use azolla::orchestrator::db::{
                 create_pool, run_migrations, Database, EventStream, Server, Settings,
             };
             use testcontainers::{

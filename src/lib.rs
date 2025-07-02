@@ -1,9 +1,6 @@
-pub mod db;
-pub mod event_stream;
 pub mod orchestrator;
 pub mod proto;
 pub mod shepherd;
-pub mod taskset;
 
 // Event type constants
 pub const EVENT_TASK_CREATED: i16 = 1;
@@ -24,7 +21,9 @@ macro_rules! db_test {
                 runners::AsyncRunner,
                 GenericImage, ImageExt,
             };
-            use $crate::db::{create_pool, run_migrations, Database, Server, Settings};
+            use $crate::orchestrator::db::{
+                create_pool, run_migrations, Database, Server, Settings,
+            };
 
             // 1. Start a fresh Postgres container using testcontainers
             let container = GenericImage::new("postgres", "16-alpine")

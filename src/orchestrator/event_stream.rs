@@ -1,4 +1,4 @@
-use crate::db::PgPool;
+use crate::orchestrator::db::PgPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
@@ -33,8 +33,8 @@ impl Default for EventStreamConfig {
     }
 }
 
-impl From<&crate::db::EventStream> for EventStreamConfig {
-    fn from(config: &crate::db::EventStream) -> Self {
+impl From<&crate::orchestrator::db::EventStream> for EventStreamConfig {
+    fn from(config: &crate::orchestrator::db::EventStream) -> Self {
         Self {
             max_batch_size: config.max_batch_size,
             adaptive_threshold: config.adaptive_threshold,

@@ -1,5 +1,5 @@
 mod common;
-use azolla::{db::PgPool, taskset::TaskSetRegistry};
+use azolla::orchestrator::{db::PgPool, taskset::TaskSetRegistry};
 use chrono::Utc;
 use serde_json::json;
 use tokio_postgres::types::Json;
