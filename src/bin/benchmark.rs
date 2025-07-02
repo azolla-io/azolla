@@ -10,7 +10,7 @@ use tokio::time::timeout;
 use tonic::transport::Channel;
 
 use azolla::proto::orchestrator;
-use orchestrator::azolla_client::AzollaClient;
+use orchestrator::client_service_client::ClientServiceClient;
 use orchestrator::*;
 
 #[derive(Parser)]
@@ -190,12 +190,12 @@ impl BenchmarkStats {
     }
 }
 
-async fn create_grpc_client(server_addr: &str) -> Result<AzollaClient<Channel>> {
+async fn create_grpc_client(server_addr: &str) -> Result<ClientServiceClient<Channel>> {
     let channel = tonic::transport::Channel::from_shared(server_addr.to_string())?
         .connect()
         .await?;
 
-    Ok(AzollaClient::new(channel))
+    Ok(ClientServiceClient::new(channel))
 }
 
 fn generate_random_task_data(
@@ -258,7 +258,7 @@ fn generate_all_requests(args: &Args, zipf: &ZipfianDistribution) -> Vec<CreateT
 }
 
 async fn benchmark_worker(
-    client: AzollaClient<Channel>,
+    client: ClientServiceClient<Channel>,
     requests: Arc<Vec<CreateTaskRequest>>,
     start_idx: usize,
     end_idx: usize,

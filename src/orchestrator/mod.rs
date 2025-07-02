@@ -1,9 +1,12 @@
+pub mod client_service;
+pub mod cluster_service;
 pub mod db;
-pub mod dispatch_service;
+pub mod engine;
 pub mod event_stream;
-pub mod server;
 pub mod shepherd_manager;
 pub mod taskset;
 
-// Re-export commonly used items from server module
-pub use server::{create_server, MyAzollaService};
+// Re-export commonly used items
+pub use client_service::ClientServiceImpl;
+pub use cluster_service::ClusterServiceImpl;
+pub use engine::Engine;

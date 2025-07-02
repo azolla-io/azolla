@@ -8,46 +8,38 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Streaming};
 use uuid::Uuid;
 
+use crate::orchestrator::engine::Engine;
 use crate::orchestrator::shepherd_manager::ShepherdManager;
 use crate::orchestrator::taskset::TaskSetRegistry;
 
 use crate::proto::{common, orchestrator};
-use orchestrator::dispatch_server::{Dispatch, DispatchServer};
+use orchestrator::cluster_service_server::{ClusterService, ClusterServiceServer};
 use orchestrator::*;
 
-pub struct DispatchService {
-    shepherd_manager: Arc<ShepherdManager>,
-    task_registry: Arc<TaskSetRegistry>,
+pub struct ClusterServiceImpl {
+    engine: Engine,
     liveness_probe_threshold: Duration,
 }
 
-impl DispatchService {
-    pub fn new(
-        shepherd_manager: Arc<ShepherdManager>,
-        task_registry: Arc<TaskSetRegistry>,
-    ) -> Self {
-        Self::with_liveness_probe_threshold(shepherd_manager, task_registry, 1000)
+impl ClusterServiceImpl {
+    pub fn new(engine: Engine) -> Self {
+        Self::with_liveness_probe_threshold(engine, 1000)
     }
 
-    pub fn with_liveness_probe_threshold(
-        shepherd_manager: Arc<ShepherdManager>,
-        task_registry: Arc<TaskSetRegistry>,
-        liveness_probe_threshold_ms: u64,
-    ) -> Self {
+    pub fn with_liveness_probe_threshold(engine: Engine, liveness_probe_threshold_ms: u64) -> Self {
         Self {
-            shepherd_manager,
-            task_registry,
+            engine,
             liveness_probe_threshold: Duration::from_millis(liveness_probe_threshold_ms),
         }
     }
 
-    pub fn into_server(self) -> DispatchServer<Self> {
-        DispatchServer::new(self)
+    pub fn into_server(self) -> ClusterServiceServer<Self> {
+        ClusterServiceServer::new(self)
     }
 }
 
 #[tonic::async_trait]
-impl Dispatch for DispatchService {
+impl ClusterService for ClusterServiceImpl {
     type StreamStream = ReceiverStream<Result<ServerMsg, tonic::Status>>;
 
     async fn stream(
@@ -57,8 +49,8 @@ impl Dispatch for DispatchService {
         let client_stream = request.into_inner();
         let (tx, rx) = mpsc::channel(100);
 
-        let shepherd_manager = self.shepherd_manager.clone();
-        let task_registry = self.task_registry.clone();
+        let shepherd_manager = self.engine.shepherd_manager.clone();
+        let task_registry = self.engine.registry.clone();
 
         let liveness_probe_threshold = self.liveness_probe_threshold;
         tokio::spawn(async move {
