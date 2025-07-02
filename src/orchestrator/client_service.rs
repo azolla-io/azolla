@@ -1,76 +1,48 @@
-use crate::orchestrator::db::PgPool;
-use crate::orchestrator::event_stream::{EventRecord, EventStream, EventStreamConfig};
-use crate::orchestrator::taskset::{Task, TaskSetRegistry};
+use crate::orchestrator::engine::Engine;
+use crate::orchestrator::event_stream::EventRecord;
+use crate::orchestrator::taskset::Task;
 use anyhow::Result;
 use chrono::Utc;
 use log::info;
-use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 use crate::proto::orchestrator;
-use orchestrator::azolla_server::{Azolla, AzollaServer};
+use orchestrator::client_service_server::ClientService;
 use orchestrator::*;
 
 use crate::EVENT_TASK_CREATED;
 
 #[derive(Clone)]
-pub struct MyAzollaService {
-    pool: PgPool,
-    registry: Arc<TaskSetRegistry>,
-    event_stream: Arc<EventStream>,
+pub struct ClientServiceImpl {
+    engine: Engine,
 }
 
-impl MyAzollaService {
-    pub fn new(pool: PgPool, event_stream_config: EventStreamConfig) -> Self {
-        let event_stream = Arc::new(EventStream::new(pool.clone(), event_stream_config));
-        Self {
-            pool,
-            registry: Arc::new(TaskSetRegistry::new()),
-            event_stream,
-        }
+impl ClientServiceImpl {
+    pub fn new(engine: Engine) -> Self {
+        Self { engine }
     }
 
-    pub async fn initialize(&self) -> Result<()> {
-        // Load existing tasks from database into the registry
-        // Note: We initialize from task_instance table, but new operations only write to events table
-        // A separate periodic process will sync events back to task_instance table
-        self.registry.load_from_db(&self.pool).await?;
-        info!(
-            "TaskSetRegistry initialized with {} domains (from task_instance table)",
-            self.registry.domains().len()
-        );
-        Ok(())
-    }
-
-    /// Get a reference to the TaskSetRegistry for debugging/monitoring
-    pub fn registry(&self) -> &Arc<TaskSetRegistry> {
-        &self.registry
+    /// Get a reference to the Engine for creating other services
+    pub fn engine(&self) -> &Engine {
+        &self.engine
     }
 
     /// Merge events from the events table to task_instance and task_attempts tables
     /// This method can be called periodically or on-demand to sync the event log
     pub async fn merge_events_to_db(&self) -> Result<()> {
-        self.registry.merge_events_to_db(&self.pool).await
-    }
-
-    /// Shutdown the service and print metrics
-    pub async fn shutdown(&self) -> Result<()> {
-        log::info!("Shutting down Azolla Orchestrator service...");
-        self.event_stream.shutdown().await?;
-        log::info!("Azolla Orchestrator service shutdown complete");
-        Ok(())
+        self.engine.merge_events_to_db().await
     }
 }
 
-impl Drop for MyAzollaService {
+impl Drop for ClientServiceImpl {
     fn drop(&mut self) {
-        log::info!("MyAzollaService dropping");
+        log::info!("ClientServiceImpl dropping");
     }
 }
 
 #[tonic::async_trait]
-impl Azolla for MyAzollaService {
+impl ClientService for ClientServiceImpl {
     async fn create_task(
         &self,
         request: Request<CreateTaskRequest>,
@@ -110,7 +82,8 @@ impl Azolla for MyAzollaService {
             metadata: event_metadata,
         };
 
-        self.event_stream
+        self.engine
+            .event_stream
             .write_event(event_record)
             .await
             .map_err(|e| {
@@ -131,7 +104,7 @@ impl Azolla for MyAzollaService {
         };
 
         {
-            let domain_actor = self.registry.get_or_create_domain(&req.domain);
+            let domain_actor = self.engine.registry.get_or_create_domain(&req.domain);
             domain_actor
                 .upsert_task(task)
                 .await
@@ -189,17 +162,4 @@ impl Azolla for MyAzollaService {
     ) -> Result<Response<PublishFlowEventResponse>, Status> {
         Ok(Response::new(PublishFlowEventResponse { success: true }))
     }
-}
-
-pub async fn create_server(
-    pool: PgPool,
-    event_stream_config: EventStreamConfig,
-) -> Result<(MyAzollaService, AzollaServer<MyAzollaService>)> {
-    let service = MyAzollaService::new(pool, event_stream_config);
-
-    service.initialize().await?;
-
-    let server = AzollaServer::new(service.clone());
-
-    Ok((service, server))
 }

@@ -4,8 +4,8 @@ package azolla.orchestrator;
 
 import "common.proto";
 
-// The main gRPC service for Azolla.
-service Azolla {
+// Public API service for end-user clients of the Azolla platform.
+service ClientService {
   // Creates a new task instance.
   rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse);
   
@@ -25,8 +25,8 @@ service Azolla {
   rpc PublishFlowEvent(PublishFlowEventRequest) returns (PublishFlowEventResponse);
 }
 
-// Dispatch service for shepherd connections.
-service Dispatch {
+// Internal service for orchestrator-shepherd communication.
+service ClusterService {
   // Establishes a bi-directional stream between shepherd and orchestrator.
   rpc Stream(stream ClientMsg) returns (stream ServerMsg);
 }
