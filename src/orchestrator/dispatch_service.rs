@@ -9,7 +9,7 @@ use tonic::{Request, Response, Streaming};
 use uuid::Uuid;
 
 use crate::orchestrator::shepherd_manager::ShepherdManager;
-use crate::taskset::TaskSetRegistry;
+use crate::orchestrator::taskset::TaskSetRegistry;
 
 use crate::proto::{common, orchestrator};
 use orchestrator::dispatch_server::{Dispatch, DispatchServer};

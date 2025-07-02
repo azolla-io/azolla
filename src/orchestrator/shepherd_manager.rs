@@ -9,8 +9,8 @@ use std::time::Duration;
 use tokio::time;
 use uuid::Uuid;
 
-use crate::event_stream::EventStream;
-use crate::taskset::TaskSetRegistry;
+use crate::orchestrator::event_stream::EventStream;
+use crate::orchestrator::taskset::TaskSetRegistry;
 use crate::EVENT_SHEPHERD_REGISTERED;
 
 const SHEPHERD_TIMEOUT_SECS: u64 = 300; // 5 minutes
@@ -159,7 +159,7 @@ impl ShepherdManager {
             "registered_at": Utc::now()
         });
 
-        let event_record = crate::event_stream::EventRecord {
+        let event_record = crate::orchestrator::event_stream::EventRecord {
             domain: "system".to_string(), // Use system domain for shepherd events
             task_instance_id: None,
             flow_instance_id: None,
@@ -363,8 +363,8 @@ mod tests {
     use uuid::Uuid;
 
     fn create_test_manager() -> ShepherdManager {
-        use crate::db::{create_pool, Database, Server, Settings};
-        use crate::event_stream::{EventStream, EventStreamConfig};
+        use crate::orchestrator::db::{create_pool, Database, Server, Settings};
+        use crate::orchestrator::event_stream::{EventStream, EventStreamConfig};
 
         let task_registry = Arc::new(TaskSetRegistry::new());
 
@@ -375,7 +375,7 @@ mod tests {
                 pool_size: 1,
             },
             server: Server { port: 0 },
-            event_stream: crate::db::EventStream::default(),
+            event_stream: crate::orchestrator::db::EventStream::default(),
         };
 
         // Create a dummy pool that won't actually connect

@@ -2,9 +2,9 @@ use anyhow::Result;
 use tokio::signal;
 use tonic::transport::Server;
 
-use azolla::db::{create_pool, run_migrations, Settings};
-use azolla::event_stream::EventStreamConfig;
 use azolla::orchestrator::create_server;
+use azolla::orchestrator::db::{create_pool, run_migrations, Settings};
+use azolla::orchestrator::event_stream::EventStreamConfig;
 
 /// Wait for shutdown signal (CTRL+C or SIGTERM)
 async fn shutdown_signal() {
