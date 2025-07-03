@@ -296,15 +296,16 @@ impl ShepherdManager {
             }
         }
 
-        // Process dead shepherds - fail their tasks and remove them completely
+        // Process dead shepherds - generate failure events and remove them completely
         for shepherd_uuid in dead_shepherds {
-            // Fail all tasks assigned to this shepherd
+            // Generate failure events for all tasks assigned to this shepherd
+            // Note: The Scheduler will handle the events and update TaskSet accordingly
             if let Err(e) = self
                 .task_registry
-                .fail_shepherd_tasks(shepherd_uuid, &self.event_stream)
+                .generate_shepherd_failure_events(shepherd_uuid, &self.event_stream)
                 .await
             {
-                error!("Failed to fail tasks for dead shepherd {shepherd_uuid}: {e}");
+                error!("Failed to generate failure events for dead shepherd {shepherd_uuid}: {e}");
             }
 
             // Remove shepherd completely (they've been disconnected too long)

@@ -10,6 +10,15 @@ pub const EVENT_TASK_ATTEMPT_STARTED: i16 = 4;
 pub const EVENT_TASK_ATTEMPT_ENDED: i16 = 5;
 pub const EVENT_SHEPHERD_REGISTERED: i16 = 6;
 
+// Task status constants
+pub const TASK_STATUS_CREATED: i16 = 0;
+pub const TASK_STATUS_ATTEMPT_STARTED: i16 = 1;
+pub const TASK_STATUS_ATTEMPT_SUCCEEDED: i16 = 2;
+pub const TASK_STATUS_SUCCEEDED: i16 = 3;
+pub const TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT: i16 = 4;
+pub const TASK_STATUS_ATTEMPT_FAILED_WITHOUT_ATTEMPTS_LEFT: i16 = 5;
+pub const TASK_STATUS_FAILED: i16 = 6;
+
 #[cfg(test)]
 #[macro_export]
 macro_rules! db_test {
@@ -56,6 +65,7 @@ macro_rules! db_test {
                     pool_size: 8,
                 },
                 server: Server { port: 0 }, // dummy
+                event_stream: $crate::orchestrator::db::EventStream::default(),
             };
             let pool = create_pool(&settings).unwrap();
 

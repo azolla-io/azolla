@@ -51,6 +51,7 @@ impl ClusterService for ClusterServiceImpl {
 
         let shepherd_manager = self.engine.shepherd_manager.clone();
         let task_registry = self.engine.registry.clone();
+        let scheduler_registry = self.engine.scheduler_registry.clone();
 
         let liveness_probe_threshold = self.liveness_probe_threshold;
         tokio::spawn(async move {
@@ -59,6 +60,7 @@ impl ClusterService for ClusterServiceImpl {
                 tx.clone(),
                 shepherd_manager,
                 task_registry,
+                scheduler_registry,
                 liveness_probe_threshold,
             )
             .await
@@ -80,6 +82,7 @@ async fn handle_shepherd_connection(
     tx: mpsc::Sender<Result<ServerMsg, tonic::Status>>,
     shepherd_manager: Arc<ShepherdManager>,
     _task_registry: Arc<TaskSetRegistry>,
+    scheduler_registry: Arc<crate::orchestrator::scheduler::SchedulerRegistry>,
     liveness_probe_threshold: Duration,
 ) -> Result<()> {
     let mut shepherd_uuid: Option<Uuid> = None;
@@ -100,6 +103,7 @@ async fn handle_shepherd_connection(
                             client_msg,
                             &mut shepherd_uuid,
                             &shepherd_manager,
+                            &scheduler_registry,
                             &tx
                         ).await {
                             error!("Error handling client message: {e}");
@@ -151,6 +155,7 @@ async fn handle_client_message(
     client_msg: ClientMsg,
     shepherd_uuid: &mut Option<Uuid>,
     shepherd_manager: &Arc<ShepherdManager>,
+    scheduler_registry: &Arc<crate::orchestrator::scheduler::SchedulerRegistry>,
     _tx: &mpsc::Sender<Result<ServerMsg, tonic::Status>>,
 ) -> Result<()> {
     match client_msg.kind {
@@ -164,7 +169,13 @@ async fn handle_client_message(
             handle_status_message(status, shepherd_uuid, shepherd_manager).await?;
         }
         Some(client_msg::Kind::TaskResult(task_result)) => {
-            handle_task_result_message(task_result, shepherd_uuid, shepherd_manager).await?;
+            handle_task_result_message(
+                task_result,
+                shepherd_uuid,
+                shepherd_manager,
+                scheduler_registry,
+            )
+            .await?;
         }
         None => {
             warn!("Received empty client message");
@@ -240,6 +251,7 @@ async fn handle_task_result_message(
     task_result: common::TaskResult,
     shepherd_uuid: &mut Option<Uuid>,
     _shepherd_manager: &Arc<ShepherdManager>,
+    scheduler_registry: &Arc<crate::orchestrator::scheduler::SchedulerRegistry>,
 ) -> Result<()> {
     if let Some(uuid) = shepherd_uuid {
         let task_id = Uuid::parse_str(&task_result.task_id)
@@ -247,8 +259,38 @@ async fn handle_task_result_message(
 
         info!("Received result for task {task_id} from shepherd {uuid}");
 
-        // TODO: Process task result - write event, update TaskSet, untrack from shepherd
-        // This will be handled by the scheduler component
+        // TODO: Need to determine the domain for this task
+        // For now, we'll iterate through all domains to find the task
+        // In production, we might want to include domain in the TaskResult message
+        // or maintain a task_id -> domain mapping
+
+        let domains = scheduler_registry.domains();
+        let mut task_found = false;
+
+        for domain in domains {
+            if let Some(scheduler) = scheduler_registry.get_scheduler(&domain) {
+                // Try to handle the result - the scheduler will ignore if task not in this domain
+                if let Err(e) = scheduler
+                    .handle_task_result(task_id, task_result.clone())
+                    .await
+                {
+                    warn!(
+                        "Failed to handle task result for task {} in domain {}: {:?}",
+                        task_id, domain, e
+                    );
+                } else {
+                    task_found = true;
+                    break;
+                }
+            }
+        }
+
+        if !task_found {
+            warn!(
+                "Task {} not found in any domain when processing result",
+                task_id
+            );
+        }
     } else {
         warn!("Received task result from unregistered shepherd");
     }
