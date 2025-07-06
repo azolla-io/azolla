@@ -14,6 +14,7 @@
 
 use crate::orchestrator::db::PgPool;
 use crate::{
+    ATTEMPT_STATUS_FAILED, ATTEMPT_STATUS_STARTED, ATTEMPT_STATUS_SUCCEEDED,
     EVENT_TASK_ATTEMPT_ENDED, EVENT_TASK_ATTEMPT_STARTED, EVENT_TASK_CREATED, EVENT_TASK_ENDED,
     EVENT_TASK_STARTED, TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT, TASK_STATUS_ATTEMPT_STARTED,
     TASK_STATUS_CREATED,
@@ -1115,7 +1116,7 @@ impl TaskSetRegistry {
                     e.domain,
                     COALESCE((e.metadata->>'attempt')::int, 1),
                     e.created_at,
-                    0::smallint
+                    crate::ATTEMPT_STATUS_STARTED::smallint
                 FROM events e
                 WHERE e.event_id > $1 
                   AND e.event_id <= $2
@@ -1140,7 +1141,7 @@ impl TaskSetRegistry {
                 UPDATE task_attempts 
                 SET 
                     end_time = e.created_at,
-                    status = COALESCE((e.metadata->>'status')::smallint, 1::smallint)
+                    status = COALESCE((e.metadata->>'attempt_status')::smallint, crate::ATTEMPT_STATUS_FAILED::smallint)
                 FROM events e
                 WHERE task_attempts.task_instance_id = e.task_instance_id
                   AND task_attempts.domain = e.domain

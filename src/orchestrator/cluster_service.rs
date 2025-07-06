@@ -275,8 +275,7 @@ async fn handle_task_result_message(
                     .await
                 {
                     warn!(
-                        "Failed to handle task result for task {} in domain {}: {:?}",
-                        task_id, domain, e
+                        "Failed to handle task result for task {task_id} in domain {domain}: {e:?}"
                     );
                 } else {
                     task_found = true;
@@ -286,10 +285,7 @@ async fn handle_task_result_message(
         }
 
         if !task_found {
-            warn!(
-                "Task {} not found in any domain when processing result",
-                task_id
-            );
+            warn!("Task {task_id} not found in any domain when processing result");
         }
     } else {
         warn!("Received task result from unregistered shepherd");

@@ -19,6 +19,11 @@ pub const TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT: i16 = 4;
 pub const TASK_STATUS_ATTEMPT_FAILED_WITHOUT_ATTEMPTS_LEFT: i16 = 5;
 pub const TASK_STATUS_FAILED: i16 = 6;
 
+// Task attempt status constants
+pub const ATTEMPT_STATUS_STARTED: i16 = 0;
+pub const ATTEMPT_STATUS_SUCCEEDED: i16 = 1;
+pub const ATTEMPT_STATUS_FAILED: i16 = 2;
+
 #[cfg(test)]
 #[macro_export]
 macro_rules! db_test {

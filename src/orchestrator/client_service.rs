@@ -118,9 +118,9 @@ impl ClientService for ClientServiceImpl {
                 .scheduler_registry
                 .get_or_create_scheduler(&req.domain);
             scheduler
-                .start_task(task_id)
+                .start_task_async(task_id)
                 .await
-                .map_err(|e| Status::internal(format!("Failed to start task: {:?}", e)))?;
+                .map_err(|e| Status::internal(format!("Failed to start task: {e:?}")))?;
         }
 
         info!(

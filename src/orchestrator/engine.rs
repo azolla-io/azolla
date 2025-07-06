@@ -66,7 +66,7 @@ impl Engine {
 
         // Shutdown schedulers first
         if let Err(e) = self.scheduler_registry.shutdown_all().await {
-            log::error!("Failed to shutdown scheduler registry: {}", e);
+            log::error!("Failed to shutdown scheduler registry: {e}");
         }
 
         // Then shutdown event stream
