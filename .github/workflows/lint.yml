@@ -12,19 +12,23 @@ jobs:
   fmt:
     name: Rustfmt
     runs-on: ubuntu-latest
-    uses: ./.github/workflows/rust-setup.yml@main
-    with:
-      rust-toolchain-channel: stable
-      rust-toolchain-components: rustfmt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/workflows/rust-setup.yml
+        with:
+          rust-toolchain-channel: stable
+          rust-toolchain-components: rustfmt
       - name: Check formatting
         run: cargo fmt --check
 
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
-    uses: ./.github/workflows/rust-setup.yml@main
-    with:
-      rust-toolchain-channel: stable
-      rust-toolchain-components: clippy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/workflows/rust-setup.yml
+        with:
+          rust-toolchain-channel: stable
+          rust-toolchain-components: clippy
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings

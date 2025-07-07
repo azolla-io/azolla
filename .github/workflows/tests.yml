@@ -26,11 +26,18 @@ jobs:
         ports:
           - 5432:5432
 
-    uses: ./.github/workflows/rust-setup.yml@main
-    with:
-      rust-toolchain-channel: nightly
-      rust-toolchain-components: llvm-tools-preview
+    steps:
+    - uses: actions/checkout@v4
+    - uses: ./.github/workflows/rust-setup.yml
+      with:
+        rust-toolchain-channel: nightly
+        rust-toolchain-components: llvm-tools-preview
     
+    - name: Install additional system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libssl-dev pkg-config
+
     - name: Set up database environment
       run: |
         echo "DATABASE_URL=postgres://postgres:postgres@localhost:5432/azolla_test" >> $GITHUB_ENV

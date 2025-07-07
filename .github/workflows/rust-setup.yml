@@ -1,20 +1,16 @@
-name: Reusable Rust Setup
+name: Rust Setup Composite Action
 
-on:
-  workflow_call:
-    inputs:
-      rust-toolchain-channel:
-        required: true
-        type: string
-      rust-toolchain-components:
-        required: false
-        type: string
-        default: ""
-
-jobs:
-  setup:
-    runs-on: ubuntu-latest
-    steps:
+runs:
+  using: "composite"
+  inputs:
+    rust-toolchain-channel:
+      required: true
+      type: string
+    rust-toolchain-components:
+      required: false
+      type: string
+      default: ""
+  steps:
       - uses: actions/checkout@v4
 
       - name: Install system dependencies
