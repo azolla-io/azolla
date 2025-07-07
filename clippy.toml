@@ -1,0 +1,3 @@
+# Treat all warnings as errors except dead code
+warnings = "deny"
+dead-code = "allow"

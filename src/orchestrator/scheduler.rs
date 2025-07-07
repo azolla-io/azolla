@@ -121,7 +121,9 @@ impl SchedulerActor {
                 event_stream,
                 config,
             };
-
+            // all code path in the loop should be non-blocking and can immediately return
+            // otherwise other operations will have to wait
+            // TODO: evaluate if we actually need a actor loop for scheduler
             loop {
                 tokio::select! {
                     command = receiver.recv() => {
@@ -149,11 +151,13 @@ impl SchedulerActor {
                             }
                         }
                     }
-                    _ = orphan_timer.tick() => {
-                        if let Err(e) = scheduler_state.scan_for_orphaned_tasks().await {
-                            error!("Failed to scan for orphaned tasks in domain {}: {}", scheduler_state.domain, e);
-                        }
-                    }
+                    // TODO: we removed scan_for_orphaned_tasks() from the loop because it's blocking
+                    // TODO: evaluate using a per doman FIFO to hold tasks that are ready to be dispatched.
+                    // _ = orphan_timer.tick() => {
+                    //     if let Err(e) = scheduler_state.scan_for_orphaned_tasks().await {
+                    //         error!("Failed to scan for orphaned tasks in domain {}: {}", scheduler_state.domain, e);
+                    //     }
+                    // }
                 }
             }
         });
