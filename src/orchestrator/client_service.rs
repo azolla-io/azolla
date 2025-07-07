@@ -11,7 +11,7 @@ use crate::proto::orchestrator;
 use orchestrator::client_service_server::ClientService;
 use orchestrator::*;
 
-use crate::EVENT_TASK_CREATED;
+use crate::{EVENT_TASK_CREATED, TASK_STATUS_CREATED};
 
 #[derive(Clone)]
 pub struct ClientServiceImpl {
@@ -99,7 +99,7 @@ impl ClientService for ClientServiceImpl {
             retry_policy,
             args: req.args,
             kwargs,
-            status: 0,
+            status: TASK_STATUS_CREATED,
             attempts: Vec::new(),
         };
 
@@ -111,8 +111,20 @@ impl ClientService for ClientServiceImpl {
                 .map_err(|e| Status::internal(format!("Failed to upsert task: {e:?}")))?;
         }
 
+        // Schedule the task using the scheduler
+        {
+            let scheduler = self
+                .engine
+                .scheduler_registry
+                .get_or_create_scheduler(&req.domain);
+            scheduler
+                .start_task_async(task_id)
+                .await
+                .map_err(|e| Status::internal(format!("Failed to start task: {e:?}")))?;
+        }
+
         info!(
-            "Successfully created task {} in domain {} (event-sourced)",
+            "Successfully created and scheduled task {} in domain {}",
             task_id, req.domain
         );
 
