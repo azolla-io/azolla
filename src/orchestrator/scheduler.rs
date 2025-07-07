@@ -1004,58 +1004,61 @@ mod tests {
         assert_eq!(updated_task.status, TASK_STATUS_SUCCEEDED);
     }
 
-    #[tokio::test]
-    async fn test_scheduler_handle_task_failure_with_retries() {
-        let (task_registry, shepherd_manager, event_stream, config) = create_test_components();
+    db_test!(
+        test_scheduler_handle_task_failure_with_retries,
+        (|pool: crate::orchestrator::db::PgPool| async move {
+            use crate::orchestrator::engine::Engine;
+            use crate::orchestrator::event_stream::EventStreamConfig;
+            use crate::proto::common::ErrorResult;
 
-        let scheduler_registry = Arc::new(SchedulerRegistry::new(
-            task_registry.clone(),
-            shepherd_manager,
-            event_stream,
-            config,
-        ));
+            // Create Engine with database
+            let engine = Engine::new(pool.clone(), EventStreamConfig::default());
+            engine.initialize().await.unwrap();
 
-        // Create and add a task in ATTEMPT_STARTED state with multiple attempts allowed
-        let mut task = create_test_task("test_domain", json!({"max_attempts": 3}));
-        task.status = TASK_STATUS_ATTEMPT_STARTED;
-        task.attempts = vec![crate::orchestrator::taskset::TaskAttempt {
-            attempt: 1,
-            start_time: Some(Utc::now()),
-            end_time: None,
-            status: crate::ATTEMPT_STATUS_STARTED,
-        }];
-        let task_id = task.id;
+            // Create and add a task in ATTEMPT_STARTED state with multiple attempts allowed
+            let mut task = create_test_task("test_domain", json!({"max_attempts": 3}));
+            task.status = TASK_STATUS_ATTEMPT_STARTED;
+            task.attempts = vec![crate::orchestrator::taskset::TaskAttempt {
+                attempt: 1,
+                start_time: Some(Utc::now()),
+                end_time: None,
+                status: crate::ATTEMPT_STATUS_STARTED,
+            }];
+            let task_id = task.id;
 
-        let domain_actor = task_registry.get_or_create_domain("test_domain");
-        domain_actor.upsert_task(task).await.unwrap();
+            let domain_actor = engine.registry.get_or_create_domain("test_domain");
+            domain_actor.upsert_task(task).await.unwrap();
 
-        // Create failed task result
-        let task_result = TaskResult {
-            task_id: task_id.to_string(),
-            result_type: Some(crate::proto::common::task_result::ResultType::Error(
-                ErrorResult {
-                    r#type: "RuntimeError".to_string(),
-                    message: "Task failed".to_string(),
-                    code: "500".to_string(),
-                    stacktrace: "".to_string(),
-                    data: None,
-                },
-            )),
-        };
+            // Create failed task result
+            let task_result = TaskResult {
+                task_id: task_id.to_string(),
+                result_type: Some(crate::proto::common::task_result::ResultType::Error(
+                    ErrorResult {
+                        r#type: "RuntimeError".to_string(),
+                        message: "Task failed".to_string(),
+                        code: "500".to_string(),
+                        stacktrace: "".to_string(),
+                        data: None,
+                    },
+                )),
+            };
 
-        // Get scheduler and handle result
-        let scheduler = scheduler_registry.get_or_create_scheduler("test_domain");
-        let result = scheduler.handle_task_result(task_id, task_result).await;
+            // Get scheduler and handle result
+            let scheduler = engine
+                .scheduler_registry
+                .get_or_create_scheduler("test_domain");
+            let result = scheduler.handle_task_result(task_id, task_result).await;
 
-        assert!(result.is_ok());
+            assert!(result.is_ok());
 
-        // Verify task status was updated to failed with attempts left
-        let updated_task = domain_actor.get_task(task_id).await.unwrap().unwrap();
-        assert_eq!(
-            updated_task.status,
-            crate::TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT
-        );
-    }
+            // Verify task status was updated to failed with attempts left
+            let updated_task = domain_actor.get_task(task_id).await.unwrap().unwrap();
+            assert_eq!(
+                updated_task.status,
+                crate::TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT
+            );
+        })
+    );
 
     db_test!(
         test_scheduler_handle_task_failure_no_retries,
@@ -1372,7 +1375,7 @@ mod tests {
             let error_result = TaskResult {
                 task_id: task_id.to_string(),
                 result_type: Some(crate::proto::common::task_result::ResultType::Error(
-                    crate::proto::common::ErrorResult {
+                    ErrorResult {
                         r#type: "RetryableError".to_string(),
                         message: "First attempt failed".to_string(),
                         code: "500".to_string(),
@@ -1395,7 +1398,7 @@ mod tests {
             let final_error = TaskResult {
                 task_id: task_id.to_string(),
                 result_type: Some(crate::proto::common::task_result::ResultType::Error(
-                    crate::proto::common::ErrorResult {
+                    ErrorResult {
                         r#type: "FatalError".to_string(),
                         message: "Final failure".to_string(),
                         code: "500".to_string(),
