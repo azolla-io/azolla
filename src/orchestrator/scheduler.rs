@@ -13,14 +13,12 @@ use log::{debug, error, info, warn};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::interval;
 use uuid::Uuid;
 
 use crate::proto::common::TaskResult;
 
 #[derive(Debug, Clone)]
 pub struct SchedulerConfig {
-    pub orphan_scan_interval_secs: u64,
     pub default_task_attempt_creation_timeout_secs: u64,
     pub default_task_timeout_secs: u64,
 }
@@ -28,10 +26,6 @@ pub struct SchedulerConfig {
 impl Default for SchedulerConfig {
     fn default() -> Self {
         Self {
-            orphan_scan_interval_secs: std::env::var("AZOLLA_SCHEDULER_ORPHAN_SCAN_INTERVAL_SECS")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(60),
             default_task_attempt_creation_timeout_secs: std::env::var(
                 "AZOLLA_SCHEDULER_DEFAULT_TASK_ATTEMPT_CREATION_TIMEOUT_SECS",
             )
@@ -48,15 +42,10 @@ impl Default for SchedulerConfig {
 
 impl SchedulerConfig {
     pub fn from_env_with_defaults(
-        default_orphan_scan_interval: u64,
         default_creation_timeout: u64,
         default_task_timeout: u64,
     ) -> Self {
         Self {
-            orphan_scan_interval_secs: std::env::var("AZOLLA_SCHEDULER_ORPHAN_SCAN_INTERVAL_SECS")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(default_orphan_scan_interval),
             default_task_attempt_creation_timeout_secs: std::env::var(
                 "AZOLLA_SCHEDULER_DEFAULT_TASK_ATTEMPT_CREATION_TIMEOUT_SECS",
             )
@@ -113,7 +102,6 @@ impl SchedulerActor {
         let domain_clone = domain.clone();
 
         tokio::spawn(async move {
-            let mut orphan_timer = interval(Duration::from_secs(config.orphan_scan_interval_secs));
             let scheduler_state = SchedulerState {
                 domain: domain_clone,
                 task_set,
@@ -151,13 +139,6 @@ impl SchedulerActor {
                             }
                         }
                     }
-                    // TODO: we removed scan_for_orphaned_tasks() from the loop because it's blocking
-                    // TODO: evaluate using a per doman FIFO to hold tasks that are ready to be dispatched.
-                    // _ = orphan_timer.tick() => {
-                    //     if let Err(e) = scheduler_state.scan_for_orphaned_tasks().await {
-                    //         error!("Failed to scan for orphaned tasks in domain {}: {}", scheduler_state.domain, e);
-                    //     }
-                    // }
                 }
             }
         });
@@ -401,47 +382,6 @@ impl SchedulerState {
         Ok(())
     }
 
-    async fn scan_for_orphaned_tasks(&self) -> Result<()> {
-        debug!("Scanning for orphaned tasks in domain {}", self.domain);
-
-        let created_tasks = self.task_set.get_created_tasks().await.unwrap();
-
-        for task_id in created_tasks {
-            if let Ok(Some(task)) = self.task_set.get_task(task_id).await {
-                // Check if task has been in CREATED state too long
-                if self.is_task_orphaned(&task).await? {
-                    info!(
-                        "Found orphaned task {} in domain {}, scheduling attempt",
-                        task_id, self.domain
-                    );
-
-                    // Schedule the task
-                    if let Err(e) = self.start_task(task_id).await {
-                        error!("Failed to start orphaned task {task_id}: {e}");
-                    }
-                }
-            }
-        }
-
-        let retry_tasks = self.task_set.get_retry_eligible_tasks().await.unwrap();
-
-        for task_id in retry_tasks {
-            if let Ok(Some(task)) = self.task_set.get_task(task_id).await {
-                // Check if enough time has passed since last attempt
-                if self.is_retry_ready(&task).await? {
-                    info!("Retrying task {} in domain {}", task_id, self.domain);
-
-                    // Schedule retry
-                    if let Err(e) = self.start_task(task_id).await {
-                        error!("Failed to retry task {task_id}: {e}");
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     /// Dispatch task to shepherd using ClusterService
     async fn dispatch_task(&self, task_id: Uuid, _task: &Task, shepherd_id: Uuid) -> Result<()> {
         // TODO: Implement actual shepherd connection management
@@ -627,6 +567,7 @@ impl SchedulerState {
     }
 
     /// Check if a task is orphaned (stuck in CREATED state too long)
+    #[allow(dead_code)]
     async fn is_task_orphaned(&self, task: &Task) -> Result<bool> {
         let timeout_secs = task
             .retry_policy
@@ -641,6 +582,7 @@ impl SchedulerState {
     }
 
     /// Check if a task is ready for retry
+    #[allow(dead_code)]
     async fn is_retry_ready(&self, _task: &Task) -> Result<bool> {
         // TODO: Implement exponential backoff logic
         // The retry_policy should support:
@@ -800,7 +742,6 @@ mod tests {
             event_stream.clone(),
         ));
         let config = SchedulerConfig {
-            orphan_scan_interval_secs: 1, // Fast scanning for tests
             default_task_attempt_creation_timeout_secs: 5,
             default_task_timeout_secs: 10,
         };
@@ -879,13 +820,11 @@ mod tests {
     async fn test_scheduler_config_from_env() {
         // Test default config
         let config = SchedulerConfig::default();
-        assert_eq!(config.orphan_scan_interval_secs, 60);
         assert_eq!(config.default_task_attempt_creation_timeout_secs, 300);
         assert_eq!(config.default_task_timeout_secs, 1800);
 
         // Test custom defaults
-        let config = SchedulerConfig::from_env_with_defaults(30, 120, 900);
-        assert_eq!(config.orphan_scan_interval_secs, 30);
+        let config = SchedulerConfig::from_env_with_defaults(120, 900);
         assert_eq!(config.default_task_attempt_creation_timeout_secs, 120);
         assert_eq!(config.default_task_timeout_secs, 900);
     }
