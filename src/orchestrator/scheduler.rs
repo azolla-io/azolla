@@ -1154,7 +1154,6 @@ mod tests {
         use super::*;
         use crate::orchestrator::taskset::Task;
         use crate::proto::common::{SuccessResult, TaskResult};
-        use tokio::time::{sleep, Duration};
 
         #[tokio::test]
         async fn test_scheduler_basic_functionality() {
@@ -1214,72 +1213,137 @@ mod tests {
             assert_eq!(final_task.status, TASK_STATUS_SUCCEEDED);
         }
 
-        #[tokio::test]
-        async fn test_multi_domain_scheduler_isolation() {
-            let (task_registry, shepherd_manager, event_stream, config) = create_test_components();
+        db_test!(
+            test_multi_domain_scheduler_isolation,
+            (|pool: crate::orchestrator::db::PgPool| async move {
+                use crate::orchestrator::engine::Engine;
+                use crate::orchestrator::event_stream::EventStreamConfig;
+                use crate::orchestrator::taskset::Task;
+                use crate::EVENT_TASK_CREATED;
+                use std::collections::HashMap;
+                use tokio::time::{sleep, Duration};
 
-            let scheduler_registry = Arc::new(SchedulerRegistry::new(
-                task_registry.clone(),
-                shepherd_manager.clone(),
-                event_stream.clone(),
-                config,
-            ));
+                let engine = Engine::new(pool.clone(), EventStreamConfig::default());
+                engine.initialize().await.unwrap();
 
-            // Note: In integration tests, we would use the actual shepherd registration API
-            // For unit tests, we'll test scheduler logic without actual shepherd connections
-
-            // Create tasks across multiple domains
-            let domains = vec!["domain1", "domain2", "domain3"];
-            let mut all_task_ids = Vec::new();
-
-            for domain in &domains {
-                let task_set = task_registry.get_or_create_domain(domain);
-                let mut domain_tasks = Vec::new();
-
-                for i in 0..3 {
-                    let mut task = Task::new();
-                    task.name = format!("task_{domain}_{i}");
-                    task.retry_policy = json!({"max_attempts": 2});
-                    task.status = TASK_STATUS_CREATED;
-                    task.created_at = Utc::now();
-                    let task_id = task.id;
-
-                    task_set.upsert_task(task).await.unwrap();
-                    domain_tasks.push(task_id);
+                // Register multiple shepherds for realistic testing
+                for _i in 0..3 {
+                    let shepherd_id = Uuid::new_v4();
+                    engine
+                        .shepherd_manager
+                        .register_shepherd(shepherd_id, 5)
+                        .await
+                        .unwrap();
                 }
-                all_task_ids.extend(domain_tasks);
-            }
 
-            // Start tasks through schedulers
-            for domain in &domains {
-                let scheduler = scheduler_registry.get_or_create_scheduler(domain);
-                let task_set = task_registry.get_domain(domain).unwrap();
-                let created_tasks = task_set.get_created_tasks().await.unwrap();
+                // Create tasks across multiple domains
+                let domains = vec!["domain1", "domain2", "domain3"];
+                let mut all_task_ids = HashMap::new();
 
-                for task_id in created_tasks {
-                    scheduler.start_task(task_id).await.unwrap();
+                for domain in &domains {
+                    let mut domain_tasks = Vec::new();
+                    let task_set = engine.registry.get_or_create_domain(domain);
+
+                    for i in 0..3 {
+                        let mut task = Task::new();
+                        task.name = format!("isolation_task_{domain}_{i}");
+                        task.retry_policy = json!({"max_attempts": 2});
+                        task.args = vec![format!("arg_{i}")];
+                        task.kwargs = json!({"domain": domain, "index": i});
+                        task.status = TASK_STATUS_CREATED;
+                        task.created_at = Utc::now();
+                        let task_id = task.id;
+
+                        // Add task to TaskSet
+                        task_set.upsert_task(task.clone()).await.unwrap();
+
+                        // Create event and write to database
+                        let event_record = crate::orchestrator::event_stream::EventRecord {
+                            domain: domain.to_string(),
+                            task_instance_id: Some(task_id),
+                            flow_instance_id: None,
+                            event_type: EVENT_TASK_CREATED,
+                            created_at: Utc::now(),
+                            metadata: json!({
+                                "task_name": task.name,
+                                "domain": domain,
+                                "index": i
+                            }),
+                        };
+                        engine.event_stream.write_event(event_record).await.unwrap();
+
+                        domain_tasks.push(task_id);
+                    }
+                    all_task_ids.insert(domain.to_string(), domain_tasks);
                 }
-            }
 
-            // Wait for scheduling
-            sleep(Duration::from_millis(100)).await;
+                // Start tasks through schedulers for each domain
+                for (domain, task_ids) in &all_task_ids {
+                    let scheduler = engine.scheduler_registry.get_or_create_scheduler(domain);
+                    for &task_id in task_ids {
+                        scheduler.start_task(task_id).await.unwrap();
+                    }
+                }
 
-            // Verify domain isolation
-            assert_eq!(scheduler_registry.len(), 3);
-            for domain in &domains {
-                assert!(scheduler_registry.get_scheduler(domain).is_some());
-            }
+                // Wait for all scheduling to complete
+                sleep(Duration::from_millis(200)).await;
 
-            // Verify all tasks were scheduled
-            let mut total_scheduled = 0;
-            for domain in &domains {
-                let task_set = task_registry.get_domain(domain).unwrap();
-                let started_tasks = task_set.get_started_tasks().await.unwrap();
-                total_scheduled += started_tasks.len();
-            }
+                // Verify domain isolation in scheduler registry
+                assert_eq!(engine.scheduler_registry.len(), 3);
+                for domain in &domains {
+                    assert!(engine.scheduler_registry.get_scheduler(domain).is_some());
+                }
 
-            assert_eq!(total_scheduled, 0);
-        }
+                // Verify all tasks were scheduled across domains
+                let mut total_scheduled = 0;
+                for (domain, task_ids) in &all_task_ids {
+                    let task_set = engine.registry.get_domain(domain).unwrap();
+                    for &task_id in task_ids {
+                        let task = task_set.get_task(task_id).await.unwrap().unwrap();
+                        if task.status == TASK_STATUS_ATTEMPT_STARTED {
+                            total_scheduled += 1;
+                        }
+                    }
+                }
+
+                assert_eq!(total_scheduled, 9); // 3 domains × 3 tasks each
+
+                // Verify all events were written to database with proper domain isolation
+                let client = pool.get().await.unwrap();
+                for domain in &domains {
+                    let domain_events = client.query_one(
+                    "SELECT COUNT(*) as count FROM events WHERE domain = $1 AND event_type = $2",
+                    &[&domain, &EVENT_TASK_CREATED]
+                ).await.unwrap();
+
+                    let count: i64 = domain_events.get("count");
+                    assert_eq!(count, 3); // 3 tasks per domain
+                }
+
+                // Verify total events across all domains
+                let total_created_events = client
+                    .query_one(
+                        "SELECT COUNT(*) as count FROM events WHERE event_type = $1",
+                        &[&EVENT_TASK_CREATED],
+                    )
+                    .await
+                    .unwrap();
+
+                let created_count: i64 = total_created_events.get("count");
+                assert_eq!(created_count, 9); // 9 total tasks
+
+                let total_started_events = client
+                    .query_one(
+                        "SELECT COUNT(*) as count FROM events WHERE event_type = $1",
+                        &[&EVENT_TASK_ATTEMPT_STARTED],
+                    )
+                    .await
+                    .unwrap();
+
+                let started_count: i64 = total_started_events.get("count");
+                assert_eq!(started_count, 9); // All tasks started
+            })
+        );
 
         db_test!(
             test_retry_logic_integration,
