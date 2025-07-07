@@ -117,16 +117,25 @@ impl SchedulerActor {
                     command = receiver.recv() => {
                         match command {
                             Some(SchedulerCommand::StartTask { task_id, respond_to }) => {
-                                let result = scheduler_state.start_task(task_id).await;
-                                let _ = respond_to.send(result);
+                                let scheduler_state = scheduler_state.clone();
+                                tokio::spawn(async move {
+                                    let result = scheduler_state.start_task(task_id).await;
+                                    let _ = respond_to.send(result);
+                                });
                             }
                             Some(SchedulerCommand::HandleTaskResult { task_id, result, respond_to }) => {
-                                let result = scheduler_state.handle_task_result(task_id, result).await;
-                                let _ = respond_to.send(result);
+                                let scheduler_state = scheduler_state.clone();
+                                tokio::spawn(async move {
+                                    let result = scheduler_state.handle_task_result(task_id, result).await;
+                                    let _ = respond_to.send(result);
+                                });
                             }
                             Some(SchedulerCommand::HandleShepherdDeath { affected_task_ids, respond_to }) => {
-                                let result = scheduler_state.handle_shepherd_death(affected_task_ids).await;
-                                let _ = respond_to.send(result);
+                                let scheduler_state = scheduler_state.clone();
+                                tokio::spawn(async move {
+                                    let result = scheduler_state.handle_shepherd_death(affected_task_ids).await;
+                                    let _ = respond_to.send(result);
+                                });
                             }
                             Some(SchedulerCommand::Shutdown { respond_to }) => {
                                 info!("Scheduler for domain {} shutting down", scheduler_state.domain);
@@ -241,6 +250,7 @@ impl SchedulerActor {
     }
 }
 
+#[derive(Clone)]
 struct SchedulerState {
     domain: String,
     task_set: Arc<TaskSetActor>,
