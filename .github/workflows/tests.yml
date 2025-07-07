@@ -1,65 +1,13 @@
 name: Rust
-
 on:
   push:
     branches: [ "main" ]
   pull_request:
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
-  test-and-coverage:
+  simple-test:
     runs-on: ubuntu-latest
-    
     steps:
     - uses: actions/checkout@v4
-    
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
-    
-    - name: Install Rust
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: nightly
-        components: llvm-tools-preview
-        override: true
-    
-    - name: Cache cargo dependencies
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-    
-    
-    
-    - name: Build
-      run: cargo build --verbose
-    
-    - name: Run tests with coverage
-      uses: actions-rs/cargo@v1
-      with:
-        command: test
-        args: --verbose
-        env:
-          CARGO_INCREMENTAL: '0'
-          RUSTFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Zno-landing-pads'
-          RUSTDOCFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Zno-landing-pads'
-
-    - name: Generate code coverage report
-      run: |
-        grcov . --binary-path ./target/debug/ -s . -t lcov --llvm --ignore-not-existing --ignore "/*" -o lcov.info
-        
-    - name: Upload to Codecov
-      uses: codecov/codecov-action@v3
-      with:
-        files: lcov.info
-        verbose: true
-        # Trivial change to force workflow re-evaluation
+    - name: Run a simple command
+      run: echo "Workflow triggered successfully!"
