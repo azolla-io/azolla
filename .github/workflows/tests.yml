@@ -9,7 +9,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  test-and-coverage:
     runs-on: ubuntu-latest
     
     services:
@@ -26,29 +26,10 @@ jobs:
         ports:
           - 5432:5432
 
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
-    
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@nightly
-      with:
-        components: llvm-tools-preview
-    
-    - name: Cache cargo dependencies
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+    uses: ./.github/workflows/rust-setup.yml@main
+    with:
+      rust-toolchain-channel: nightly
+      rust-toolchain-components: llvm-tools-preview
     
     - name: Set up database environment
       run: |
