@@ -1053,7 +1053,7 @@ impl TaskSetRegistry {
                         ELSE ARRAY[]::text[]
                     END,
                     COALESCE((e.metadata->'kwargs')::jsonb, '{}'::jsonb),
-                    0::smallint,
+                    $4,
                     e.flow_instance_id
                 FROM events e
                 WHERE e.event_id > $1 
@@ -1062,7 +1062,7 @@ impl TaskSetRegistry {
                   AND e.task_instance_id IS NOT NULL
                 ON CONFLICT (id, domain) DO NOTHING
                 "#,
-                &[&last_processed_event_id, &max_event_id, &EVENT_TASK_CREATED]
+                &[&last_processed_event_id, &max_event_id, &EVENT_TASK_CREATED, &crate::TASK_STATUS_CREATED]
             )
             .await?;
 
@@ -1115,7 +1115,7 @@ impl TaskSetRegistry {
                     e.domain,
                     COALESCE((e.metadata->>'attempt')::int, 1),
                     e.created_at,
-                    crate::ATTEMPT_STATUS_STARTED::smallint
+                    $4
                 FROM events e
                 WHERE e.event_id > $1 
                   AND e.event_id <= $2
@@ -1128,6 +1128,7 @@ impl TaskSetRegistry {
                     &last_processed_event_id,
                     &max_event_id,
                     &EVENT_TASK_ATTEMPT_STARTED,
+                    &crate::ATTEMPT_STATUS_STARTED,
                 ],
             )
             .await?;
@@ -1140,7 +1141,7 @@ impl TaskSetRegistry {
                 UPDATE task_attempts 
                 SET 
                     end_time = e.created_at,
-                    status = COALESCE((e.metadata->>'attempt_status')::smallint, 1::smallint)
+                    status = COALESCE((e.metadata->>'status')::smallint, $4)
                 FROM events e
                 WHERE task_attempts.task_instance_id = e.task_instance_id
                   AND task_attempts.domain = e.domain
@@ -1154,6 +1155,7 @@ impl TaskSetRegistry {
                     &last_processed_event_id,
                     &max_event_id,
                     &EVENT_TASK_ATTEMPT_ENDED,
+                    &crate::ATTEMPT_STATUS_SUCCEEDED,
                 ],
             )
             .await?;
