@@ -14,10 +14,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/rust-setup
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          rust-toolchain-channel: stable
-          rust-toolchain-components: rustfmt
+          components: rustfmt
       - name: Check formatting
         run: cargo fmt --check
 
@@ -26,9 +25,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/rust-setup
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          rust-toolchain-channel: stable
-          rust-toolchain-components: clippy
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
