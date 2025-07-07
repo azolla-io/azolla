@@ -1338,88 +1338,123 @@ mod tests {
             assert_eq!(total_scheduled, 0);
         }
 
-        #[tokio::test]
-        async fn test_retry_logic_integration() {
-            let (task_registry, shepherd_manager, event_stream, config) = create_test_components();
+        db_test!(
+            test_retry_logic_integration,
+            (|pool: crate::orchestrator::db::PgPool| async move {
+                use crate::orchestrator::engine::Engine;
+                use crate::orchestrator::event_stream::EventStreamConfig;
+                use crate::orchestrator::taskset::Task;
 
-            let scheduler_registry = Arc::new(SchedulerRegistry::new(
-                task_registry.clone(),
-                shepherd_manager.clone(),
-                event_stream.clone(),
-                config,
-            ));
+                // Create Engine with database
+                let engine = Engine::new(pool.clone(), EventStreamConfig::default());
+                engine.initialize().await.unwrap();
 
-            // Note: In integration tests, we would use actual shepherd registration
-            // For unit tests, we'll test scheduler retry logic without actual shepherd connections
+                // Create task with retry policy
+                let mut task = Task::new();
+                task.name = "retry_test_task".to_string();
+                task.retry_policy = json!({"max_attempts": 3});
+                task.status = TASK_STATUS_ATTEMPT_STARTED;
+                task.created_at = Utc::now();
+                task.attempts = vec![crate::orchestrator::taskset::TaskAttempt {
+                    attempt: 1,
+                    start_time: Some(Utc::now()),
+                    end_time: None,
+                    status: TASK_STATUS_ATTEMPT_STARTED,
+                }];
+                let task_id = task.id;
 
-            // Create task with retry policy
-            let mut task = Task::new();
-            task.name = "retry_test_task".to_string();
-            task.retry_policy = json!({"max_attempts": 3});
-            task.status = TASK_STATUS_ATTEMPT_STARTED;
-            task.created_at = Utc::now();
-            task.attempts = vec![crate::orchestrator::taskset::TaskAttempt {
-                attempt: 1,
-                start_time: Some(Utc::now()),
-                end_time: None,
-                status: TASK_STATUS_ATTEMPT_STARTED,
-            }];
-            let task_id = task.id;
+                let task_set = engine.registry.get_or_create_domain("test_domain");
+                task_set.upsert_task(task).await.unwrap();
 
-            let task_set = task_registry.get_or_create_domain("test_domain");
-            task_set.upsert_task(task).await.unwrap();
+                let scheduler = engine
+                    .scheduler_registry
+                    .get_or_create_scheduler("test_domain");
 
-            let scheduler = scheduler_registry.get_or_create_scheduler("test_domain");
+                // Simulate first failure
+                let error_result = TaskResult {
+                    task_id: task_id.to_string(),
+                    result_type: Some(crate::proto::common::task_result::ResultType::Error(
+                        ErrorResult {
+                            r#type: "RetryableError".to_string(),
+                            message: "First attempt failed".to_string(),
+                            code: "500".to_string(),
+                            stacktrace: "".to_string(),
+                            data: None,
+                        },
+                    )),
+                };
 
-            // Simulate first failure
-            let error_result = TaskResult {
-                task_id: task_id.to_string(),
-                result_type: Some(crate::proto::common::task_result::ResultType::Error(
-                    ErrorResult {
-                        r#type: "RetryableError".to_string(),
-                        message: "First attempt failed".to_string(),
-                        code: "500".to_string(),
-                        stacktrace: "".to_string(),
-                        data: None,
-                    },
-                )),
-            };
+                scheduler
+                    .handle_task_result(task_id, error_result)
+                    .await
+                    .unwrap();
 
-            scheduler
-                .handle_task_result(task_id, error_result)
-                .await
-                .unwrap();
+                // Verify task is marked for retry
+                let task = task_set.get_task(task_id).await.unwrap().unwrap();
+                assert_eq!(task.status, TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT);
 
-            // Verify task is marked for retry
-            let task = task_set.get_task(task_id).await.unwrap().unwrap();
-            assert_eq!(task.status, TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT);
+                // Test final failure - simulate the retry process manually to avoid shepherd dependencies
+                // Update task to simulate retry attempt
+                let mut task_for_retry = task_set.get_task(task_id).await.unwrap().unwrap();
+                task_for_retry.status = TASK_STATUS_ATTEMPT_STARTED;
+                task_for_retry
+                    .attempts
+                    .push(crate::orchestrator::taskset::TaskAttempt {
+                        attempt: 2,
+                        start_time: Some(Utc::now()),
+                        end_time: None,
+                        status: crate::ATTEMPT_STATUS_STARTED,
+                    });
+                task_set.upsert_task(task_for_retry).await.unwrap();
 
-            // Test final failure
-            let final_error = TaskResult {
-                task_id: task_id.to_string(),
-                result_type: Some(crate::proto::common::task_result::ResultType::Error(
-                    ErrorResult {
-                        r#type: "FatalError".to_string(),
-                        message: "Final failure".to_string(),
-                        code: "500".to_string(),
-                        stacktrace: "".to_string(),
-                        data: None,
-                    },
-                )),
-            };
+                let final_error = TaskResult {
+                    task_id: task_id.to_string(),
+                    result_type: Some(crate::proto::common::task_result::ResultType::Error(
+                        ErrorResult {
+                            r#type: "FatalError".to_string(),
+                            message: "Final failure".to_string(),
+                            code: "500".to_string(),
+                            stacktrace: "".to_string(),
+                            data: None,
+                        },
+                    )),
+                };
 
-            // Simulate exhausting all attempts
-            for _ in 0..2 {
                 scheduler
                     .handle_task_result(task_id, final_error.clone())
                     .await
                     .unwrap();
-            }
 
-            // Should be permanently failed now
-            let final_task = task_set.get_task(task_id).await.unwrap().unwrap();
-            assert_eq!(final_task.status, TASK_STATUS_FAILED);
-        }
+                // Should still have attempts left (2 < 3)
+                let task_after_second = task_set.get_task(task_id).await.unwrap().unwrap();
+                assert_eq!(
+                    task_after_second.status,
+                    TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT
+                );
+
+                // Simulate third and final attempt
+                let mut task_for_final = task_set.get_task(task_id).await.unwrap().unwrap();
+                task_for_final.status = TASK_STATUS_ATTEMPT_STARTED;
+                task_for_final
+                    .attempts
+                    .push(crate::orchestrator::taskset::TaskAttempt {
+                        attempt: 3,
+                        start_time: Some(Utc::now()),
+                        end_time: None,
+                        status: crate::ATTEMPT_STATUS_STARTED,
+                    });
+                task_set.upsert_task(task_for_final).await.unwrap();
+
+                scheduler
+                    .handle_task_result(task_id, final_error)
+                    .await
+                    .unwrap();
+
+                // Should be permanently failed now (3 attempts exhausted)
+                let final_task = task_set.get_task(task_id).await.unwrap().unwrap();
+                assert_eq!(final_task.status, TASK_STATUS_FAILED);
+            })
+        );
     }
 
     db_test!(

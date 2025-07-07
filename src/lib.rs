@@ -77,9 +77,11 @@ macro_rules! db_test {
             // 4. Run migrations
             run_migrations(&pool).await.unwrap();
 
-            // 5. Run the test body, passing the pool
+            // 5. Run the test body, passing the pool with timeout
             let fut = $body(pool);
-            fut.await;
+            tokio::time::timeout(tokio::time::Duration::from_secs(3), fut)
+                .await
+                .expect("Test timed out after 3 seconds");
             // 6. Container is dropped here, cleaning up DB
         }
     };
