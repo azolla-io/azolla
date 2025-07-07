@@ -38,6 +38,7 @@ jobs:
       uses: dtolnay/rust-toolchain@nightly
       with:
         components: llvm-tools-preview
+        override: true
     
     - name: Cache cargo dependencies
       uses: actions/cache@v3
