@@ -12,20 +12,6 @@ jobs:
   test-and-coverage:
     runs-on: ubuntu-latest
     
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: azolla_test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-
     steps:
     - uses: actions/checkout@v4
     
@@ -52,9 +38,7 @@ jobs:
           target/
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
     
-    - name: Set up database environment
-      run: |
-        echo "DATABASE_URL=postgres://postgres:postgres@localhost:5432/azolla_test" >> $GITHUB_ENV
+    
     
     - name: Build
       run: cargo build --verbose
