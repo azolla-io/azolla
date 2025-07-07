@@ -28,7 +28,7 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - uses: ./.github/workflows/rust-setup.yml
+    - uses: ./.github/actions/rust-setup
       with:
         rust-toolchain-channel: nightly
         rust-toolchain-components: llvm-tools-preview
