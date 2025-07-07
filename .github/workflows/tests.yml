@@ -35,8 +35,9 @@ jobs:
         sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
     
     - name: Install Rust
-      uses: dtolnay/rust-toolchain@nightly
+      uses: actions-rs/toolchain@v1
       with:
+        toolchain: nightly
         components: llvm-tools-preview
         override: true
     
@@ -59,9 +60,14 @@ jobs:
       run: cargo build --verbose
     
     - name: Run tests with coverage
-      run: |
-        cargo clean
-        CARGO_INCREMENTAL=0 RUSTFLAGS="-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Zno-landing-pads" RUSTDOCFLAGS="-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Zno-landing-pads" cargo +nightly test --verbose
+      uses: actions-rs/cargo@v1
+      with:
+        command: test
+        args: --verbose
+        env:
+          CARGO_INCREMENTAL: '0'
+          RUSTFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Zno-landing-pads'
+          RUSTDOCFLAGS: '-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Zno-landing-pads'
 
     - name: Generate code coverage report
       run: |
@@ -72,3 +78,4 @@ jobs:
       with:
         files: lcov.info
         verbose: true
+        # Trivial change to force workflow re-evaluation
