@@ -1,0 +1,5 @@
+[tool.tarpaulin.default]
+exclude-files = [
+    "src/bin/benchmark.rs",
+    "src/bin/merge_events.rs"
+]

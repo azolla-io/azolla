@@ -3,6 +3,7 @@ pub mod cluster_service;
 pub mod db;
 pub mod engine;
 pub mod event_stream;
+pub mod scheduler;
 pub mod shepherd_manager;
 pub mod taskset;
 
@@ -10,3 +11,4 @@ pub mod taskset;
 pub use client_service::ClientServiceImpl;
 pub use cluster_service::ClusterServiceImpl;
 pub use engine::Engine;
+pub use scheduler::{SchedulerActor, SchedulerConfig, SchedulerRegistry};

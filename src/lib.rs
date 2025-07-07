@@ -10,6 +10,20 @@ pub const EVENT_TASK_ATTEMPT_STARTED: i16 = 4;
 pub const EVENT_TASK_ATTEMPT_ENDED: i16 = 5;
 pub const EVENT_SHEPHERD_REGISTERED: i16 = 6;
 
+// Task status constants
+pub const TASK_STATUS_CREATED: i16 = 0;
+pub const TASK_STATUS_ATTEMPT_STARTED: i16 = 1;
+pub const TASK_STATUS_ATTEMPT_SUCCEEDED: i16 = 2;
+pub const TASK_STATUS_SUCCEEDED: i16 = 3;
+pub const TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT: i16 = 4;
+pub const TASK_STATUS_ATTEMPT_FAILED_WITHOUT_ATTEMPTS_LEFT: i16 = 5;
+pub const TASK_STATUS_FAILED: i16 = 6;
+
+// Task attempt status constants
+pub const ATTEMPT_STATUS_STARTED: i16 = 0;
+pub const ATTEMPT_STATUS_SUCCEEDED: i16 = 1;
+pub const ATTEMPT_STATUS_FAILED: i16 = 2;
+
 #[cfg(test)]
 #[macro_export]
 macro_rules! db_test {
@@ -56,15 +70,18 @@ macro_rules! db_test {
                     pool_size: 8,
                 },
                 server: Server { port: 0 }, // dummy
+                event_stream: $crate::orchestrator::db::EventStream::default(),
             };
             let pool = create_pool(&settings).unwrap();
 
             // 4. Run migrations
             run_migrations(&pool).await.unwrap();
 
-            // 5. Run the test body, passing the pool
+            // 5. Run the test body, passing the pool with timeout
             let fut = $body(pool);
-            fut.await;
+            tokio::time::timeout(tokio::time::Duration::from_secs(3), fut)
+                .await
+                .expect("Test timed out after 3 seconds");
             // 6. Container is dropped here, cleaning up DB
         }
     };
