@@ -104,11 +104,7 @@ impl ClientService for ClientServiceImpl {
         };
 
         {
-            let domain_actor = self.engine.registry.get_or_create_domain(&req.domain);
-            domain_actor
-                .upsert_task(task)
-                .await
-                .map_err(|e| Status::internal(format!("Failed to upsert task: {e:?}")))?;
+            self.engine.registry.upsert_task(&req.domain, task);
         }
 
         // Schedule the task using the scheduler
