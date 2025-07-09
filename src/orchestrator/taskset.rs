@@ -1,17 +1,3 @@
-/*!
-# TaskSet Requirements & Design
-
-## Requirements
-1. **Write-heavy workload**: Frequent event processing updates to tasks
-2. **Concurrent access**: Multiple gRPC handlers accessing same Task simultaneously
-3. **High performance**: High throughput with low latency
-
-## Design Solution
-1. **Actor model**: One thread per domain eliminates write lock contention
-2. **Message passing**: Concurrent access via channels, no shared locks
-3. **Single-threaded processing**: No contention within domain, consistent latency
-*/
-
 use crate::orchestrator::db::PgPool;
 use crate::{
     EVENT_TASK_ATTEMPT_ENDED, EVENT_TASK_ATTEMPT_STARTED, EVENT_TASK_CREATED, EVENT_TASK_ENDED,
@@ -22,11 +8,10 @@ use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use futures::StreamExt;
 use rayon::prelude::*;
+use rustc_hash::FxHashMap;
 use serde_json::Value as JsonValue;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-// Removed tokio dependencies - no longer needed for direct access
-use rustc_hash::FxHashMap;
 use tokio_postgres::Row;
 use uuid::Uuid;
 
@@ -91,7 +76,6 @@ impl Task {
     }
 }
 
-/// Optimized sequential-access storage for tasks within a domain
 pub struct TaskSet {
     domain: String,
     tasks: Vec<Task>,
@@ -193,12 +177,10 @@ impl TaskSet {
         let mut new_tasks = Vec::with_capacity(self.id_to_index.len());
         let mut new_id_to_index = FxHashMap::default();
 
-        // Create a temporary default task for swapping
         let mut temp_task = Task::new();
 
         for (id, &old_index) in &self.id_to_index {
             let new_index = new_tasks.len();
-            // Use mem::swap to move instead of clone
             std::mem::swap(&mut temp_task, &mut self.tasks[old_index]);
             new_tasks.push(temp_task);
             temp_task = Task::new(); // Reset for next iteration
@@ -225,7 +207,6 @@ pub struct TaskSetStats {
     pub memory_efficiency: f64,
 }
 
-/// Handle for backward compatibility with old TaskSetActor API
 pub struct TaskSetRegistryHandle<'a> {
     registry: &'a TaskSetRegistry,
     domain: String,
@@ -266,11 +247,8 @@ impl<'a> TaskSetRegistryHandle<'a> {
     }
 }
 
-/// Registry for managing TaskSet instances per domain
-/// Now provides direct access without actor overhead
 pub struct TaskSetRegistry {
     domains: std::sync::Mutex<HashMap<String, TaskSet>>,
-    // Shepherd tracking
     task_to_shepherd: DashMap<Uuid, Uuid>, // task_id -> shepherd_uuid
     shepherd_tasks: DashMap<Uuid, HashSet<Uuid>>, // shepherd_uuid -> task_ids
 }
@@ -284,19 +262,16 @@ impl TaskSetRegistry {
         }
     }
 
-    /// Get a task from the specified domain
     pub fn get_task(&self, domain: &str, id: Uuid) -> Option<Task> {
         let domains = self.domains.lock().unwrap();
         domains.get(domain)?.get_task(id).cloned()
     }
 
-    /// Get task status from the specified domain
     pub fn get_task_status(&self, domain: &str, id: Uuid) -> Option<i16> {
         let domains = self.domains.lock().unwrap();
         domains.get(domain)?.get_task(id).map(|t| t.status)
     }
 
-    /// Insert or update a task in the specified domain
     pub fn upsert_task(&self, domain: &str, task: Task) {
         let mut domains = self.domains.lock().unwrap();
 
@@ -309,7 +284,6 @@ impl TaskSetRegistry {
         }
     }
 
-    /// Delete a task from the specified domain
     pub fn delete_task(&self, domain: &str, id: Uuid) -> bool {
         let mut domains = self.domains.lock().unwrap();
         domains
@@ -317,7 +291,11 @@ impl TaskSetRegistry {
             .is_some_and(|taskset| taskset.delete_task(id))
     }
 
-    /// Get all tasks from the specified domain
+    pub fn extract_task_set(&self, domain: &str) -> Option<TaskSet> {
+        let mut domains = self.domains.lock().unwrap();
+        domains.remove(domain)
+    }
+
     pub fn all_tasks(&self, domain: &str) -> Vec<Task> {
         let domains = self.domains.lock().unwrap();
         domains
@@ -325,25 +303,21 @@ impl TaskSetRegistry {
             .map_or(Vec::new(), |taskset| taskset.all_tasks().cloned().collect())
     }
 
-    /// Get statistics for the specified domain
     pub fn stats(&self, domain: &str) -> Option<TaskSetStats> {
         let domains = self.domains.lock().unwrap();
         domains.get(domain).map(|taskset| taskset.stats())
     }
 
-    /// Get the number of tasks in the specified domain
     pub fn len(&self, domain: &str) -> usize {
         let domains = self.domains.lock().unwrap();
         domains.get(domain).map_or(0, |taskset| taskset.len())
     }
 
-    /// Check if the specified domain is empty
     pub fn is_empty(&self, domain: &str) -> bool {
         let domains = self.domains.lock().unwrap();
         domains.get(domain).is_none_or(|taskset| taskset.is_empty())
     }
 
-    /// Compact the specified domain
     pub fn compact(&self, domain: &str) {
         let mut domains = self.domains.lock().unwrap();
         if let Some(taskset) = domains.get_mut(domain) {
@@ -351,7 +325,6 @@ impl TaskSetRegistry {
         }
     }
 
-    /// Reset the specified domain
     pub fn reset(&self, domain: &str) {
         let mut domains = self.domains.lock().unwrap();
         if let Some(taskset) = domains.get_mut(domain) {
@@ -359,7 +332,6 @@ impl TaskSetRegistry {
         }
     }
 
-    /// Execute a closure with mutable access to the TaskSet for the given domain
     pub fn with_domain_mut<F, R>(&self, domain: &str, f: F) -> R
     where
         F: FnOnce(&mut TaskSet) -> R,
@@ -373,7 +345,6 @@ impl TaskSetRegistry {
         f(domains.get_mut(domain).unwrap())
     }
 
-    /// Execute a closure with read-only access to the TaskSet for the given domain
     pub fn with_domain<F, R>(&self, domain: &str, f: F) -> Option<R>
     where
         F: FnOnce(&TaskSet) -> R,
@@ -382,7 +353,6 @@ impl TaskSetRegistry {
         domains.get(domain).map(f)
     }
 
-    /// Find a task across all domains
     pub fn find_task(&self, id: Uuid) -> Option<Task> {
         let domains = self.domains.lock().unwrap();
 
@@ -399,7 +369,6 @@ impl TaskSetRegistry {
         domains.keys().cloned().collect()
     }
 
-    /// Get domain name for a specific task
     pub fn get_domain_for_task(&self, task_id: Uuid) -> Option<String> {
         let domains = self.domains.lock().unwrap();
 
@@ -411,13 +380,11 @@ impl TaskSetRegistry {
         None
     }
 
-    /// Get the number of domains
     pub fn domain_count(&self) -> usize {
         let domains = self.domains.lock().unwrap();
         domains.len()
     }
 
-    /// Get or create domain (for backward compatibility with tests)
     pub fn get_or_create_domain(&self, domain: &str) -> TaskSetRegistryHandle {
         TaskSetRegistryHandle {
             registry: self,
@@ -425,7 +392,6 @@ impl TaskSetRegistry {
         }
     }
 
-    /// Get domain (for backward compatibility with tests)
     pub fn get_domain(&self, domain: &str) -> Option<TaskSetRegistryHandle> {
         let domains = self.domains.lock().unwrap();
         if domains.contains_key(domain) {
@@ -438,13 +404,11 @@ impl TaskSetRegistry {
         }
     }
 
-    /// Get total number of tasks across all domains
     pub fn total_tasks(&self) -> usize {
         let domains = self.domains.lock().unwrap();
         domains.values().map(|taskset| taskset.len()).sum()
     }
 
-    /// Get statistics for all domains
     pub fn all_stats(&self) -> Vec<(String, TaskSetStats)> {
         let domains = self.domains.lock().unwrap();
         domains
@@ -453,7 +417,6 @@ impl TaskSetRegistry {
             .collect()
     }
 
-    /// Track that a task has been dispatched to a shepherd
     pub fn track_task_dispatch(&self, task_id: Uuid, shepherd_uuid: Uuid) {
         self.task_to_shepherd.insert(task_id, shepherd_uuid);
         self.shepherd_tasks
@@ -463,7 +426,6 @@ impl TaskSetRegistry {
         log::debug!("Tracked task {task_id} dispatched to shepherd {shepherd_uuid}");
     }
 
-    /// Remove task from shepherd tracking (when task completes)
     pub fn untrack_task(&self, task_id: Uuid) {
         if let Some((_, shepherd_uuid)) = self.task_to_shepherd.remove(&task_id) {
             if let Some(mut tasks) = self.shepherd_tasks.get_mut(&shepherd_uuid) {
@@ -477,7 +439,6 @@ impl TaskSetRegistry {
         }
     }
 
-    /// Get all tasks assigned to a shepherd
     pub fn get_shepherd_tasks(&self, shepherd_uuid: Uuid) -> Vec<Uuid> {
         self.shepherd_tasks
             .get(&shepherd_uuid)
@@ -485,7 +446,6 @@ impl TaskSetRegistry {
             .unwrap_or_default()
     }
 
-    /// Generate failure events for all tasks from a dead shepherd (events only, no TaskSet updates)
     pub async fn generate_shepherd_failure_events(
         &self,
         shepherd_uuid: Uuid,
@@ -525,7 +485,6 @@ impl TaskSetRegistry {
                         metadata: event_metadata,
                     };
 
-                    // Write failure event only (no TaskSet updates)
                     if let Err(e) = event_stream.write_event(event_record).await {
                         log::error!("Failed to write task failure event for {task_id}: {e}");
                         continue;
@@ -533,7 +492,6 @@ impl TaskSetRegistry {
 
                     failed_task_ids.push(task_id);
 
-                    // Remove from tracking immediately (no need to wait for scheduler)
                     self.untrack_task(task_id);
                 }
             }
@@ -542,7 +500,6 @@ impl TaskSetRegistry {
         Ok(failed_task_ids)
     }
 
-    /// Fail all tasks from a dead shepherd (DEPRECATED - use generate_shepherd_failure_events)
     pub async fn fail_shepherd_tasks(
         &self,
         shepherd_uuid: Uuid,
@@ -580,13 +537,11 @@ impl TaskSetRegistry {
                         metadata: event_metadata,
                     };
 
-                    // Write failure event first
                     if let Err(e) = event_stream.write_event(event_record).await {
                         log::error!("Failed to write task failure event for {task_id}: {e}");
                         continue;
                     }
 
-                    // Placeholder for task failure handling in domain actor
                     if let Err(e) = self
                         .handle_task_failure(&domain, task_id, "shepherd_crashed")
                         .await
@@ -594,7 +549,6 @@ impl TaskSetRegistry {
                         log::error!("Failed to update TaskSet for failed task {task_id}: {e}");
                     }
 
-                    // Remove from tracking
                     self.untrack_task(task_id);
                 }
             }
