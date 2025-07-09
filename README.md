@@ -41,17 +41,17 @@ This is the modernized async task platform you always wanted. Azolla gives you t
 Azolla follows a distributed push-based execution model with three main components. The system supports **High Availability** through orchestrator replication and **Scalability** through domain-based sharding:
 
 ```
-┌─────────────────┐         bidirectional          ┌─────────────────┐    process    ┌─────────────────┐
-│   Orchestrator  │◄──────── gRPC stream ────────►│    Shepherd     │◄────────────►│     Worker      │
-│   (Scheduler)   │                                │  (Task Manager) │               │ (Task Executor) │
-└─────────────────┘                                └─────────────────┘               └─────────────────┘
-         │                                                   │                                 │
-         │                                                   │                                 │
-         ▼                                                   │                                 │
-┌─────────────────┐                                         │                                 │
-│   PostgreSQL    │                                         │                                 │
-│   (Event Log)   │                                         │                                 │
-└─────────────────┘                                         └─────────────────────────────────┘
+┌─────────────────┐  gRPC bi-dir  ┌─────────────────┐  Process  ┌─────────────────┐
+│   Orchestrator  │<------------->│    Shepherd     │<--------->│     Worker      │
+│    (Scheduler)  │               │  (Task Manager) │           │  (Task Executor)│
+└────────┬────────┘               └────────┬────────┘           └───────────┬─────┘
+         │                                 │                                │
+         │                                 │                                │
+         ▼                                 │                                │
+┌─────────────────┐                        │                                │
+│   PostgreSQL    │                        │                                │
+│   (Event Log)   │                        │                                │
+└─────────────────┘                        └────────────────────────────────┘
 ```
 
 ## 🚨 Status
