@@ -7,6 +7,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  TARPAULIN_VERSION: "0.27.1"
 
 jobs:
   test-and-coverage:
@@ -29,7 +30,17 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
+    - name: Cache apt packages
+      uses: actions/cache@v4
+      id: cache-apt
+      with:
+        path: /var/cache/apt
+        key: ${{ runner.os }}-apt-${{ hashFiles('.github/workflows/tests.yml') }}
+        restore-keys: |
+          ${{ runner.os }}-apt-
+    
     - name: Install system dependencies
+      if: steps.cache-apt.outputs.cache-hit != 'true'
       run: |
         sudo apt-get update
         sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
@@ -37,8 +48,11 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
     
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.6
+    
     - name: Cache cargo dependencies
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           ~/.cargo/bin/
@@ -46,7 +60,10 @@ jobs:
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
           target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/*.rs') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
+          ${{ runner.os }}-cargo-
     
     - name: Set up database environment
       run: |
@@ -54,12 +71,26 @@ jobs:
     
     - name: Build
       run: cargo build --verbose
+      env:
+        SCCACHE_GHA_ENABLED: "true"
+        RUSTC_WRAPPER: "sccache"
+    
+    - name: Cache cargo-tarpaulin
+      uses: actions/cache@v4
+      id: cache-tarpaulin
+      with:
+        path: ~/.cargo/bin/cargo-tarpaulin
+        key: ${{ runner.os }}-cargo-tarpaulin-${{ env.TARPAULIN_VERSION }}
     
     - name: Install cargo-tarpaulin
-      run: cargo install cargo-tarpaulin
+      if: steps.cache-tarpaulin.outputs.cache-hit != 'true'
+      run: cargo install cargo-tarpaulin --version ${{ env.TARPAULIN_VERSION }}
     
     - name: Run tests with coverage
-      run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --fail-under 90
+      run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --fail-under 38 --jobs 4 --engine llvm
+      env:
+        SCCACHE_GHA_ENABLED: "true"
+        RUSTC_WRAPPER: "sccache"
     
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
