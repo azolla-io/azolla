@@ -1096,30 +1096,34 @@ mod tests {
 
         // Create tasks with different statuses
         let created_task = create_test_task("test_domain", json!({"max_attempts": 3}));
-        let _created_id = created_task.id;
+        let created_id = created_task.id;
 
         let mut started_task = create_test_task("test_domain", json!({"max_attempts": 3}));
         started_task.status = TASK_STATUS_ATTEMPT_STARTED;
-        let _started_id = started_task.id;
+        let started_id = started_task.id;
 
         let mut retry_task = create_test_task("test_domain", json!({"max_attempts": 3}));
         retry_task.status = crate::TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT;
-        let _retry_id = retry_task.id;
+        let retry_id = retry_task.id;
 
         // Add tasks to TaskSet
         domain_actor.upsert_task(created_task).await.unwrap();
         domain_actor.upsert_task(started_task).await.unwrap();
         domain_actor.upsert_task(retry_task).await.unwrap();
 
-        // Test status-based queries
-        let created_tasks = domain_actor.get_created_tasks().await.unwrap();
-        assert_eq!(created_tasks.len(), 1);
+        // Status-based queries are no longer available after removing unused indices
+        // Test that tasks are properly stored and retrievable
+        let retrieved_created = domain_actor.get_task(created_id).await.unwrap().unwrap();
+        assert_eq!(retrieved_created.status, crate::TASK_STATUS_CREATED);
 
-        let started_tasks = domain_actor.get_started_tasks().await.unwrap();
-        assert_eq!(started_tasks.len(), 1);
+        let retrieved_started = domain_actor.get_task(started_id).await.unwrap().unwrap();
+        assert_eq!(retrieved_started.status, crate::TASK_STATUS_ATTEMPT_STARTED);
 
-        let retry_tasks = domain_actor.get_retry_eligible_tasks().await.unwrap();
-        assert_eq!(retry_tasks.len(), 1);
+        let retrieved_retry = domain_actor.get_task(retry_id).await.unwrap().unwrap();
+        assert_eq!(
+            retrieved_retry.status,
+            crate::TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT
+        );
     }
 
     #[tokio::test]
@@ -1150,9 +1154,9 @@ mod tests {
         // We can test it indirectly by testing is_task_orphaned logic
         // This is a limitation of the current design - ideally we'd expose the scanning method for testing
 
-        // For now, we'll verify the task is in created state
-        let created_tasks = domain_actor.get_created_tasks().await.unwrap();
-        assert!(created_tasks.contains(&task_id));
+        // Verify the task is in created state
+        let retrieved_task = domain_actor.get_task(task_id).await.unwrap().unwrap();
+        assert_eq!(retrieved_task.status, crate::TASK_STATUS_CREATED);
     }
 
     // Integration tests with real database using db_test! macro

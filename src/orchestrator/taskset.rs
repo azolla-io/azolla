@@ -15,8 +15,7 @@
 use crate::orchestrator::db::PgPool;
 use crate::{
     EVENT_TASK_ATTEMPT_ENDED, EVENT_TASK_ATTEMPT_STARTED, EVENT_TASK_CREATED, EVENT_TASK_ENDED,
-    EVENT_TASK_STARTED, TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT, TASK_STATUS_ATTEMPT_STARTED,
-    TASK_STATUS_CREATED,
+    EVENT_TASK_STARTED,
 };
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -97,10 +96,6 @@ pub struct TaskSet {
     tasks: Vec<Task>,
     id_to_index: HashMap<Uuid, usize>,
     gaps: Vec<usize>,
-    // Status-based indices for efficient scheduler scanning
-    created_tasks: HashSet<Uuid>,        // TASK_STATUS_CREATED
-    started_tasks: HashSet<Uuid>,        // TASK_STATUS_ATTEMPT_STARTED
-    retry_eligible_tasks: HashSet<Uuid>, // TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT
 }
 
 impl TaskSet {
@@ -110,9 +105,6 @@ impl TaskSet {
             tasks: Vec::new(),
             id_to_index: HashMap::new(),
             gaps: Vec::new(),
-            created_tasks: HashSet::new(),
-            started_tasks: HashSet::new(),
-            retry_eligible_tasks: HashSet::new(),
         }
     }
 
@@ -132,16 +124,11 @@ impl TaskSet {
 
     pub fn upsert_task(&mut self, task: Task) {
         let id = task.id;
-        let status = task.status;
 
         match self.id_to_index.entry(id) {
             std::collections::hash_map::Entry::Occupied(entry) => {
                 let index = *entry.get();
-                // Remove from old status index
-                self.remove_from_status_indices(id, self.tasks[index].status);
                 self.tasks[index] = task;
-                // Add to new status index
-                self.add_to_status_index(id, status);
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
                 let index = if let Some(gap_index) = self.gaps.pop() {
@@ -153,16 +140,12 @@ impl TaskSet {
                     index
                 };
                 entry.insert(index);
-                // Add to status index
-                self.add_to_status_index(id, status);
             }
         }
     }
 
     pub fn delete_task(&mut self, id: Uuid) -> bool {
         if let Some(&index) = self.id_to_index.get(&id) {
-            // Remove from status indices
-            self.remove_from_status_indices(id, self.tasks[index].status);
             self.tasks[index].clear();
             self.gaps.push(index);
             self.id_to_index.remove(&id);
@@ -170,60 +153,6 @@ impl TaskSet {
         } else {
             false
         }
-    }
-
-    /// Add task to appropriate status index
-    fn add_to_status_index(&mut self, task_id: Uuid, status: i16) {
-        match status {
-            TASK_STATUS_CREATED => {
-                self.created_tasks.insert(task_id);
-            }
-            TASK_STATUS_ATTEMPT_STARTED => {
-                self.started_tasks.insert(task_id);
-            }
-            TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT => {
-                self.retry_eligible_tasks.insert(task_id);
-            }
-            _ => {
-                // No index needed for completed/failed states
-            }
-        }
-    }
-
-    /// Remove task from all status indices
-    fn remove_from_status_indices(&mut self, task_id: Uuid, status: i16) {
-        match status {
-            TASK_STATUS_CREATED => {
-                self.created_tasks.remove(&task_id);
-            }
-            TASK_STATUS_ATTEMPT_STARTED => {
-                self.started_tasks.remove(&task_id);
-            }
-            TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT => {
-                self.retry_eligible_tasks.remove(&task_id);
-            }
-            _ => {
-                // Remove from all indices to be safe
-                self.created_tasks.remove(&task_id);
-                self.started_tasks.remove(&task_id);
-                self.retry_eligible_tasks.remove(&task_id);
-            }
-        }
-    }
-
-    /// Get tasks in CREATED status for scheduler processing
-    pub fn get_created_tasks(&self) -> Vec<Uuid> {
-        self.created_tasks.iter().copied().collect()
-    }
-
-    /// Get tasks in ATTEMPT_STARTED status for timeout tracking
-    pub fn get_started_tasks(&self) -> Vec<Uuid> {
-        self.started_tasks.iter().copied().collect()
-    }
-
-    /// Get tasks eligible for retry
-    pub fn get_retry_eligible_tasks(&self) -> Vec<Uuid> {
-        self.retry_eligible_tasks.iter().copied().collect()
     }
 
     pub fn all_tasks(&self) -> impl Iterator<Item = &Task> {
@@ -278,32 +207,12 @@ impl TaskSet {
         self.tasks = new_tasks;
         self.id_to_index = new_id_to_index;
         self.gaps.clear();
-
-        // Rebuild status indices
-        self.created_tasks.clear();
-        self.started_tasks.clear();
-        self.retry_eligible_tasks.clear();
-
-        // Collect task data first to avoid borrowing issues
-        let task_data: Vec<(Uuid, i16)> = self
-            .tasks
-            .iter()
-            .filter(|task| !task.is_empty())
-            .map(|task| (task.id, task.status))
-            .collect();
-
-        for (task_id, status) in task_data {
-            self.add_to_status_index(task_id, status);
-        }
     }
 
     pub fn reset(&mut self) {
         self.tasks.iter_mut().for_each(|t| t.clear());
         self.id_to_index.clear();
         self.gaps.clear();
-        self.created_tasks.clear();
-        self.started_tasks.clear();
-        self.retry_eligible_tasks.clear();
     }
 }
 
@@ -349,15 +258,6 @@ pub enum TaskSetCommand {
     },
     Reset {
         respond_to: oneshot::Sender<()>,
-    },
-    GetCreatedTasks {
-        respond_to: oneshot::Sender<Vec<Uuid>>,
-    },
-    GetStartedTasks {
-        respond_to: oneshot::Sender<Vec<Uuid>>,
-    },
-    GetRetryEligibleTasks {
-        respond_to: oneshot::Sender<Vec<Uuid>>,
     },
 }
 
@@ -431,18 +331,6 @@ impl TaskSetActor {
                     TaskSetCommand::Reset { respond_to } => {
                         taskset.reset();
                         let _ = respond_to.send(());
-                    }
-                    TaskSetCommand::GetCreatedTasks { respond_to } => {
-                        let tasks = taskset.get_created_tasks();
-                        let _ = respond_to.send(tasks);
-                    }
-                    TaskSetCommand::GetStartedTasks { respond_to } => {
-                        let tasks = taskset.get_started_tasks();
-                        let _ = respond_to.send(tasks);
-                    }
-                    TaskSetCommand::GetRetryEligibleTasks { respond_to } => {
-                        let tasks = taskset.get_retry_eligible_tasks();
-                        let _ = respond_to.send(tasks);
                     }
                 }
             }
@@ -569,39 +457,6 @@ impl TaskSetActor {
             .map_err(|_| ActorError::ChannelClosed)?;
         rx.await.map_err(|_| ActorError::ResponseLost)?;
         Ok(())
-    }
-
-    pub async fn get_created_tasks(&self) -> Result<Vec<Uuid>, ActorError> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = TaskSetCommand::GetCreatedTasks { respond_to: tx };
-
-        self.sender
-            .send(cmd)
-            .await
-            .map_err(|_| ActorError::ChannelClosed)?;
-        rx.await.map_err(|_| ActorError::ResponseLost)
-    }
-
-    pub async fn get_started_tasks(&self) -> Result<Vec<Uuid>, ActorError> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = TaskSetCommand::GetStartedTasks { respond_to: tx };
-
-        self.sender
-            .send(cmd)
-            .await
-            .map_err(|_| ActorError::ChannelClosed)?;
-        rx.await.map_err(|_| ActorError::ResponseLost)
-    }
-
-    pub async fn get_retry_eligible_tasks(&self) -> Result<Vec<Uuid>, ActorError> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = TaskSetCommand::GetRetryEligibleTasks { respond_to: tx };
-
-        self.sender
-            .send(cmd)
-            .await
-            .map_err(|_| ActorError::ChannelClosed)?;
-        rx.await.map_err(|_| ActorError::ResponseLost)
     }
 }
 
