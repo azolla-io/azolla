@@ -1,6 +1,6 @@
 use crate::orchestrator::event_stream::{EventRecord, EventStream};
 use crate::orchestrator::shepherd_manager::ShepherdManager;
-use crate::orchestrator::taskset::{Task, TaskSetActor};
+use crate::orchestrator::taskset::{Task, TaskSetRegistry};
 use crate::{
     EVENT_TASK_ATTEMPT_ENDED, EVENT_TASK_ATTEMPT_STARTED,
     TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT, TASK_STATUS_ATTEMPT_STARTED,
@@ -93,7 +93,7 @@ pub enum SchedulerError {
 impl SchedulerActor {
     pub fn new(
         domain: String,
-        task_set: Arc<TaskSetActor>,
+        task_set: Arc<TaskSetRegistry>,
         shepherd_manager: Arc<ShepherdManager>,
         event_stream: Arc<EventStream>,
         config: SchedulerConfig,
@@ -253,7 +253,7 @@ impl SchedulerActor {
 #[derive(Clone)]
 struct SchedulerState {
     domain: String,
-    task_set: Arc<TaskSetActor>,
+    task_set: Arc<TaskSetRegistry>,
     shepherd_manager: Arc<ShepherdManager>,
     event_stream: Arc<EventStream>,
     config: SchedulerConfig,
@@ -264,15 +264,11 @@ impl SchedulerState {
         debug!("Starting task {} in domain {}", task_id, self.domain);
 
         // Get task details
-        let task = match self.task_set.get_task(task_id).await {
-            Ok(Some(task)) => task,
-            Ok(None) => {
+        let task = match self.task_set.get_task(&self.domain, task_id) {
+            Some(task) => task,
+            None => {
                 warn!("Task {} not found in domain {}", task_id, self.domain);
                 return Ok(());
-            }
-            Err(e) => {
-                error!("Failed to get task {task_id} from TaskSet: {e:?}");
-                return Err(anyhow::anyhow!("Failed to get task from TaskSet: {:?}", e));
             }
         };
 
@@ -330,18 +326,14 @@ impl SchedulerState {
         );
 
         // Get current task state
-        let task = match self.task_set.get_task(task_id).await {
-            Ok(Some(task)) => task,
-            Ok(None) => {
+        let task = match self.task_set.get_task(&self.domain, task_id) {
+            Some(task) => task,
+            None => {
                 warn!(
                     "Task {} not found in domain {} when handling result",
                     task_id, self.domain
                 );
                 return Ok(());
-            }
-            Err(e) => {
-                error!("Failed to get task {task_id} from TaskSet: {e:?}");
-                return Err(anyhow::anyhow!("Failed to get task from TaskSet: {:?}", e));
             }
         };
 
@@ -360,9 +352,7 @@ impl SchedulerState {
             let mut updated_task = task;
             updated_task.status = TASK_STATUS_SUCCEEDED;
 
-            if let Err(e) = self.task_set.upsert_task(updated_task).await {
-                error!("Failed to update task {task_id} status to SUCCEEDED: {e:?}");
-            }
+            self.task_set.upsert_task(&self.domain, updated_task);
         } else {
             // Task failed, determine retry
             info!("Task {task_id} attempt {attempt_number} failed");
@@ -382,7 +372,7 @@ impl SchedulerState {
 
         for task_id in affected_task_ids {
             // Get task and determine if it should be retried
-            if let Ok(Some(task)) = self.task_set.get_task(task_id).await {
+            if let Some(task) = self.task_set.get_task(&self.domain, task_id) {
                 let attempt_number = task.attempts.len() as i32;
                 self.handle_attempt_failure(task_id, task, attempt_number)
                     .await?;
@@ -459,9 +449,7 @@ impl SchedulerState {
         };
         updated_task.attempts.push(new_attempt);
 
-        if let Err(e) = self.task_set.upsert_task(updated_task).await {
-            error!("Failed to update task {task_id} status to ATTEMPT_STARTED: {e:?}");
-        }
+        self.task_set.upsert_task(&self.domain, updated_task);
 
         info!(
             "Successfully started task {task_id} attempt {attempt_number} on shepherd {shepherd_id}"
@@ -539,20 +527,14 @@ impl SchedulerState {
 
             task.status = TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT;
 
-            if let Err(e) = self.task_set.upsert_task(task).await {
-                error!(
-                    "Failed to update task {task_id} status to FAILED_WITH_ATTEMPTS_LEFT: {e:?}"
-                );
-            }
+            self.task_set.upsert_task(&self.domain, task);
         } else {
             // No more attempts
             info!("Task {task_id} attempt {attempt_number} failed, no more attempts available");
 
             task.status = TASK_STATUS_FAILED;
 
-            if let Err(e) = self.task_set.upsert_task(task.clone()).await {
-                error!("Failed to update task {task_id} status to FAILED: {e:?}");
-            }
+            self.task_set.upsert_task(&self.domain, task.clone());
 
             // Create EVENT_TASK_ENDED event
             let event_metadata = serde_json::json!({
@@ -641,10 +623,9 @@ impl SchedulerRegistry {
         if let Some(scheduler) = self.schedulers.get(domain) {
             scheduler.clone()
         } else {
-            let task_set = Arc::new(self.task_set_registry.get_or_create_domain(domain));
             let scheduler = Arc::new(SchedulerActor::new(
                 domain.to_string(),
-                task_set,
+                self.task_set_registry.clone(),
                 self.shepherd_manager.clone(),
                 self.event_stream.clone(),
                 self.config.clone(),
