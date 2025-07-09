@@ -225,130 +225,13 @@ pub struct TaskSetStats {
     pub memory_efficiency: f64,
 }
 
-<<<<<<< HEAD
-pub enum TaskSetCommand {
-    GetTask {
-        id: Uuid,
-        respond_to: oneshot::Sender<Option<Task>>,
-    },
-    GetTaskStatus {
-        id: Uuid,
-        respond_to: oneshot::Sender<Option<i16>>,
-    },
-    UpsertTask {
-        task: Task,
-        respond_to: oneshot::Sender<()>,
-    },
-    DeleteTask {
-        id: Uuid,
-        respond_to: oneshot::Sender<bool>,
-    },
-    GetStats {
-        respond_to: oneshot::Sender<TaskSetStats>,
-    },
-    Len {
-        respond_to: oneshot::Sender<usize>,
-    },
-    AllTasks {
-        respond_to: oneshot::Sender<Vec<Task>>,
-    },
-    IsEmpty {
-        respond_to: oneshot::Sender<bool>,
-    },
-    Compact {
-        respond_to: oneshot::Sender<()>,
-    },
-    Reset {
-        respond_to: oneshot::Sender<()>,
-    },
-}
-=======
-// TaskSetCommand enum removed - direct access only
->>>>>>> 9d6b046 (refactor: remove unused status-based indices from TaskSet (#11))
-
 /// Handle for backward compatibility with old TaskSetActor API
 pub struct TaskSetRegistryHandle<'a> {
     registry: &'a TaskSetRegistry,
     domain: String,
 }
 
-<<<<<<< HEAD
-#[derive(Debug)]
-pub enum ActorError {
-    ChannelClosed,
-    ResponseLost,
-}
-
-impl TaskSetActor {
-    pub fn new(domain: String) -> Self {
-        let taskset = TaskSet::new(domain.clone());
-        Self::from_taskset(taskset)
-    }
-
-    /// Create actor from existing TaskSet
-    pub fn from_taskset(taskset: TaskSet) -> Self {
-        let (sender, mut receiver) = mpsc::channel(1000);
-        let domain = taskset.domain().to_string();
-
-        tokio::spawn(async move {
-            let mut taskset = taskset;
-
-            while let Some(command) = receiver.recv().await {
-                match command {
-                    TaskSetCommand::GetTask { id, respond_to } => {
-                        let result = taskset.get_task(id).cloned();
-                        let _ = respond_to.send(result);
-                    }
-                    TaskSetCommand::GetTaskStatus { id, respond_to } => {
-                        let status = taskset.get_task(id).map(|task| task.status);
-                        let _ = respond_to.send(status);
-                    }
-                    TaskSetCommand::UpsertTask { task, respond_to } => {
-                        taskset.upsert_task(task);
-                        let _ = respond_to.send(());
-                    }
-                    TaskSetCommand::DeleteTask { id, respond_to } => {
-                        let result = taskset.delete_task(id);
-                        let _ = respond_to.send(result);
-                    }
-                    TaskSetCommand::GetStats { respond_to } => {
-                        let stats = taskset.stats();
-                        let _ = respond_to.send(stats);
-                    }
-                    TaskSetCommand::Len { respond_to } => {
-                        let len = taskset.len();
-                        let _ = respond_to.send(len);
-                    }
-                    TaskSetCommand::AllTasks { respond_to } => {
-                        let task_ids: Vec<Uuid> = taskset.all_tasks().map(|t| t.id).collect();
-                        let tasks: Vec<Task> = task_ids
-                            .into_iter()
-                            .filter_map(|id| taskset.get_task(id).cloned())
-                            .collect();
-                        let _ = respond_to.send(tasks);
-                    }
-                    TaskSetCommand::IsEmpty { respond_to } => {
-                        let is_empty = taskset.is_empty();
-                        let _ = respond_to.send(is_empty);
-                    }
-                    TaskSetCommand::Compact { respond_to } => {
-                        taskset.compact();
-                        let _ = respond_to.send(());
-                    }
-                    TaskSetCommand::Reset { respond_to } => {
-                        taskset.reset();
-                        let _ = respond_to.send(());
-                    }
-                }
-            }
-        });
-
-        Self { sender, domain }
-    }
-
-=======
 impl<'a> TaskSetRegistryHandle<'a> {
->>>>>>> 9d6b046 (refactor: remove unused status-based indices from TaskSet (#11))
     pub fn domain(&self) -> &str {
         &self.domain
     }
@@ -378,39 +261,8 @@ impl<'a> TaskSetRegistryHandle<'a> {
         Ok(self.registry.len(&self.domain))
     }
 
-    pub async fn is_empty(&self) -> Result<bool, ActorError> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = TaskSetCommand::IsEmpty { respond_to: tx };
-
-        self.sender
-            .send(cmd)
-            .await
-            .map_err(|_| ActorError::ChannelClosed)?;
-        rx.await.map_err(|_| ActorError::ResponseLost)
-    }
-
-    pub async fn compact(&self) -> Result<(), ActorError> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = TaskSetCommand::Compact { respond_to: tx };
-
-        self.sender
-            .send(cmd)
-            .await
-            .map_err(|_| ActorError::ChannelClosed)?;
-        rx.await.map_err(|_| ActorError::ResponseLost)?;
-        Ok(())
-    }
-
-    pub async fn reset(&self) -> Result<(), ActorError> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = TaskSetCommand::Reset { respond_to: tx };
-
-        self.sender
-            .send(cmd)
-            .await
-            .map_err(|_| ActorError::ChannelClosed)?;
-        rx.await.map_err(|_| ActorError::ResponseLost)?;
-        Ok(())
+    pub async fn is_empty(&self) -> Result<bool, ()> {
+        Ok(self.registry.is_empty(&self.domain))
     }
 }
 
