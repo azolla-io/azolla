@@ -6,6 +6,8 @@
 
 **Azolla** is a high-performance, distributed task orchestration system built in Rust. Designed for ultra-low latency and enterprise-grade reliability, Azolla delivers blazing-fast task execution with exactly-once guarantees—ensuring no task is ever lost.
 
+This is the modernized async task platform you always wanted. Azolla gives you the power of Temporal with the simplicity of Celery, all running on just a database. It supports dynamic DAG workflows that adapt at runtime, durable long-running tasks without determinism headaches, and is architected for multi-tenancy, reliability, and scale. It's truly polyglot, so you can write your tasks in any language. Stop managing complex infrastructure and start building reliable applications.
+
 ## ✨ Why Azolla?
 
 ### 🔁 **Uncompromising Reliability**
@@ -32,31 +34,7 @@
 - **Polyglot by design** – language-agnostic over RPC.
 - **Built-in retry policies**, scheduling, signals, and state sharing via `flow.ctx`.
 
-## 🎯 Core Features
 
-### Task Management
-- **Retry policies** with exponential backoff.
-- **Task cancellation** and interruption.
-- **Priority queues** and custom routing.
-- **Bulk operations** for high-throughput scenarios.
-
-### Workflow Orchestration  
-- **DAG-based workflows** with conditional branches.
-- **Durable context** for state sharing between tasks.
-- **Human-in-the-loop** support for approval workflows.
-- **Dynamic DAGs** that adapt per execution.
-
-### Scheduling & Triggers
-- **Cron scheduling** with timezone support.
-- **ETA-based** delayed execution.
-- **Event-driven** triggers and signals.
-- **Transactional** task enqueuing.
-
-### Monitoring & Operations
-- **Real-time dashboard** with task status and metrics.
-- **Distributed tracing** for workflow debugging.  
-- **Prometheus/OpenTelemetry** integration.
-- **Alert and notification** system.
 
 ## 🏗️ Architecture
 

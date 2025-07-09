@@ -30,9 +30,9 @@ We use GitHub flow, so all code changes happen through pull requests. We activel
 
 In short, when you submit code changes, your submissions are understood to be under the same [Apache License 2.0](LICENSE) that covers the project. Feel free to contact the maintainers if that's a concern.
 
-## Report bugs using GitHub's [issues](https://github.com/jianlongzhong/azolla/issues)
+## Report bugs using GitHub's [issues](https://github.com/azolla-io/azolla/issues)
 
-We use GitHub issues to track public bugs. Report a bug by [opening a new issue](https://github.com/jianlongzhong/azolla/issues/new); it's that easy!
+We use GitHub issues to track public bugs. Report a bug by [opening a new issue](https://github.com/azolla-io/azolla/issues/new); it's that easy!
 
 ## Write bug reports with detail, background, and sample code
 
