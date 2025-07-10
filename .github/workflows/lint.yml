@@ -28,6 +28,7 @@ jobs:
           cache-all-crates: false
       - name: Check formatting
         run: cargo fmt --check
+        timeout-minutes: 5
 
   clippy:
     name: Clippy
@@ -46,7 +47,7 @@ jobs:
       - name: Cache apt packages
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          packages: protobuf-compiler libssl-dev pkg-config
+          packages: protobuf-compiler
           version: 1.0
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
