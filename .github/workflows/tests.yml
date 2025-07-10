@@ -7,7 +7,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  TARPAULIN_VERSION: "0.27.1"
+  TARPAULIN_VERSION: "0.32.8"
 
 jobs:
   test-and-coverage:
@@ -52,12 +52,23 @@ jobs:
     
     - name: Build
       run: cargo build --verbose
+      timeout-minutes: 10
+    
+    - name: Cache cargo-tarpaulin
+      uses: actions/cache@v4
+      id: cache-tarpaulin
+      with:
+        path: ~/.cargo/bin/cargo-tarpaulin
+        key: ${{ runner.os }}-cargo-tarpaulin-${{ env.TARPAULIN_VERSION }}
     
     - name: Install cargo-tarpaulin
+      if: steps.cache-tarpaulin.outputs.cache-hit != 'true'
       run: cargo install cargo-tarpaulin --version ${{ env.TARPAULIN_VERSION }}
+      timeout-minutes: 10
     
     - name: Run tests with coverage
       run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --fail-under 30 --jobs 4 --engine llvm
+      timeout-minutes: 15
     
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
