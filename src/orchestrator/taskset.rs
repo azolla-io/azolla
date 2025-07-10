@@ -1,17 +1,3 @@
-/*!
-# TaskSet Requirements & Design
-
-## Requirements
-1. **Write-heavy workload**: Frequent event processing updates to tasks
-2. **Concurrent access**: Multiple gRPC handlers accessing same Task simultaneously
-3. **High performance**: High throughput with low latency
-
-## Design Solution
-1. **Actor model**: One thread per domain eliminates write lock contention
-2. **Message passing**: Concurrent access via channels, no shared locks
-3. **Single-threaded processing**: No contention within domain, consistent latency
-*/
-
 use crate::orchestrator::db::PgPool;
 use crate::{
     EVENT_TASK_ATTEMPT_ENDED, EVENT_TASK_ATTEMPT_STARTED, EVENT_TASK_CREATED, EVENT_TASK_ENDED,
@@ -22,10 +8,10 @@ use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use futures::StreamExt;
 use rayon::prelude::*;
+use rustc_hash::FxHashMap;
 use serde_json::Value as JsonValue;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot};
 use tokio_postgres::Row;
 use uuid::Uuid;
 
@@ -90,7 +76,6 @@ impl Task {
     }
 }
 
-/// Gap buffer storage for tasks within a domain
 pub struct TaskSet {
     domain: String,
     tasks: Vec<Task>,
@@ -190,14 +175,12 @@ impl TaskSet {
         }
 
         let mut new_tasks = Vec::with_capacity(self.id_to_index.len());
-        let mut new_id_to_index = HashMap::with_capacity(self.id_to_index.len());
+        let mut new_id_to_index = FxHashMap::default();
 
-        // Create a temporary default task for swapping
         let mut temp_task = Task::new();
 
         for (id, &old_index) in &self.id_to_index {
             let new_index = new_tasks.len();
-            // Use mem::swap to move instead of clone
             std::mem::swap(&mut temp_task, &mut self.tasks[old_index]);
             new_tasks.push(temp_task);
             temp_task = Task::new(); // Reset for next iteration
@@ -205,7 +188,7 @@ impl TaskSet {
         }
 
         self.tasks = new_tasks;
-        self.id_to_index = new_id_to_index;
+        self.id_to_index = new_id_to_index.into_iter().collect::<HashMap<_, _>>();
         self.gaps.clear();
     }
 
@@ -216,7 +199,7 @@ impl TaskSet {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TaskSetStats {
     pub total_slots: usize,
     pub active_tasks: usize,
@@ -224,245 +207,48 @@ pub struct TaskSetStats {
     pub memory_efficiency: f64,
 }
 
-pub enum TaskSetCommand {
-    GetTask {
-        id: Uuid,
-        respond_to: oneshot::Sender<Option<Task>>,
-    },
-    GetTaskStatus {
-        id: Uuid,
-        respond_to: oneshot::Sender<Option<i16>>,
-    },
-    UpsertTask {
-        task: Task,
-        respond_to: oneshot::Sender<()>,
-    },
-    DeleteTask {
-        id: Uuid,
-        respond_to: oneshot::Sender<bool>,
-    },
-    GetStats {
-        respond_to: oneshot::Sender<TaskSetStats>,
-    },
-    Len {
-        respond_to: oneshot::Sender<usize>,
-    },
-    AllTasks {
-        respond_to: oneshot::Sender<Vec<Task>>,
-    },
-    IsEmpty {
-        respond_to: oneshot::Sender<bool>,
-    },
-    Compact {
-        respond_to: oneshot::Sender<()>,
-    },
-    Reset {
-        respond_to: oneshot::Sender<()>,
-    },
-}
-
-pub struct TaskSetActor {
-    sender: mpsc::Sender<TaskSetCommand>,
+pub struct TaskSetRegistryHandle<'a> {
+    registry: &'a TaskSetRegistry,
     domain: String,
 }
 
-#[derive(Debug)]
-pub enum ActorError {
-    ChannelClosed,
-    ResponseLost,
-}
-
-impl TaskSetActor {
-    pub fn new(domain: String) -> Self {
-        let taskset = TaskSet::new(domain.clone());
-        Self::from_taskset(taskset)
-    }
-
-    /// Create actor from existing TaskSet
-    pub fn from_taskset(taskset: TaskSet) -> Self {
-        let (sender, mut receiver) = mpsc::channel(1000);
-        let domain = taskset.domain().to_string();
-
-        tokio::spawn(async move {
-            let mut taskset = taskset;
-
-            while let Some(command) = receiver.recv().await {
-                match command {
-                    TaskSetCommand::GetTask { id, respond_to } => {
-                        let result = taskset.get_task(id).cloned();
-                        let _ = respond_to.send(result);
-                    }
-                    TaskSetCommand::GetTaskStatus { id, respond_to } => {
-                        let status = taskset.get_task(id).map(|task| task.status);
-                        let _ = respond_to.send(status);
-                    }
-                    TaskSetCommand::UpsertTask { task, respond_to } => {
-                        taskset.upsert_task(task);
-                        let _ = respond_to.send(());
-                    }
-                    TaskSetCommand::DeleteTask { id, respond_to } => {
-                        let result = taskset.delete_task(id);
-                        let _ = respond_to.send(result);
-                    }
-                    TaskSetCommand::GetStats { respond_to } => {
-                        let stats = taskset.stats();
-                        let _ = respond_to.send(stats);
-                    }
-                    TaskSetCommand::Len { respond_to } => {
-                        let len = taskset.len();
-                        let _ = respond_to.send(len);
-                    }
-                    TaskSetCommand::AllTasks { respond_to } => {
-                        let task_ids: Vec<Uuid> = taskset.all_tasks().map(|t| t.id).collect();
-                        let tasks: Vec<Task> = task_ids
-                            .into_iter()
-                            .filter_map(|id| taskset.get_task(id).cloned())
-                            .collect();
-                        let _ = respond_to.send(tasks);
-                    }
-                    TaskSetCommand::IsEmpty { respond_to } => {
-                        let is_empty = taskset.is_empty();
-                        let _ = respond_to.send(is_empty);
-                    }
-                    TaskSetCommand::Compact { respond_to } => {
-                        taskset.compact();
-                        let _ = respond_to.send(());
-                    }
-                    TaskSetCommand::Reset { respond_to } => {
-                        taskset.reset();
-                        let _ = respond_to.send(());
-                    }
-                }
-            }
-        });
-
-        Self { sender, domain }
-    }
-
+impl<'a> TaskSetRegistryHandle<'a> {
     pub fn domain(&self) -> &str {
         &self.domain
     }
 
-    pub async fn get_task(&self, id: Uuid) -> Result<Option<Task>, ActorError> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = TaskSetCommand::GetTask { id, respond_to: tx };
-
-        self.sender
-            .send(cmd)
-            .await
-            .map_err(|_| ActorError::ChannelClosed)?;
-        rx.await.map_err(|_| ActorError::ResponseLost)
+    pub async fn get_task(&self, id: Uuid) -> Result<Option<Task>, ()> {
+        Ok(self.registry.get_task(&self.domain, id))
     }
 
-    pub async fn get_task_status(&self, id: Uuid) -> Result<Option<i16>, ActorError> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = TaskSetCommand::GetTaskStatus { id, respond_to: tx };
-
-        self.sender
-            .send(cmd)
-            .await
-            .map_err(|_| ActorError::ChannelClosed)?;
-        rx.await.map_err(|_| ActorError::ResponseLost)
-    }
-
-    pub async fn upsert_task(&self, task: Task) -> Result<(), ActorError> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = TaskSetCommand::UpsertTask {
-            task,
-            respond_to: tx,
-        };
-
-        self.sender
-            .send(cmd)
-            .await
-            .map_err(|_| ActorError::ChannelClosed)?;
-        rx.await.map_err(|_| ActorError::ResponseLost)?;
+    pub async fn upsert_task(&self, task: Task) -> Result<(), ()> {
+        self.registry.upsert_task(&self.domain, task);
         Ok(())
     }
 
-    pub async fn delete_task(&self, id: Uuid) -> Result<bool, ActorError> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = TaskSetCommand::DeleteTask { id, respond_to: tx };
-
-        self.sender
-            .send(cmd)
-            .await
-            .map_err(|_| ActorError::ChannelClosed)?;
-        rx.await.map_err(|_| ActorError::ResponseLost)
+    pub async fn delete_task(&self, id: Uuid) -> Result<bool, ()> {
+        Ok(self.registry.delete_task(&self.domain, id))
     }
 
-    pub async fn stats(&self) -> Result<TaskSetStats, ActorError> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = TaskSetCommand::GetStats { respond_to: tx };
-
-        self.sender
-            .send(cmd)
-            .await
-            .map_err(|_| ActorError::ChannelClosed)?;
-        rx.await.map_err(|_| ActorError::ResponseLost)
+    pub async fn all_tasks(&self) -> Result<Vec<Task>, ()> {
+        Ok(self.registry.all_tasks(&self.domain))
     }
 
-    pub async fn len(&self) -> Result<usize, ActorError> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = TaskSetCommand::Len { respond_to: tx };
-
-        self.sender
-            .send(cmd)
-            .await
-            .map_err(|_| ActorError::ChannelClosed)?;
-        rx.await.map_err(|_| ActorError::ResponseLost)
+    pub async fn stats(&self) -> Result<TaskSetStats, ()> {
+        Ok(self.registry.stats(&self.domain).unwrap_or_default())
     }
 
-    pub async fn all_tasks(&self) -> Result<Vec<Task>, ActorError> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = TaskSetCommand::AllTasks { respond_to: tx };
-
-        self.sender
-            .send(cmd)
-            .await
-            .map_err(|_| ActorError::ChannelClosed)?;
-        rx.await.map_err(|_| ActorError::ResponseLost)
+    pub async fn len(&self) -> Result<usize, ()> {
+        Ok(self.registry.len(&self.domain))
     }
 
-    pub async fn is_empty(&self) -> Result<bool, ActorError> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = TaskSetCommand::IsEmpty { respond_to: tx };
-
-        self.sender
-            .send(cmd)
-            .await
-            .map_err(|_| ActorError::ChannelClosed)?;
-        rx.await.map_err(|_| ActorError::ResponseLost)
-    }
-
-    pub async fn compact(&self) -> Result<(), ActorError> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = TaskSetCommand::Compact { respond_to: tx };
-
-        self.sender
-            .send(cmd)
-            .await
-            .map_err(|_| ActorError::ChannelClosed)?;
-        rx.await.map_err(|_| ActorError::ResponseLost)?;
-        Ok(())
-    }
-
-    pub async fn reset(&self) -> Result<(), ActorError> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = TaskSetCommand::Reset { respond_to: tx };
-
-        self.sender
-            .send(cmd)
-            .await
-            .map_err(|_| ActorError::ChannelClosed)?;
-        rx.await.map_err(|_| ActorError::ResponseLost)?;
-        Ok(())
+    pub async fn is_empty(&self) -> Result<bool, ()> {
+        Ok(self.registry.is_empty(&self.domain))
     }
 }
 
 pub struct TaskSetRegistry {
-    domains: std::sync::Mutex<HashMap<String, TaskSetActor>>,
-    // Shepherd tracking
+    domains: std::sync::Mutex<HashMap<String, TaskSet>>,
     task_to_shepherd: DashMap<Uuid, Uuid>, // task_id -> shepherd_uuid
     shepherd_tasks: DashMap<Uuid, HashSet<Uuid>>, // shepherd_uuid -> task_ids
 }
@@ -476,48 +262,103 @@ impl TaskSetRegistry {
         }
     }
 
-    pub fn get_or_create_domain(&self, domain: &str) -> TaskSetActor {
+    pub fn get_task(&self, domain: &str, id: Uuid) -> Option<Task> {
+        let domains = self.domains.lock().unwrap();
+        domains.get(domain)?.get_task(id).cloned()
+    }
+
+    pub fn get_task_status(&self, domain: &str, id: Uuid) -> Option<i16> {
+        let domains = self.domains.lock().unwrap();
+        domains.get(domain)?.get_task(id).map(|t| t.status)
+    }
+
+    pub fn upsert_task(&self, domain: &str, task: Task) {
         let mut domains = self.domains.lock().unwrap();
 
-        if let Some(actor) = domains.get(domain) {
-            TaskSetActor {
-                sender: actor.sender.clone(),
-                domain: domain.to_string(),
-            }
-        } else {
-            let actor = TaskSetActor::new(domain.to_string());
-            let actor_handle = TaskSetActor {
-                sender: actor.sender.clone(),
-                domain: domain.to_string(),
-            };
-            domains.insert(domain.to_string(), actor_handle);
-            actor
+        if !domains.contains_key(domain) {
+            domains.insert(domain.to_string(), TaskSet::new(domain.to_string()));
+        }
+
+        if let Some(taskset) = domains.get_mut(domain) {
+            taskset.upsert_task(task);
         }
     }
 
-    pub fn get_domain(&self, domain: &str) -> Option<TaskSetActor> {
-        let domains = self.domains.lock().unwrap();
-        domains.get(domain).map(|actor| TaskSetActor {
-            sender: actor.sender.clone(),
-            domain: domain.to_string(),
-        })
+    pub fn delete_task(&self, domain: &str, id: Uuid) -> bool {
+        let mut domains = self.domains.lock().unwrap();
+        domains
+            .get_mut(domain)
+            .is_some_and(|taskset| taskset.delete_task(id))
     }
 
-    pub async fn find_task(&self, id: Uuid) -> Option<Task> {
-        let domain_actors: Vec<_> = {
-            let domains = self.domains.lock().unwrap();
-            domains
-                .values()
-                .map(|actor| TaskSetActor {
-                    sender: actor.sender.clone(),
-                    domain: actor.domain.clone(),
-                })
-                .collect()
-        };
+    pub fn extract_task_set(&self, domain: &str) -> Option<TaskSet> {
+        let mut domains = self.domains.lock().unwrap();
+        domains.remove(domain)
+    }
 
-        for actor in domain_actors {
-            if let Ok(Some(task)) = actor.get_task(id).await {
-                return Some(task);
+    pub fn all_tasks(&self, domain: &str) -> Vec<Task> {
+        let domains = self.domains.lock().unwrap();
+        domains
+            .get(domain)
+            .map_or(Vec::new(), |taskset| taskset.all_tasks().cloned().collect())
+    }
+
+    pub fn stats(&self, domain: &str) -> Option<TaskSetStats> {
+        let domains = self.domains.lock().unwrap();
+        domains.get(domain).map(|taskset| taskset.stats())
+    }
+
+    pub fn len(&self, domain: &str) -> usize {
+        let domains = self.domains.lock().unwrap();
+        domains.get(domain).map_or(0, |taskset| taskset.len())
+    }
+
+    pub fn is_empty(&self, domain: &str) -> bool {
+        let domains = self.domains.lock().unwrap();
+        domains.get(domain).is_none_or(|taskset| taskset.is_empty())
+    }
+
+    pub fn compact(&self, domain: &str) {
+        let mut domains = self.domains.lock().unwrap();
+        if let Some(taskset) = domains.get_mut(domain) {
+            taskset.compact();
+        }
+    }
+
+    pub fn reset(&self, domain: &str) {
+        let mut domains = self.domains.lock().unwrap();
+        if let Some(taskset) = domains.get_mut(domain) {
+            taskset.reset();
+        }
+    }
+
+    pub fn with_domain_mut<F, R>(&self, domain: &str, f: F) -> R
+    where
+        F: FnOnce(&mut TaskSet) -> R,
+    {
+        let mut domains = self.domains.lock().unwrap();
+
+        if !domains.contains_key(domain) {
+            domains.insert(domain.to_string(), TaskSet::new(domain.to_string()));
+        }
+
+        f(domains.get_mut(domain).unwrap())
+    }
+
+    pub fn with_domain<F, R>(&self, domain: &str, f: F) -> Option<R>
+    where
+        F: FnOnce(&TaskSet) -> R,
+    {
+        let domains = self.domains.lock().unwrap();
+        domains.get(domain).map(f)
+    }
+
+    pub fn find_task(&self, id: Uuid) -> Option<Task> {
+        let domains = self.domains.lock().unwrap();
+
+        for taskset in domains.values() {
+            if let Some(task) = taskset.get_task(id) {
+                return Some(task.clone());
             }
         }
         None
@@ -528,64 +369,54 @@ impl TaskSetRegistry {
         domains.keys().cloned().collect()
     }
 
-    pub fn len(&self) -> usize {
+    pub fn get_domain_for_task(&self, task_id: Uuid) -> Option<String> {
+        let domains = self.domains.lock().unwrap();
+
+        for (domain_name, taskset) in domains.iter() {
+            if taskset.get_task(task_id).is_some() {
+                return Some(domain_name.clone());
+            }
+        }
+        None
+    }
+
+    pub fn domain_count(&self) -> usize {
         let domains = self.domains.lock().unwrap();
         domains.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub fn get_or_create_domain(&self, domain: &str) -> TaskSetRegistryHandle {
+        TaskSetRegistryHandle {
+            registry: self,
+            domain: domain.to_string(),
+        }
+    }
+
+    pub fn get_domain(&self, domain: &str) -> Option<TaskSetRegistryHandle> {
         let domains = self.domains.lock().unwrap();
-        domains.is_empty()
-    }
-
-    pub async fn total_tasks(&self) -> usize {
-        let domain_actors: Vec<_> = {
-            let domains = self.domains.lock().unwrap();
-            domains
-                .values()
-                .map(|actor| TaskSetActor {
-                    sender: actor.sender.clone(),
-                    domain: actor.domain.clone(),
-                })
-                .collect()
-        };
-
-        let mut total = 0;
-        for actor in domain_actors {
-            if let Ok(len) = actor.len().await {
-                total += len;
-            }
+        if domains.contains_key(domain) {
+            Some(TaskSetRegistryHandle {
+                registry: self,
+                domain: domain.to_string(),
+            })
+        } else {
+            None
         }
-        total
     }
 
-    pub async fn all_stats(&self) -> Vec<(String, TaskSetStats)> {
-        let domain_actors: Vec<_> = {
-            let domains = self.domains.lock().unwrap();
-            domains
-                .iter()
-                .map(|(name, actor)| {
-                    (
-                        name.clone(),
-                        TaskSetActor {
-                            sender: actor.sender.clone(),
-                            domain: actor.domain.clone(),
-                        },
-                    )
-                })
-                .collect()
-        };
-
-        let mut stats = Vec::new();
-        for (name, actor) in domain_actors {
-            if let Ok(actor_stats) = actor.stats().await {
-                stats.push((name, actor_stats));
-            }
-        }
-        stats
+    pub fn total_tasks(&self) -> usize {
+        let domains = self.domains.lock().unwrap();
+        domains.values().map(|taskset| taskset.len()).sum()
     }
 
-    /// Track that a task has been dispatched to a shepherd
+    pub fn all_stats(&self) -> Vec<(String, TaskSetStats)> {
+        let domains = self.domains.lock().unwrap();
+        domains
+            .iter()
+            .map(|(name, taskset)| (name.clone(), taskset.stats()))
+            .collect()
+    }
+
     pub fn track_task_dispatch(&self, task_id: Uuid, shepherd_uuid: Uuid) {
         self.task_to_shepherd.insert(task_id, shepherd_uuid);
         self.shepherd_tasks
@@ -595,7 +426,6 @@ impl TaskSetRegistry {
         log::debug!("Tracked task {task_id} dispatched to shepherd {shepherd_uuid}");
     }
 
-    /// Remove task from shepherd tracking (when task completes)
     pub fn untrack_task(&self, task_id: Uuid) {
         if let Some((_, shepherd_uuid)) = self.task_to_shepherd.remove(&task_id) {
             if let Some(mut tasks) = self.shepherd_tasks.get_mut(&shepherd_uuid) {
@@ -609,7 +439,6 @@ impl TaskSetRegistry {
         }
     }
 
-    /// Get all tasks assigned to a shepherd
     pub fn get_shepherd_tasks(&self, shepherd_uuid: Uuid) -> Vec<Uuid> {
         self.shepherd_tasks
             .get(&shepherd_uuid)
@@ -617,7 +446,6 @@ impl TaskSetRegistry {
             .unwrap_or_default()
     }
 
-    /// Generate failure events for all tasks from a dead shepherd (events only, no TaskSet updates)
     pub async fn generate_shepherd_failure_events(
         &self,
         shepherd_uuid: Uuid,
@@ -634,11 +462,9 @@ impl TaskSetRegistry {
 
         for task_id in task_ids {
             // Use existing find_task method to get task details and determine domain
-            if let Some(task) = self.find_task(task_id).await {
+            if let Some(task) = self.find_task(task_id) {
                 // Find which domain contains this task
-                if let Some(domain_actor) = self.get_domain_for_task(task_id).await {
-                    let domain = domain_actor.domain().to_string();
-
+                if let Some(domain) = self.get_domain_for_task(task_id) {
                     // Create failure event
                     let event_metadata = serde_json::json!({
                         "task_id": task_id,
@@ -659,7 +485,6 @@ impl TaskSetRegistry {
                         metadata: event_metadata,
                     };
 
-                    // Write failure event only (no TaskSet updates)
                     if let Err(e) = event_stream.write_event(event_record).await {
                         log::error!("Failed to write task failure event for {task_id}: {e}");
                         continue;
@@ -667,7 +492,6 @@ impl TaskSetRegistry {
 
                     failed_task_ids.push(task_id);
 
-                    // Remove from tracking immediately (no need to wait for scheduler)
                     self.untrack_task(task_id);
                 }
             }
@@ -676,7 +500,6 @@ impl TaskSetRegistry {
         Ok(failed_task_ids)
     }
 
-    /// Fail all tasks from a dead shepherd (DEPRECATED - use generate_shepherd_failure_events)
     pub async fn fail_shepherd_tasks(
         &self,
         shepherd_uuid: Uuid,
@@ -691,11 +514,9 @@ impl TaskSetRegistry {
 
         for task_id in task_ids {
             // Use existing find_task method to get task details and determine domain
-            if let Some(task) = self.find_task(task_id).await {
+            if let Some(task) = self.find_task(task_id) {
                 // Find which domain contains this task
-                if let Some(domain_actor) = self.get_domain_for_task(task_id).await {
-                    let domain = domain_actor.domain().to_string();
-
+                if let Some(domain) = self.get_domain_for_task(task_id) {
                     // Create failure event
                     let event_metadata = serde_json::json!({
                         "task_id": task_id,
@@ -716,21 +537,18 @@ impl TaskSetRegistry {
                         metadata: event_metadata,
                     };
 
-                    // Write failure event first
                     if let Err(e) = event_stream.write_event(event_record).await {
                         log::error!("Failed to write task failure event for {task_id}: {e}");
                         continue;
                     }
 
-                    // Placeholder for task failure handling in domain actor
                     if let Err(e) = self
-                        .handle_task_failure(&domain_actor, task_id, "shepherd_crashed")
+                        .handle_task_failure(&domain, task_id, "shepherd_crashed")
                         .await
                     {
                         log::error!("Failed to update TaskSet for failed task {task_id}: {e}");
                     }
 
-                    // Remove from tracking
                     self.untrack_task(task_id);
                 }
             }
@@ -739,35 +557,16 @@ impl TaskSetRegistry {
         Ok(())
     }
 
-    /// Helper to get domain actor for a specific task
-    async fn get_domain_for_task(&self, task_id: Uuid) -> Option<TaskSetActor> {
-        let domain_actors: Vec<_> = {
-            let domains = self.domains.lock().unwrap();
-            domains
-                .values()
-                .map(|actor| TaskSetActor {
-                    sender: actor.sender.clone(),
-                    domain: actor.domain.clone(),
-                })
-                .collect()
-        };
-
-        for actor in domain_actors {
-            if let Ok(Some(_)) = actor.get_task(task_id).await {
-                return Some(actor);
-            }
-        }
-        None
-    }
+    // get_domain_for_task method already defined above
 
     /// Placeholder method for handling task failure
     async fn handle_task_failure(
         &self,
-        _domain_actor: &TaskSetActor,
+        domain: &str,
         task_id: Uuid,
         failure_reason: &str,
     ) -> Result<()> {
-        log::info!("Task {task_id} failed due to: {failure_reason}");
+        log::info!("Task {task_id} in domain {domain} failed due to: {failure_reason}");
         // TODO: Update task status, handle retry logic integration with scheduler
         // For now, just log the failure
         Ok(())
@@ -834,22 +633,21 @@ impl TaskSetRegistry {
             })
             .collect();
 
-        let mut domain_actors = HashMap::new();
+        let mut domain_map = HashMap::new();
         for task_set in domain_task_sets {
             let domain_name = task_set.domain().to_string();
-            let actor = TaskSetActor::from_taskset(task_set);
-            domain_actors.insert(domain_name, actor);
+            domain_map.insert(domain_name, task_set);
         }
 
         {
             let mut domains_guard = self.domains.lock().unwrap();
-            *domains_guard = domain_actors;
+            *domains_guard = domain_map;
         }
 
         // TODO: Reconstruct shepherd assignments from unconsumed events
         // This will replay events after the last materialization to rebuild shepherd tracking state
 
-        log::info!("Successfully loaded {} domains.", self.len());
+        log::info!("Successfully loaded {} domains.", self.domain_count());
         Ok(())
     }
 
