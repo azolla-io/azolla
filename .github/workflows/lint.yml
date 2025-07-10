@@ -5,7 +5,7 @@ permissions:
 
 on:
   push:
-    branches: [ main ]
+    branches: [ "main" ]
   pull_request:
 
 env:
@@ -34,12 +34,13 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: "lint-cache"
+          shared-key: "lint"
           cache-targets: true
           cache-all-crates: true
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y protobuf-compiler
+      - name: Cache apt packages
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: protobuf-compiler libssl-dev pkg-config
+          version: 1.0
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings

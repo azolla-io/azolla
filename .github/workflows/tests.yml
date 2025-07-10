@@ -42,7 +42,7 @@ jobs:
     - name: Cache Rust dependencies
       uses: Swatinem/rust-cache@v2
       with:
-        shared-key: "test-cache"
+        shared-key: "tests"
         cache-targets: true
         cache-all-crates: true
     
@@ -53,15 +53,7 @@ jobs:
     - name: Build
       run: cargo build --verbose
     
-    - name: Cache cargo-tarpaulin
-      uses: actions/cache@v4
-      id: cache-tarpaulin
-      with:
-        path: ~/.cargo/bin/cargo-tarpaulin
-        key: ${{ runner.os }}-cargo-tarpaulin-${{ env.TARPAULIN_VERSION }}
-    
     - name: Install cargo-tarpaulin
-      if: steps.cache-tarpaulin.outputs.cache-hit != 'true'
       run: cargo install cargo-tarpaulin --version ${{ env.TARPAULIN_VERSION }}
     
     - name: Run tests with coverage
