@@ -433,10 +433,21 @@ impl SchedulerState {
     }
 
     /// Dispatch task to shepherd using ClusterService
-    async fn dispatch_task(&self, task_id: Uuid, _task: &Task, shepherd_id: Uuid) -> Result<()> {
-        info!(
-            "Dispatching task {task_id} to shepherd {shepherd_id} (TODO: implement actual dispatch)"
-        );
+    async fn dispatch_task(&self, task_id: Uuid, task: &Task, shepherd_id: Uuid) -> Result<()> {
+        info!("Dispatching task {task_id} to shepherd {shepherd_id}");
+
+        let task_dispatch = crate::orchestrator::shepherd_manager::TaskDispatch {
+            task_id,
+            task_name: task.name.clone(),
+            args: task.args.clone(),
+            kwargs: task.kwargs.to_string(),
+            memory_limit: None, // memory_limit not available in Task struct
+            cpu_limit: None,    // cpu_limit not available in Task struct
+        };
+
+        self.shepherd_manager
+            .dispatch_task_to_shepherd(shepherd_id, task_dispatch)
+            .await?;
 
         Ok(())
     }
