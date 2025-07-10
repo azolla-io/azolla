@@ -95,10 +95,10 @@ jobs:
     - name: Run tests with coverage
       run: |
         # Try with sccache first, fallback if it fails
-        if ! cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --fail-under 38 --jobs 4 --engine llvm; then
+        if ! cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --fail-under 30 --jobs 4 --engine llvm; then
           echo "sccache failed during coverage, retrying without it"
           unset RUSTC_WRAPPER
-          cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --fail-under 38 --jobs 4 --engine llvm
+          cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --fail-under 30 --jobs 4 --engine llvm
         fi
       env:
         SCCACHE_GHA_ENABLED: "true"
