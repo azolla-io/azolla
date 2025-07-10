@@ -1,9 +1,16 @@
 name: Test
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [ "main" ]
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -71,7 +78,7 @@ jobs:
       timeout-minutes: 15
     
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v4
+      uses: codecov/codecov-action@v5
       with:
         file: ./cobertura.xml
         token: ${{ secrets.CODECOV_TOKEN }}
