@@ -1,13 +1,20 @@
 name: Test
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [ "main" ]
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
-  TARPAULIN_VERSION: "0.27.1"
+  TARPAULIN_VERSION: "0.32.8"
 
 jobs:
   test-and-coverage:
@@ -31,55 +38,28 @@ jobs:
     - uses: actions/checkout@v4
     
     - name: Cache apt packages
-      uses: actions/cache@v4
-      id: cache-apt
+      uses: awalsh128/cache-apt-pkgs-action@latest
       with:
-        path: /var/cache/apt
-        key: ${{ runner.os }}-apt-${{ hashFiles('.github/workflows/tests.yml') }}
-        restore-keys: |
-          ${{ runner.os }}-apt-
-    
-    - name: Install system dependencies
-      if: steps.cache-apt.outputs.cache-hit != 'true'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
+        packages: protobuf-compiler libssl-dev pkg-config
+        version: 1.0
     
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
     
-    - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.6
-    
-    - name: Cache cargo dependencies
-      uses: actions/cache@v4
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
       with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/*.rs') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
-          ${{ runner.os }}-cargo-
+        shared-key: "tests"
+        cache-targets: true
+        cache-all-crates: true
     
     - name: Set up database environment
       run: |
         echo "DATABASE_URL=postgres://postgres:postgres@localhost:5432/azolla_test" >> $GITHUB_ENV
     
     - name: Build
-      run: |
-        # Try with sccache first, fallback to regular build if it fails
-        if ! cargo build --verbose; then
-          echo "sccache failed, falling back to regular build"
-          unset RUSTC_WRAPPER
-          cargo build --verbose
-        fi
-      env:
-        SCCACHE_GHA_ENABLED: "true"
-        RUSTC_WRAPPER: "sccache"
+      run: cargo build --verbose
+      timeout-minutes: 10
     
     - name: Cache cargo-tarpaulin
       uses: actions/cache@v4
@@ -91,21 +71,14 @@ jobs:
     - name: Install cargo-tarpaulin
       if: steps.cache-tarpaulin.outputs.cache-hit != 'true'
       run: cargo install cargo-tarpaulin --version ${{ env.TARPAULIN_VERSION }}
+      timeout-minutes: 10
     
     - name: Run tests with coverage
-      run: |
-        # Try with sccache first, fallback if it fails
-        if ! cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --fail-under 30 --jobs 4 --engine llvm; then
-          echo "sccache failed during coverage, retrying without it"
-          unset RUSTC_WRAPPER
-          cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --fail-under 30 --jobs 4 --engine llvm
-        fi
-      env:
-        SCCACHE_GHA_ENABLED: "true"
-        RUSTC_WRAPPER: "sccache"
+      run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --fail-under 30 --jobs 4 --engine llvm
+      timeout-minutes: 15
     
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v4
+      uses: codecov/codecov-action@v5
       with:
         file: ./cobertura.xml
         token: ${{ secrets.CODECOV_TOKEN }}

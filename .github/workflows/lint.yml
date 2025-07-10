@@ -5,8 +5,12 @@ permissions:
 
 on:
   push:
-    branches: [ main ]
+    branches: [ "main" ]
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,8 +24,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "fmt"
+          cache-targets: false
+          cache-all-crates: false
       - name: Check formatting
         run: cargo fmt --check
+        timeout-minutes: 5
 
   clippy:
     name: Clippy
@@ -31,10 +42,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y protobuf-compiler
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "lint"
+          cache-targets: true
+          cache-all-crates: true
+      - name: Cache apt packages
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: protobuf-compiler
+          version: 1.0
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
+        timeout-minutes: 10
