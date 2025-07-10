@@ -49,34 +49,25 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
     
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.6
+      uses: mozilla-actions/sccache-action@v0.0.7
     
-    - name: Cache cargo dependencies
+    - name: Cache cargo registry
       uses: actions/cache@v4
       with:
         path: |
-          ~/.cargo/bin/
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/*.rs') }}
+        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
-          ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-
-          ${{ runner.os }}-cargo-
+          ${{ runner.os }}-cargo-registry-
     
     - name: Set up database environment
       run: |
         echo "DATABASE_URL=postgres://postgres:postgres@localhost:5432/azolla_test" >> $GITHUB_ENV
     
     - name: Build
-      run: |
-        # Try with sccache first, fallback to regular build if it fails
-        if ! cargo build --verbose; then
-          echo "sccache failed, falling back to regular build"
-          unset RUSTC_WRAPPER
-          cargo build --verbose
-        fi
+      run: cargo build --verbose
       env:
         SCCACHE_GHA_ENABLED: "true"
         RUSTC_WRAPPER: "sccache"
@@ -93,13 +84,7 @@ jobs:
       run: cargo install cargo-tarpaulin --version ${{ env.TARPAULIN_VERSION }}
     
     - name: Run tests with coverage
-      run: |
-        # Try with sccache first, fallback if it fails
-        if ! cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --fail-under 30 --jobs 4 --engine llvm; then
-          echo "sccache failed during coverage, retrying without it"
-          unset RUSTC_WRAPPER
-          cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --fail-under 30 --jobs 4 --engine llvm
-        fi
+      run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --fail-under 30 --jobs 4 --engine llvm
       env:
         SCCACHE_GHA_ENABLED: "true"
         RUSTC_WRAPPER: "sccache"
