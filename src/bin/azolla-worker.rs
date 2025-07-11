@@ -71,6 +71,7 @@ async fn main() -> Result<()> {
     let kwargs: Value = serde_json::from_str(kwargs_json)
         .map_err(|e| anyhow::anyhow!("Invalid kwargs JSON: {e}"))?;
 
+    // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
     info!("Worker starting: task_id={task_uuid}, name={task_name}, shepherd={shepherd_endpoint}");
     info!("Task args: {args}, kwargs: {kwargs}");
 

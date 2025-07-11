@@ -144,6 +144,7 @@ async fn handle_shepherd_connection(
     }
 
     if let Some(uuid) = shepherd_uuid {
+        // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
         info!("Shepherd {uuid} connection dropped, marking as temporarily unavailable");
         shepherd_manager.mark_shepherd_disconnected(uuid);
     }
@@ -258,6 +259,7 @@ async fn handle_task_result_message(
         let task_id = Uuid::parse_str(&task_result.task_id)
             .map_err(|e| anyhow::anyhow!("Invalid task ID in result: {}", e))?;
 
+        // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
         info!("Received result for task {task_id} from shepherd {uuid}");
 
         // TODO: Need to determine the domain for this task

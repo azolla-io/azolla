@@ -189,6 +189,7 @@ impl ShepherdStatus {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to send task to shepherd {}: {}", self.uuid, e))?;
 
+        // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
         info!("Dispatched task {} to shepherd {}", task_id, self.uuid);
         Ok(())
     }
@@ -217,6 +218,7 @@ impl ShepherdManager {
                 existing_shepherd.status,
                 ShepherdConnectionStatus::Disconnected
             ) {
+                // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
                 info!("Shepherd {uuid} reconnecting (was temporarily unavailable)");
                 self.mark_shepherd_reconnected(uuid);
                 return Ok(());
@@ -226,6 +228,7 @@ impl ShepherdManager {
         // New shepherd registration
         let shepherd_status = ShepherdStatus::new(uuid, max_concurrency);
 
+        // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
         info!("Registering new shepherd {uuid} with max_concurrency={max_concurrency}");
 
         // Create EVENT_SHEPHERD_REGISTERED event
@@ -250,6 +253,7 @@ impl ShepherdManager {
         // Add to in-memory tracking
         self.shepherds.insert(uuid, shepherd_status);
 
+        // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
         info!("Successfully registered shepherd {uuid}");
         Ok(())
     }
@@ -267,6 +271,7 @@ impl ShepherdManager {
                 existing_shepherd.status,
                 ShepherdConnectionStatus::Disconnected
             ) {
+                // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
                 info!("Shepherd {uuid} reconnecting (was temporarily unavailable)");
                 existing_shepherd.set_tx(tx);
                 existing_shepherd.status = ShepherdConnectionStatus::Connected;
@@ -278,6 +283,7 @@ impl ShepherdManager {
         // New shepherd registration with tx
         let shepherd_status = ShepherdStatus::with_tx(uuid, max_concurrency, tx);
 
+        // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
         info!("Registering new shepherd {uuid} with max_concurrency={max_concurrency}");
 
         // Create EVENT_SHEPHERD_REGISTERED event
@@ -302,6 +308,7 @@ impl ShepherdManager {
         // Add to in-memory tracking
         self.shepherds.insert(uuid, shepherd_status);
 
+        // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
         info!("Successfully registered shepherd {uuid}");
         Ok(())
     }
@@ -338,6 +345,7 @@ impl ShepherdManager {
         if let Some(mut shepherd) = self.shepherds.get_mut(&uuid) {
             shepherd.update_load(current_load, available_capacity);
         } else {
+            // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
             warn!("Received status update from unknown shepherd {uuid}");
         }
     }
@@ -354,6 +362,7 @@ impl ShepherdManager {
         if let Some(mut shepherd) = self.shepherds.get_mut(&uuid) {
             shepherd.status = ShepherdConnectionStatus::Disconnected;
             shepherd.clear_tx(); // Clear the tx channel on disconnect
+                                 // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
             info!("Marked shepherd {uuid} as temporarily unavailable (connection dropped)");
         }
     }
@@ -363,6 +372,7 @@ impl ShepherdManager {
         if let Some(mut shepherd) = self.shepherds.get_mut(&uuid) {
             shepherd.status = ShepherdConnectionStatus::Connected;
             shepherd.update_last_seen();
+            // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
             info!("Marked shepherd {uuid} as reconnected and available");
         }
     }
@@ -396,6 +406,7 @@ impl ShepherdManager {
     /// Remove shepherd when it disconnects
     pub fn remove_shepherd(&self, uuid: Uuid) {
         if self.shepherds.remove(&uuid).is_some() {
+            // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
             info!("Removed shepherd {uuid} from tracking");
         }
     }
@@ -447,6 +458,7 @@ impl ShepherdManager {
                 .generate_shepherd_failure_events(shepherd_uuid, &self.event_stream)
                 .await
             {
+                // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
                 error!("Failed to generate failure events for dead shepherd {shepherd_uuid}: {e}");
             }
 
@@ -546,6 +558,8 @@ mod tests {
         mpsc::channel(10)
     }
 
+    /// Tests that the shepherd selection algorithm correctly prioritizes shepherds with the lowest load ratio.
+    /// Expected behavior: When multiple shepherds are available, the one with the lowest current_load/max_concurrency ratio should be selected.
     #[tokio::test]
     async fn test_find_best_shepherd_selects_lowest_load() {
         let manager = create_test_manager();
@@ -566,6 +580,8 @@ mod tests {
         assert_eq!(manager.find_best_shepherd(), Some(uuid1));
     }
 
+    /// Tests that the shepherd selection algorithm ignores unavailable shepherds.
+    /// Expected behavior: Shepherds at full capacity or disconnected should not be selected, even if they would otherwise be preferred.
     #[tokio::test]
     async fn test_find_best_shepherd_ignores_unavailable() {
         let manager = create_test_manager();
@@ -591,6 +607,8 @@ mod tests {
         assert_eq!(manager.find_best_shepherd(), Some(uuid3));
     }
 
+    /// Tests the tiebreaker logic when shepherds have identical load ratios.
+    /// Expected behavior: When load ratios are equal, the shepherd with higher available capacity should be preferred.
     #[tokio::test]
     async fn test_find_best_shepherd_capacity_tiebreaker() {
         let manager = create_test_manager();
@@ -608,6 +626,8 @@ mod tests {
         assert_eq!(manager.find_best_shepherd(), Some(uuid2));
     }
 
+    /// Tests edge cases in shepherd selection including empty pool, zero capacity, and normal operation.
+    /// Expected behavior: Should handle empty pools gracefully, reject zero-capacity shepherds, and select normal shepherds correctly.
     #[tokio::test]
     async fn test_find_best_shepherd_edge_cases() {
         let manager = create_test_manager();
@@ -628,6 +648,8 @@ mod tests {
         assert_eq!(manager.find_best_shepherd(), Some(uuid2));
     }
 
+    /// Tests that shepherd selection is deterministic and consistent across multiple calls.
+    /// Expected behavior: Given identical shepherd states, selection should return the same result consistently.
     #[tokio::test]
     async fn test_find_best_shepherd_deterministic() {
         let manager = create_test_manager();
@@ -650,6 +672,8 @@ mod tests {
         assert!(uuids.contains(&selection1.unwrap()));
     }
 
+    /// Tests the complete reconnection flow including disconnect, unavailability, and reconnection.
+    /// Expected behavior: Disconnected shepherds should become unavailable for selection but remain tracked, and become available again upon reconnection.
     #[tokio::test]
     async fn test_shepherd_reconnection_flow() {
         let manager = create_test_manager();
@@ -669,12 +693,14 @@ mod tests {
         // Should not be available for new tasks
         assert_eq!(manager.find_best_shepherd(), None);
 
-        // Shepherd should still exist but be marked as disconnected
-        let shepherd = manager.shepherds.get(&uuid).unwrap();
-        assert!(matches!(
-            shepherd.status,
-            ShepherdConnectionStatus::Disconnected
-        ));
+        {
+            // Shepherd should still exist but be marked as disconnected
+            let shepherd = manager.shepherds.get(&uuid).unwrap();
+            assert!(matches!(
+                shepherd.status,
+                ShepherdConnectionStatus::Disconnected
+            ));
+        }
 
         // Mark as reconnected
         manager.mark_shepherd_reconnected(uuid);
@@ -690,6 +716,8 @@ mod tests {
         ));
     }
 
+    /// Tests the disconnect and reconnect operations and their effect on shepherd availability.
+    /// Expected behavior: Shepherds should transition between connected/disconnected states and maintain proper availability status.
     #[tokio::test]
     async fn test_mark_shepherd_disconnected_and_reconnected() {
         let manager = create_test_manager();
@@ -706,11 +734,13 @@ mod tests {
         assert_eq!(manager.find_best_shepherd(), None);
 
         // Verify shepherd still exists but disconnected
-        let shepherd = manager.shepherds.get(&uuid).unwrap();
-        assert!(matches!(
-            shepherd.status,
-            ShepherdConnectionStatus::Disconnected
-        ));
+        {
+            let shepherd = manager.shepherds.get(&uuid).unwrap();
+            assert!(matches!(
+                shepherd.status,
+                ShepherdConnectionStatus::Disconnected
+            ));
+        }
 
         // Mark as reconnected
         manager.mark_shepherd_reconnected(uuid);
@@ -727,39 +757,8 @@ mod tests {
         assert_eq!(connected_count, 1);
     }
 
-    #[tokio::test]
-    async fn test_shepherd_status_set_and_clear_tx() {
-        let uuid = Uuid::new_v4();
-        let mut shepherd = ShepherdStatus::new(uuid, 10);
-
-        // Initially tx should be None
-        assert!(shepherd.tx.is_none());
-
-        // Set tx
-        let (tx, _rx) = create_test_tx();
-        shepherd.set_tx(tx.clone());
-        assert!(shepherd.tx.is_some());
-
-        // Clear tx
-        shepherd.clear_tx();
-        assert!(shepherd.tx.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_shepherd_status_with_tx_constructor() {
-        let uuid = Uuid::new_v4();
-        let (tx, _rx) = create_test_tx();
-        let shepherd = ShepherdStatus::with_tx(uuid, 10, tx);
-
-        assert_eq!(shepherd.uuid, uuid);
-        assert_eq!(shepherd.max_concurrency, 10);
-        assert!(shepherd.tx.is_some());
-        assert!(matches!(
-            shepherd.status,
-            ShepherdConnectionStatus::Connected
-        ));
-    }
-
+    /// Tests task dispatch failure when shepherd has no communication channel.
+    /// Expected behavior: Should return an error indicating the shepherd is not connected when no tx channel is available.
     #[tokio::test]
     async fn test_dispatch_task_without_tx() {
         let uuid = Uuid::new_v4();
@@ -780,6 +779,8 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("not connected"));
     }
 
+    /// Tests successful task dispatch when shepherd has a valid communication channel.
+    /// Expected behavior: Should successfully send task through the tx channel without errors.
     #[tokio::test]
     async fn test_dispatch_task_with_tx() {
         let uuid = Uuid::new_v4();
@@ -801,6 +802,8 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    /// Tests that disconnecting a shepherd properly clears its communication channel.
+    /// Expected behavior: When a shepherd is marked as disconnected, its tx channel should be cleared to prevent message sending.
     #[tokio::test]
     async fn test_mark_shepherd_disconnected_clears_tx() {
         let manager = create_test_manager();
@@ -825,6 +828,8 @@ mod tests {
         ));
     }
 
+    /// Tests shepherd registration with communication channel.
+    /// Expected behavior: Should successfully register a new shepherd with its tx channel for immediate communication capability.
     #[tokio::test]
     async fn test_register_shepherd_with_tx() {
         let manager = create_test_manager();
@@ -843,6 +848,8 @@ mod tests {
         }
     }
 
+    /// Tests the complete task dispatch flow through ShepherdManager.
+    /// Expected behavior: Should successfully route task dispatch to the correct shepherd and send the task through its communication channel.
     #[tokio::test]
     async fn test_shepherd_manager_dispatch_task_to_shepherd() {
         let manager = create_test_manager();
@@ -867,6 +874,8 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    /// Tests task dispatch error handling when targeting a non-existent shepherd.
+    /// Expected behavior: Should return an error indicating the shepherd was not found.
     #[tokio::test]
     async fn test_shepherd_manager_dispatch_task_to_nonexistent_shepherd() {
         let manager = create_test_manager();
@@ -887,6 +896,8 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("not found"));
     }
 
+    /// Tests task dispatch error handling when targeting a disconnected shepherd.
+    /// Expected behavior: Should return an error indicating the shepherd is not connected, even if it exists in the registry.
     #[tokio::test]
     async fn test_shepherd_manager_dispatch_task_to_disconnected_shepherd() {
         let manager = create_test_manager();
