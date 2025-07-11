@@ -56,6 +56,7 @@ impl StreamHandler {
     }
 
     pub async fn start(mut self) -> Result<()> {
+        // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
         info!("Starting stream handler for shepherd {}", self.config.uuid);
 
         let mut retry_count = 0;
