@@ -71,6 +71,7 @@ impl TaskManager {
     }
 
     pub async fn start(mut self) -> Result<()> {
+        // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
         info!("Starting task manager for shepherd {}", self.config.uuid);
 
         loop {
