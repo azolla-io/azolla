@@ -144,6 +144,7 @@ async fn handle_shepherd_connection(
     }
 
     if let Some(uuid) = shepherd_uuid {
+        // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
         info!("Shepherd {uuid} connection dropped, marking as temporarily unavailable");
         shepherd_manager.mark_shepherd_disconnected(uuid);
     }
@@ -156,11 +157,11 @@ async fn handle_client_message(
     shepherd_uuid: &mut Option<Uuid>,
     shepherd_manager: &Arc<ShepherdManager>,
     scheduler_registry: &Arc<crate::orchestrator::scheduler::SchedulerRegistry>,
-    _tx: &mpsc::Sender<Result<ServerMsg, tonic::Status>>,
+    tx: &mpsc::Sender<Result<ServerMsg, tonic::Status>>,
 ) -> Result<()> {
     match client_msg.kind {
         Some(client_msg::Kind::Hello(hello)) => {
-            handle_hello_message(hello, shepherd_uuid, shepherd_manager).await?;
+            handle_hello_message(hello, shepherd_uuid, shepherd_manager, tx).await?;
         }
         Some(client_msg::Kind::Ack(ack)) => {
             handle_ack_message(ack, shepherd_uuid, shepherd_manager).await?;
@@ -189,6 +190,7 @@ async fn handle_hello_message(
     hello: Hello,
     shepherd_uuid: &mut Option<Uuid>,
     shepherd_manager: &Arc<ShepherdManager>,
+    tx: &mpsc::Sender<Result<ServerMsg, tonic::Status>>,
 ) -> Result<()> {
     let uuid = Uuid::parse_str(&hello.shepherd_uuid)
         .map_err(|e| anyhow::anyhow!("Invalid shepherd UUID: {}", e))?;
@@ -199,7 +201,7 @@ async fn handle_hello_message(
     );
 
     shepherd_manager
-        .register_shepherd(uuid, hello.max_concurrency)
+        .register_shepherd_with_tx(uuid, hello.max_concurrency, tx.clone())
         .await?;
     *shepherd_uuid = Some(uuid);
 
@@ -257,6 +259,7 @@ async fn handle_task_result_message(
         let task_id = Uuid::parse_str(&task_result.task_id)
             .map_err(|e| anyhow::anyhow!("Invalid task ID in result: {}", e))?;
 
+        // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
         info!("Received result for task {task_id} from shepherd {uuid}");
 
         // TODO: Need to determine the domain for this task
@@ -290,37 +293,6 @@ async fn handle_task_result_message(
     } else {
         warn!("Received task result from unregistered shepherd");
     }
-
-    Ok(())
-}
-
-// TODO: Task dispatch functionality
-// This will be called by the scheduler component to send tasks to shepherds
-pub async fn dispatch_task_to_shepherd(
-    tx: &mpsc::Sender<Result<ServerMsg, tonic::Status>>,
-    task_id: Uuid,
-    task_name: String,
-    args: Vec<String>,
-    kwargs: String,
-    memory_limit: Option<u64>,
-    cpu_limit: Option<u32>,
-) -> Result<()> {
-    let task = common::Task {
-        task_id: task_id.to_string(),
-        name: task_name,
-        args,
-        kwargs,
-        memory_limit,
-        cpu_limit,
-    };
-
-    let server_msg = orchestrator::ServerMsg {
-        kind: Some(orchestrator::server_msg::Kind::Task(task)),
-    };
-
-    tx.send(Ok(server_msg))
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to send task to shepherd: {}", e))?;
 
     Ok(())
 }
