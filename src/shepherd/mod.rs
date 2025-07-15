@@ -14,7 +14,7 @@ pub use task_manager::{TaskInfo, TaskManager, TaskManagerStats, TaskStatus};
 pub use worker_service::{start_worker_service, TaskResultMessage, WorkerService};
 
 /// Handle to control a running shepherd instance
-pub struct ShepherdHandle {
+pub struct ShepherdInstance {
     pub config: ShepherdConfig,
     pub shutdown_tx: watch::Sender<bool>,
     pub current_load: Arc<std::sync::atomic::AtomicU32>,
@@ -23,7 +23,7 @@ pub struct ShepherdHandle {
     pub task_manager_handle: tokio::task::JoinHandle<()>,
 }
 
-impl ShepherdHandle {
+impl ShepherdInstance {
     pub fn get_current_load(&self) -> u32 {
         self.current_load.load(std::sync::atomic::Ordering::Relaxed)
     }
@@ -44,7 +44,7 @@ impl ShepherdHandle {
 }
 
 /// Start a shepherd instance with the given configuration
-pub async fn start_shepherd(config: ShepherdConfig) -> Result<ShepherdHandle> {
+pub async fn start_shepherd(config: ShepherdConfig) -> Result<ShepherdInstance> {
     log::info!(
         "Starting Azolla Shepherd {} with config: {:?}",
         config.uuid,
@@ -106,10 +106,7 @@ pub async fn start_shepherd(config: ShepherdConfig) -> Result<ShepherdHandle> {
         })
     };
 
-    // Wait for components to be ready
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-    Ok(ShepherdHandle {
+    Ok(ShepherdInstance {
         config,
         shutdown_tx,
         current_load,

@@ -5,6 +5,7 @@ pub mod engine;
 pub mod event_stream;
 pub mod scheduler;
 pub mod shepherd_manager;
+pub mod startup;
 pub mod taskset;
 
 // Re-export commonly used items
@@ -12,3 +13,4 @@ pub use client_service::ClientServiceImpl;
 pub use cluster_service::ClusterServiceImpl;
 pub use engine::Engine;
 pub use scheduler::{SchedulerActor, SchedulerConfig, SchedulerRegistry};
+pub use startup::{OrchestratorBuilder, OrchestratorInstance};

@@ -1,18 +1,13 @@
 use anyhow::Result;
 use std::time::Duration;
 use tokio::sync::watch;
-use tonic::transport::{Channel, Server};
+use tonic::transport::Channel;
 use uuid::Uuid;
 
-use crate::orchestrator::client_service::ClientServiceImpl;
-use crate::orchestrator::cluster_service::ClusterServiceImpl;
-use crate::orchestrator::db::{
-    create_pool, run_migrations, Database, EventStream, Server as DbServer, Settings,
-};
+use crate::orchestrator::db::{Database, EventStream, Server as DbServer, Settings};
 use crate::orchestrator::engine::Engine;
-use crate::orchestrator::event_stream::EventStreamConfig;
+use crate::orchestrator::startup::OrchestratorBuilder;
 use crate::proto::orchestrator::client_service_client::ClientServiceClient;
-use crate::proto::orchestrator::client_service_server::ClientServiceServer;
 use crate::proto::orchestrator::cluster_service_client::ClusterServiceClient;
 use crate::proto::orchestrator::CreateTaskRequest;
 use crate::shepherd::{start_shepherd, ShepherdConfig};
@@ -23,7 +18,7 @@ use testcontainers::{
     ContainerAsync, GenericImage, ImageExt,
 };
 
-pub struct TestHarness {
+pub struct IntegrationTestEnvironment {
     pub orchestrator_addr: String,
     pub shepherd_config: ShepherdConfig,
     pub client: ClientServiceClient<Channel>,
@@ -32,7 +27,7 @@ pub struct TestHarness {
 
     // Component handles for lifecycle management
     orchestrator_handle: Option<tokio::task::JoinHandle<Result<(), tonic::transport::Error>>>,
-    shepherd_handles: Vec<crate::shepherd::ShepherdHandle>,
+    shepherd_handles: Vec<crate::shepherd::ShepherdInstance>,
     shutdown_tx: Option<watch::Sender<bool>>,
 
     // Database container for cleanup
@@ -40,12 +35,12 @@ pub struct TestHarness {
     db_container: ContainerAsync<GenericImage>,
 }
 
-impl TestHarness {
+impl IntegrationTestEnvironment {
     pub async fn new() -> Result<Self> {
-        Self::with_config(TestHarnessConfig::default()).await
+        Self::with_config(IntegrationTestConfig::default()).await
     }
 
-    pub async fn with_config(config: TestHarnessConfig) -> Result<Self> {
+    pub async fn with_config(config: IntegrationTestConfig) -> Result<Self> {
         // Start database container
         let db_container = GenericImage::new("postgres", "16-alpine")
             .with_wait_for(WaitFor::message_on_stderr(
@@ -76,40 +71,18 @@ impl TestHarness {
             event_stream: EventStream::default(),
         };
 
-        let pool = create_pool(&settings)?;
-        run_migrations(&pool).await?;
-
-        // Create orchestrator engine
-        let event_stream_config = EventStreamConfig::from(&settings.event_stream);
-        let engine = Engine::new(pool, event_stream_config);
-        engine.initialize().await?;
+        // Build orchestrator using the abstraction
+        let orchestrator = OrchestratorBuilder::new(settings).build().await?;
+        let engine = orchestrator.engine().clone();
 
         // Start orchestrator server
         let orchestrator_addr = format!("127.0.0.1:{}", config.orchestrator_port);
-        let client_service = ClientServiceImpl::new(engine.clone());
-        let cluster_service = ClusterServiceImpl::new(engine.clone());
-
-        let client_grpc_server = ClientServiceServer::new(client_service);
-        let cluster_grpc_server = cluster_service.into_server();
-
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let orchestrator_handle = {
             let addr = orchestrator_addr.parse()?;
-            let shutdown_rx = shutdown_rx.clone();
-
-            tokio::spawn(async move {
-                let shutdown_future = async move {
-                    let mut rx = shutdown_rx;
-                    rx.changed().await.ok();
-                };
-
-                log::info!("Starting orchestrator server on {addr}");
-                Server::builder()
-                    .add_service(client_grpc_server)
-                    .add_service(cluster_grpc_server)
-                    .serve_with_shutdown(addr, shutdown_future)
-                    .await
-            })
+            orchestrator
+                .serve_with_watch_shutdown(addr, shutdown_rx)
+                .await?
         };
 
         // Wait for orchestrator to be ready and create clients with retry
@@ -158,7 +131,7 @@ impl TestHarness {
         })
     }
 
-    pub async fn start_shepherd(&mut self) -> Result<&crate::shepherd::ShepherdHandle> {
+    pub async fn start_shepherd(&mut self) -> Result<&crate::shepherd::ShepherdInstance> {
         let config = self.shepherd_config.clone();
         let shepherd_handle = start_shepherd(config).await?;
         self.shepherd_handles.push(shepherd_handle);
@@ -300,7 +273,7 @@ impl TestHarness {
     }
 }
 
-impl Drop for TestHarness {
+impl Drop for IntegrationTestEnvironment {
     fn drop(&mut self) {
         // Attempt graceful shutdown in drop
         if self.shutdown_tx.is_some() {
@@ -310,14 +283,14 @@ impl Drop for TestHarness {
 }
 
 #[derive(Debug, Clone)]
-pub struct TestHarnessConfig {
+pub struct IntegrationTestConfig {
     pub orchestrator_port: u16,
     pub shepherd_worker_port: u16,
     pub worker_binary_path: String,
     pub max_concurrent_tasks: usize,
 }
 
-impl Default for TestHarnessConfig {
+impl Default for IntegrationTestConfig {
     fn default() -> Self {
         Self {
             orchestrator_port: find_available_port(),

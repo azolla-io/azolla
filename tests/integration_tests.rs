@@ -1,10 +1,10 @@
-use azolla::test_harness::{find_available_port, TaskTestData, TestHarness};
+use azolla::test_harness::{find_available_port, IntegrationTestEnvironment, TaskTestData};
 
 #[tokio::test]
 async fn test_task_creation_and_shepherd_startup() {
     let _ = env_logger::try_init();
 
-    let mut harness = TestHarness::new().await.unwrap();
+    let mut harness = IntegrationTestEnvironment::new().await.unwrap();
 
     // Ensure worker binary is available
     harness.ensure_worker_binary().await.unwrap();
@@ -34,7 +34,7 @@ async fn test_task_creation_and_shepherd_startup() {
 async fn test_shepherd_startup_and_registration() {
     let _ = env_logger::try_init();
 
-    let mut harness = TestHarness::new().await.unwrap();
+    let mut harness = IntegrationTestEnvironment::new().await.unwrap();
 
     // Test that shepherd starts correctly using the refactored code
     let shepherd_handle = harness.start_shepherd().await.unwrap();
@@ -61,7 +61,7 @@ async fn test_shepherd_startup_and_registration() {
 async fn test_multiple_shepherds() {
     let _ = env_logger::try_init();
 
-    let mut harness = TestHarness::new().await.unwrap();
+    let mut harness = IntegrationTestEnvironment::new().await.unwrap();
 
     // Start first shepherd
     let _shepherd1 = harness.start_shepherd().await.unwrap();
