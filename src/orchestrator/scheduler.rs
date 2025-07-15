@@ -471,11 +471,16 @@ impl SchedulerState {
             }
         };
 
-        let attempt_number = task
-            .attempts
-            .last()
-            .map(|attempt| attempt.attempt)
-            .unwrap_or(0);
+        let attempt_number = match task.attempts.last() {
+            Some(attempt) => attempt.attempt,
+            None => {
+                error!(
+                    "No attempts found for task {} when handling result in domain {}",
+                    task_id, self.domain
+                );
+                return None;
+            }
+        };
         let is_success = result.result_type.is_some()
             && matches!(
                 result.result_type.as_ref().unwrap(),
@@ -584,6 +589,8 @@ impl SchedulerState {
             };
 
             event_stream.write_event(event_record).await?;
+        } else {
+            // TODO: schedule retry based on retry policy
         }
 
         Ok(())
@@ -597,13 +604,7 @@ impl SchedulerState {
         );
 
         for task_id in affected_task_ids {
-            if let Some(task) = self.task_set.get_task(task_id).cloned() {
-                let _attempt_number = task
-                    .attempts
-                    .last()
-                    .map(|attempt| attempt.attempt)
-                    .unwrap_or(0);
-
+            if let Some(_task) = self.task_set.get_task(task_id).cloned() {
                 // Create a TaskResult for failure to use the new split approach
                 let failure_result = crate::proto::common::TaskResult {
                     task_id: task_id.to_string(),
@@ -1034,9 +1035,16 @@ mod tests {
             config,
         ));
 
-        // Create and add a task in ATTEMPT_STARTED state
+        // Create and add a task in ATTEMPT_STARTED state with a proper attempt
         let mut task = create_test_task("test_domain", json!({"max_attempts": 3}));
         task.status = TASK_STATUS_ATTEMPT_STARTED;
+        task.attempts
+            .push(crate::orchestrator::taskset::TaskAttempt {
+                attempt: 0,
+                start_time: Some(Utc::now()),
+                end_time: None,
+                status: crate::ATTEMPT_STATUS_STARTED,
+            });
         let task_id = task.id;
 
         let domain_actor = task_registry.get_or_create_domain("test_domain");
@@ -1258,6 +1266,7 @@ mod tests {
         use super::*;
         use crate::orchestrator::taskset::Task;
         use crate::proto::common::{SuccessResult, TaskResult};
+        use chrono::Utc;
 
         #[tokio::test]
         async fn test_scheduler_basic_functionality() {
@@ -1278,19 +1287,27 @@ mod tests {
             task.created_at = Utc::now();
             let task_id = task.id;
 
-            let task_set = task_registry.get_or_create_domain("test_domain");
-            task_set.upsert_task(task.clone()).await.unwrap();
+            // Simulate task being in started state (as if it was scheduled)
+            // We need to manually create an attempt since start_task requires shepherds
+            let mut updated_task = task.clone();
+            updated_task.status = TASK_STATUS_ATTEMPT_STARTED;
+            updated_task
+                .attempts
+                .push(crate::orchestrator::taskset::TaskAttempt {
+                    attempt: 0,
+                    start_time: Some(Utc::now()),
+                    end_time: None,
+                    status: crate::ATTEMPT_STATUS_STARTED,
+                });
 
-            // Get scheduler - this creates the scheduler for the domain
+            let task_set = task_registry.get_or_create_domain("test_domain");
+            task_set.upsert_task(updated_task).await.unwrap();
+
+            // Get scheduler - this creates the scheduler for the domain AFTER we add the attempt
             let scheduler = scheduler_registry.get_or_create_scheduler("test_domain");
 
             // For unit testing without actual shepherd connections, we'll test task result handling
             // In integration tests, we would test start_task() with real shepherds
-
-            // Simulate task being in started state (as if it was scheduled)
-            let mut updated_task = task.clone();
-            updated_task.status = TASK_STATUS_ATTEMPT_STARTED;
-            task_set.upsert_task(updated_task).await.unwrap();
 
             // Test task result handling
             let task_result = TaskResult {
