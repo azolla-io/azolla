@@ -120,7 +120,7 @@ impl SchedulerActor {
                         match command {
                             Some(SchedulerCommand::StartTask { task_id, respond_to }) => {
                                 match scheduler_state.decide_start_task(task_id) {
-                                    Some((task, attempt_number, shepherd_id)) => {
+                                    Some(task_start_data) => {
                                         let domain = scheduler_state.domain.clone();
                                         let shepherd_manager = scheduler_state.shepherd_manager.clone();
                                         let event_stream = scheduler_state.event_stream.clone();
@@ -128,9 +128,7 @@ impl SchedulerActor {
                                         tokio::spawn(async move {
                                             let result = SchedulerState::execute_start_task(
                                                 task_id,
-                                                task,
-                                                attempt_number,
-                                                shepherd_id,
+                                                task_start_data,
                                                 domain,
                                                 shepherd_manager,
                                                 event_stream,
@@ -305,6 +303,15 @@ impl SchedulerActor {
 }
 
 // TaskSet uses exclusive ownership (not Arc) to avoid locking overhead per domain
+struct TaskStartData {
+    task_name: String,
+    task_args: Vec<String>,
+    task_kwargs: serde_json::Value,
+    flow_instance_id: Option<Uuid>,
+    attempt_number: i32,
+    shepherd_id: Uuid,
+}
+
 struct SchedulerState {
     domain: String,
     task_set: TaskSet,
@@ -315,14 +322,14 @@ struct SchedulerState {
 
 impl SchedulerState {
     /// Fast synchronous phase: Make scheduling decisions and update TaskSet
-    fn decide_start_task(&mut self, task_id: Uuid) -> Option<(Task, i32, Uuid)> {
+    fn decide_start_task(&mut self, task_id: Uuid) -> Option<TaskStartData> {
         debug!(
             "Deciding start for task {} in domain {}",
             task_id, self.domain
         );
 
-        let task = match self.task_set.get_task(task_id) {
-            Some(task) => task.clone(),
+        let task = match self.task_set.get_task_mut(task_id) {
+            Some(task) => task,
             None => {
                 warn!("Task {} not found in domain {}", task_id, self.domain);
                 return None;
@@ -352,8 +359,7 @@ impl SchedulerState {
 
         let attempt_number = task.attempts.len() as i32;
 
-        let mut updated_task = task.clone();
-        updated_task.status = TASK_STATUS_ATTEMPT_STARTED;
+        task.status = TASK_STATUS_ATTEMPT_STARTED;
 
         let new_attempt = crate::orchestrator::taskset::TaskAttempt {
             attempt: attempt_number,
@@ -361,24 +367,27 @@ impl SchedulerState {
             end_time: None,
             status: crate::ATTEMPT_STATUS_STARTED,
         };
-        updated_task.attempts.push(new_attempt);
-
-        self.task_set.upsert_task(updated_task);
+        task.attempts.push(new_attempt);
 
         info!(
             "Scheduled task {} attempt {} to shepherd {} in domain {}",
             task_id, attempt_number, shepherd_id, self.domain
         );
 
-        Some((task, attempt_number, shepherd_id))
+        Some(TaskStartData {
+            task_name: task.name.clone(),
+            task_args: task.args.clone(),
+            task_kwargs: task.kwargs.clone(),
+            flow_instance_id: task.flow_instance_id,
+            attempt_number,
+            shepherd_id,
+        })
     }
 
     /// Slow asynchronous phase: Execute I/O operations (EventStream writes and task dispatch)
     async fn execute_start_task(
         task_id: Uuid,
-        task: Task,
-        attempt_number: i32,
-        shepherd_id: Uuid,
+        task_start_data: TaskStartData,
         domain: String,
         shepherd_manager: Arc<ShepherdManager>,
         event_stream: Arc<EventStream>,
@@ -387,9 +396,9 @@ impl SchedulerState {
 
         SchedulerState::write_attempt_started_event(
             task_id,
-            task.clone(),
-            attempt_number,
-            shepherd_id,
+            task_start_data.flow_instance_id,
+            task_start_data.attempt_number,
+            task_start_data.shepherd_id,
             &domain,
             &event_stream,
         )
@@ -398,22 +407,35 @@ impl SchedulerState {
         // TODO: handle server crash before task is actually dispatched. Options:
         // (1) Peridically checking status of dispatched tasks;
         // (2) wait until task timeout, then fail it from server side.
-        match SchedulerState::dispatch_task_to_shepherd(
+        info!(
+            "Dispatching task {task_id} to shepherd {}",
+            task_start_data.shepherd_id
+        );
+
+        let task_dispatch = crate::orchestrator::shepherd_manager::TaskDispatch {
             task_id,
-            &task,
-            shepherd_id,
-            &shepherd_manager,
-        )
-        .await
+            task_name: task_start_data.task_name,
+            args: task_start_data.task_args,
+            kwargs: task_start_data.task_kwargs.to_string(),
+            memory_limit: None,
+            cpu_limit: None,
+        };
+
+        match shepherd_manager
+            .dispatch_task_to_shepherd(task_start_data.shepherd_id, task_dispatch)
+            .await
         {
             Ok(_) => Ok(()),
             Err(e) => {
-                warn!("Failed to dispatch task {task_id} to shepherd {shepherd_id}: {e}");
+                warn!(
+                    "Failed to dispatch task {task_id} to shepherd {}: {e}",
+                    task_start_data.shepherd_id
+                );
 
                 SchedulerState::write_attempt_failure_event(
                     task_id,
-                    task,
-                    attempt_number,
+                    task_start_data.flow_instance_id,
+                    task_start_data.attempt_number,
                     &domain,
                     &event_stream,
                 )
@@ -468,18 +490,12 @@ impl SchedulerState {
 
             // Fast operations: Update attempt status and determine retry logic
             let mut updated_task = task.clone();
-            let actual_attempt_number = if let Some(target_attempt) = updated_task
-                .attempts
-                .iter_mut()
-                .find(|attempt| attempt.attempt == attempt_number)
-            {
+
+            // Update the latest attempt
+            if let Some(target_attempt) = updated_task.attempts.last_mut() {
                 target_attempt.end_time = Some(Utc::now());
                 target_attempt.status = crate::ATTEMPT_STATUS_FAILED;
-                target_attempt.attempt
-            } else {
-                warn!("No attempt found with number {attempt_number} when handling failure");
-                attempt_number
-            };
+            }
 
             let retry_policy = &updated_task.retry_policy;
             let max_attempts = retry_policy
@@ -487,25 +503,23 @@ impl SchedulerState {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(1) as i32;
 
-            if actual_attempt_number < max_attempts - 1 {
+            if attempt_number < max_attempts - 1 {
                 info!(
                     "Task {} attempt {} failed, {} attempts remaining",
                     task_id,
-                    actual_attempt_number,
-                    max_attempts - actual_attempt_number - 1
+                    attempt_number,
+                    max_attempts - attempt_number - 1
                 );
                 updated_task.status = TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT;
                 self.task_set.upsert_task(updated_task.clone());
 
-                Some((updated_task, actual_attempt_number, false)) // has_retries = false
+                Some((updated_task, attempt_number, false)) // has_retries = false
             } else {
-                info!(
-                    "Task {task_id} attempt {actual_attempt_number} failed, no more attempts available"
-                );
+                info!("Task {task_id} attempt {attempt_number} failed, no more attempts available");
                 updated_task.status = TASK_STATUS_FAILED;
                 self.task_set.upsert_task(updated_task.clone());
 
-                Some((updated_task, actual_attempt_number, true)) // has_retries = true (final failure)
+                Some((updated_task, attempt_number, true)) // has_retries = true (final failure)
             }
         }
     }
@@ -637,35 +651,10 @@ impl SchedulerState {
         Ok(true)
     }
 
-    /// Dispatch task to shepherd (static version for spawned contexts)
-    async fn dispatch_task_to_shepherd(
-        task_id: Uuid,
-        task: &Task,
-        shepherd_id: Uuid,
-        shepherd_manager: &ShepherdManager,
-    ) -> Result<()> {
-        info!("Dispatching task {task_id} to shepherd {shepherd_id}");
-
-        let task_dispatch = crate::orchestrator::shepherd_manager::TaskDispatch {
-            task_id,
-            task_name: task.name.clone(),
-            args: task.args.clone(),
-            kwargs: task.kwargs.to_string(),
-            memory_limit: None,
-            cpu_limit: None,
-        };
-
-        shepherd_manager
-            .dispatch_task_to_shepherd(shepherd_id, task_dispatch)
-            .await?;
-
-        Ok(())
-    }
-
     /// Write attempt started event (static version for spawned contexts)
     async fn write_attempt_started_event(
         task_id: Uuid,
-        task: Task,
+        flow_instance_id: Option<Uuid>,
         attempt_number: i32,
         shepherd_id: Uuid,
         domain: &str,
@@ -681,7 +670,7 @@ impl SchedulerState {
         let event_record = EventRecord {
             domain: domain.to_string(),
             task_instance_id: Some(task_id),
-            flow_instance_id: task.flow_instance_id,
+            flow_instance_id,
             event_type: EVENT_TASK_ATTEMPT_STARTED,
             created_at: Utc::now(),
             metadata: event_metadata,
@@ -698,7 +687,7 @@ impl SchedulerState {
     /// Write attempt failure event (static version for spawned contexts)
     async fn write_attempt_failure_event(
         task_id: Uuid,
-        task: Task,
+        flow_instance_id: Option<Uuid>,
         attempt_number: i32,
         domain: &str,
         event_stream: &EventStream,
@@ -715,7 +704,7 @@ impl SchedulerState {
         let event_record = EventRecord {
             domain: domain.to_string(),
             task_instance_id: Some(task_id),
-            flow_instance_id: task.flow_instance_id,
+            flow_instance_id,
             event_type: EVENT_TASK_ATTEMPT_ENDED,
             created_at: Utc::now(),
             metadata: event_metadata,
