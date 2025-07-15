@@ -143,16 +143,14 @@ impl SchedulerActor {
                             }
                             Some(SchedulerCommand::HandleTaskResult { task_id, result, respond_to }) => {
                                 match scheduler_state.decide_handle_task_result(task_id, result) {
-                                    Some((task, attempt_number, is_final_failure)) => {
+                                    Some(task_result_data) => {
                                         let domain = scheduler_state.domain.clone();
                                         let event_stream = scheduler_state.event_stream.clone();
 
                                         tokio::spawn(async move {
                                             let result = SchedulerState::execute_handle_task_result(
                                                 task_id,
-                                                task,
-                                                attempt_number,
-                                                is_final_failure,
+                                                task_result_data,
                                                 domain,
                                                 event_stream,
                                             ).await;
@@ -312,6 +310,12 @@ struct TaskStartData {
     shepherd_id: Uuid,
 }
 
+struct TaskResultData {
+    flow_instance_id: Option<Uuid>,
+    attempt_number: i32,
+    is_final_failure: bool,
+}
+
 struct SchedulerState {
     domain: String,
     task_set: TaskSet,
@@ -450,14 +454,14 @@ impl SchedulerState {
         &mut self,
         task_id: Uuid,
         result: TaskResult,
-    ) -> Option<(Task, i32, bool)> {
+    ) -> Option<TaskResultData> {
         debug!(
             "Deciding handle task result for {} in domain {}",
             task_id, self.domain
         );
 
-        let task = match self.task_set.get_task(task_id) {
-            Some(task) => task.clone(),
+        let task = match self.task_set.get_task_mut(task_id) {
+            Some(task) => task,
             None => {
                 warn!(
                     "Task {} not found in domain {} when handling result",
@@ -497,11 +501,13 @@ impl SchedulerState {
                 target_attempt.status = crate::ATTEMPT_STATUS_FAILED;
             }
 
-            let retry_policy = &updated_task.retry_policy;
+            let retry_policy = &task.retry_policy;
             let max_attempts = retry_policy
                 .get("max_attempts")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(1) as i32;
+
+            let flow_instance_id = task.flow_instance_id;
 
             if attempt_number < max_attempts - 1 {
                 info!(
@@ -510,16 +516,22 @@ impl SchedulerState {
                     attempt_number,
                     max_attempts - attempt_number - 1
                 );
-                updated_task.status = TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT;
-                self.task_set.upsert_task(updated_task.clone());
+                task.status = TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT;
 
-                Some((updated_task, attempt_number, false)) // has_retries = false
+                Some(TaskResultData {
+                    flow_instance_id,
+                    attempt_number,
+                    is_final_failure: false,
+                })
             } else {
                 info!("Task {task_id} attempt {attempt_number} failed, no more attempts available");
-                updated_task.status = TASK_STATUS_FAILED;
-                self.task_set.upsert_task(updated_task.clone());
+                task.status = TASK_STATUS_FAILED;
 
-                Some((updated_task, attempt_number, true)) // has_retries = true (final failure)
+                Some(TaskResultData {
+                    flow_instance_id,
+                    attempt_number,
+                    is_final_failure: true,
+                })
             }
         }
     }
@@ -527,9 +539,7 @@ impl SchedulerState {
     /// Slow asynchronous phase: Execute I/O operations (EventStream writes)
     async fn execute_handle_task_result(
         task_id: Uuid,
-        task: Task,
-        attempt_number: i32,
-        is_final_failure: bool,
+        task_result_data: TaskResultData,
         domain: String,
         event_stream: Arc<EventStream>,
     ) -> Result<()> {
@@ -538,7 +548,7 @@ impl SchedulerState {
         // Write attempt ended event
         let event_metadata = serde_json::json!({
             "task_id": task_id,
-            "attempt_number": attempt_number,
+            "attempt_number": task_result_data.attempt_number,
             "result": "error",
             "error_details": "Task attempt failed",
             "ended_at": Utc::now(),
@@ -548,7 +558,7 @@ impl SchedulerState {
         let event_record = crate::orchestrator::event_stream::EventRecord {
             domain: domain.clone(),
             task_instance_id: Some(task_id),
-            flow_instance_id: task.flow_instance_id,
+            flow_instance_id: task_result_data.flow_instance_id,
             event_type: crate::EVENT_TASK_ATTEMPT_ENDED,
             created_at: Utc::now(),
             metadata: event_metadata,
@@ -557,7 +567,7 @@ impl SchedulerState {
         event_stream.write_event(event_record).await?;
 
         // If this is the final failure, write task ended event
-        if is_final_failure {
+        if task_result_data.is_final_failure {
             let event_metadata = serde_json::json!({
                 "task_id": task_id,
                 "result": "failed",
@@ -567,15 +577,13 @@ impl SchedulerState {
             let event_record = crate::orchestrator::event_stream::EventRecord {
                 domain,
                 task_instance_id: Some(task_id),
-                flow_instance_id: task.flow_instance_id,
+                flow_instance_id: task_result_data.flow_instance_id,
                 event_type: crate::EVENT_TASK_ENDED,
                 created_at: Utc::now(),
                 metadata: event_metadata,
             };
 
             event_stream.write_event(event_record).await?;
-        } else {
-            // TODO: schedule retry based on retry policy
         }
 
         Ok(())
@@ -610,15 +618,13 @@ impl SchedulerState {
                     )),
                 };
 
-                if let Some((task, attempt_number, is_final_failure)) =
+                if let Some(task_result_data) =
                     self.decide_handle_task_result(task_id, failure_result)
                 {
                     // Execute I/O operations for shepherd death
                     SchedulerState::execute_handle_task_result(
                         task_id,
-                        task,
-                        attempt_number,
-                        is_final_failure,
+                        task_result_data,
                         self.domain.clone(),
                         self.event_stream.clone(),
                     )
