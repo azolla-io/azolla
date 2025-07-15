@@ -31,21 +31,6 @@ use uuid::Uuid;
 
 use crate::proto::common::TaskResult;
 
-// TODO: Add data structures for Hybrid Approach
-//
-// struct SchedulingDecision {
-//     task: Task,
-//     shepherd_id: Uuid,
-//     events_to_write: Vec<EventRecord>,
-//     dispatch_info: DispatchInfo,
-// }
-//
-// struct DispatchInfo {
-//     task_id: Uuid,
-//     shepherd_id: Uuid,
-//     // ... other dispatch data
-// }
-
 #[derive(Debug, Clone)]
 pub struct SchedulerConfig {
     pub default_task_attempt_creation_timeout_secs: u64,
@@ -148,11 +133,8 @@ impl SchedulerActor {
                     command = receiver.recv() => {
                         match command {
                             Some(SchedulerCommand::StartTask { task_id, respond_to }) => {
-                                // Hybrid Approach: Split into fast synchronous decision-making and slow asynchronous execution
-                                // 1. Fast: Make scheduling decisions synchronously (TaskSet read/write)
                                 match scheduler_state.decide_start_task(task_id) {
                                     Some((task, attempt_number, shepherd_id)) => {
-                                        // 2. Slow: Execute I/O operations asynchronously (spawn to avoid blocking actor loop)
                                         let domain = scheduler_state.domain.clone();
                                         let shepherd_manager = scheduler_state.shepherd_manager.clone();
                                         let event_stream = scheduler_state.event_stream.clone();
@@ -171,22 +153,15 @@ impl SchedulerActor {
                                         });
                                     },
                                     None => {
-                                        // Task not found or not schedulable
                                         let _ = respond_to.send(Ok(()));
                                     }
                                 }
                             }
                             Some(SchedulerCommand::HandleTaskResult { task_id, result, respond_to }) => {
-                                // TODO: Implement Hybrid Approach
-                                // Fast: Update TaskSet based on result, determine retry logic
-                                // Slow: Write events to EventStream (database I/O)
                                 let result = scheduler_state.handle_task_result(task_id, result).await;
                                 let _ = respond_to.send(result);
                             }
                             Some(SchedulerCommand::HandleShepherdDeath { affected_task_ids, respond_to }) => {
-                                // TODO: Implement Hybrid Approach
-                                // Fast: Update TaskSet status for affected tasks
-                                // Slow: Write failure events to EventStream (database I/O)
                                 let result = scheduler_state.handle_shepherd_death(affected_task_ids).await;
                                 let _ = respond_to.send(result);
                             }
@@ -359,7 +334,6 @@ impl SchedulerState {
             return None;
         }
 
-        // Find best shepherd synchronously (this should be fast - just checking in-memory state)
         let shepherd_id = match self.shepherd_manager.find_best_shepherd() {
             Some(id) => id,
             None => {
@@ -373,7 +347,6 @@ impl SchedulerState {
 
         let attempt_number = task.attempts.len() as i32;
 
-        // Update TaskSet immediately with new attempt and status (fast synchronous operation)
         let mut updated_task = task.clone();
         updated_task.status = TASK_STATUS_ATTEMPT_STARTED;
 
@@ -407,7 +380,6 @@ impl SchedulerState {
     ) -> Result<()> {
         debug!("Executing I/O for task {task_id} in domain {domain}");
 
-        // Write TASK_ATTEMPT_STARTED event (EventStream I/O)
         SchedulerState::write_attempt_started_event(
             task_id,
             task.clone(),
@@ -421,7 +393,6 @@ impl SchedulerState {
         // TODO: handle server crash before task is actually dispatched. Options:
         // (1) Peridically checking status of dispatched tasks;
         // (2) wait until task timeout, then fail it from server side.
-        // Dispatch the task to shepherd (network I/O)
         match SchedulerState::dispatch_task_to_shepherd(
             task_id,
             &task,
@@ -430,14 +401,10 @@ impl SchedulerState {
         )
         .await
         {
-            Ok(_) => {
-                // Dispatch succeeded, nothing more to do
-                Ok(())
-            }
+            Ok(_) => Ok(()),
             Err(e) => {
                 warn!("Failed to dispatch task {task_id} to shepherd {shepherd_id}: {e}");
 
-                // Dispatch failed - write failure event (EventStream I/O)
                 SchedulerState::write_attempt_failure_event(
                     task_id,
                     task,
@@ -469,7 +436,6 @@ impl SchedulerState {
             }
         };
 
-        // Use the last attempt's number, not len()
         let attempt_number = task
             .attempts
             .last()
@@ -556,18 +522,15 @@ impl SchedulerState {
         mut task: Task,
         attempt_number: i32,
     ) -> Result<()> {
-        // Find the attempt matching the given attempt_number and mark it as failed
         let actual_attempt_number = if let Some(target_attempt) = task
             .attempts
             .iter_mut()
             .find(|attempt| attempt.attempt == attempt_number)
         {
-            // Mark the target attempt as failed
             target_attempt.end_time = Some(Utc::now());
             target_attempt.status = crate::ATTEMPT_STATUS_FAILED;
             target_attempt.attempt
         } else {
-            // This shouldn't happen with the new logic since handle_attempt_started always creates an attempt
             warn!("No attempt found with number {attempt_number} when handling failure");
             attempt_number
         };
@@ -656,7 +619,6 @@ impl SchedulerState {
         shepherd_id: Uuid,
         shepherd_manager: &ShepherdManager,
     ) -> Result<()> {
-        // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
         info!("Dispatching task {task_id} to shepherd {shepherd_id}");
 
         let task_dispatch = crate::orchestrator::shepherd_manager::TaskDispatch {
@@ -664,8 +626,8 @@ impl SchedulerState {
             task_name: task.name.clone(),
             args: task.args.clone(),
             kwargs: task.kwargs.to_string(),
-            memory_limit: None, // memory_limit not available in Task struct
-            cpu_limit: None,    // cpu_limit not available in Task struct
+            memory_limit: None,
+            cpu_limit: None,
         };
 
         shepherd_manager
@@ -767,7 +729,6 @@ impl SchedulerRegistry {
         if let Some(scheduler) = self.schedulers.get(domain) {
             scheduler.clone()
         } else {
-            // Extract TaskSet from registry and move ownership to SchedulerActor
             let task_set = self
                 .task_set_registry
                 .extract_task_set(domain)
@@ -830,7 +791,6 @@ impl SchedulerRegistry {
 
 impl Default for SchedulerRegistry {
     fn default() -> Self {
-        // This is a placeholder - in real usage, the dependencies should be provided
         panic!(
             "SchedulerRegistry::default() should not be used - use new() with proper dependencies"
         );
