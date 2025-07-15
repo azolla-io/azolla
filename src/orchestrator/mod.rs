@@ -13,4 +13,4 @@ pub use client_service::ClientServiceImpl;
 pub use cluster_service::ClusterServiceImpl;
 pub use engine::Engine;
 pub use scheduler::{SchedulerActor, SchedulerConfig, SchedulerRegistry};
-pub use startup::{OrchestratorBuilder, OrchestratorInstance};
+pub use startup::{OrchestratorBuilder, OrchestratorInstance, RunningOrchestratorInstance};

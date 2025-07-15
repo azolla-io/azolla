@@ -44,10 +44,12 @@ async fn main() -> Result<()> {
     log::info!("Loaded settings: {settings:?}");
 
     // Build and start orchestrator using the abstraction
-    let orchestrator = OrchestratorBuilder::new(settings)
-        .build()
+    let builder = OrchestratorBuilder::new(settings);
+    let engine = builder
+        .create_engine()
         .await
-        .expect("Failed to build orchestrator");
+        .expect("Failed to create engine");
+    let orchestrator = builder.build(engine).expect("Failed to build orchestrator");
 
     orchestrator.serve_with_shutdown(shutdown_signal()).await?;
 

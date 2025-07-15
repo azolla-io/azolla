@@ -17,7 +17,7 @@ async fn test_task_creation_and_shepherd_startup() {
     let task_id = response.into_inner().task_id;
 
     // Merge events to ensure task is persisted to database
-    harness.engine.merge_events_to_db().await.unwrap();
+    harness.engine().merge_events_to_db().await.unwrap();
 
     // Verify task was created in database
     let task_status = harness.get_task_status(&task_id).await.unwrap();

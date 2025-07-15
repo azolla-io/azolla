@@ -67,21 +67,21 @@ async fn main() -> Result<()> {
     let config = load_config(config_path.map(|s| s.as_str()), &matches)?;
 
     // Start shepherd using the reusable function
-    let shepherd_handle = start_shepherd(config).await?;
+    let shepherd_instance = start_shepherd(config).await?;
 
     // Wait for shutdown signal
     info!(
         "Shepherd {} is running. Press Ctrl+C to shutdown.",
-        shepherd_handle.config.uuid
+        shepherd_instance.config.uuid
     );
     signal::ctrl_c().await?;
     info!("Shutdown signal received, stopping shepherd...");
 
-    if let Err(e) = shepherd_handle.shutdown().await {
+    if let Err(e) = shepherd_instance.shutdown().await {
         log::error!("Failed to send shutdown signal: {e}");
     }
 
-    shepherd_handle.join().await?;
+    shepherd_instance.join().await?;
 
     info!("Azolla Shepherd shutdown complete");
     Ok(())

@@ -22,17 +22,8 @@ impl OrchestratorBuilder {
         Self { settings }
     }
 
-    /// Build and initialize an orchestrator instance
-    pub async fn build(self) -> Result<OrchestratorInstance> {
-        // Create database pool and run migrations
-        let pool = create_pool(&self.settings)?;
-        run_migrations(&pool).await?;
-
-        // Create orchestrator engine
-        let event_stream_config = EventStreamConfig::from(&self.settings.event_stream);
-        let engine = Engine::new(pool, event_stream_config);
-        engine.initialize().await?;
-
+    /// Build an orchestrator instance with the provided engine
+    pub fn build(self, engine: Engine) -> Result<OrchestratorInstance> {
         // Create services
         let client_service = ClientServiceImpl::new(engine.clone());
         let cluster_service = ClusterServiceImpl::new(engine.clone());
@@ -47,6 +38,20 @@ impl OrchestratorBuilder {
             cluster_grpc_server,
             settings: self.settings,
         })
+    }
+
+    /// Create database pool and run migrations using the builder's settings
+    pub async fn create_engine(&self) -> Result<Engine> {
+        // Create database pool and run migrations
+        let pool = create_pool(&self.settings)?;
+        run_migrations(&pool).await?;
+
+        // Create orchestrator engine
+        let event_stream_config = EventStreamConfig::from(&self.settings.event_stream);
+        let engine = Engine::new(pool, event_stream_config);
+        engine.initialize().await?;
+
+        Ok(engine)
     }
 }
 
@@ -86,13 +91,14 @@ impl OrchestratorInstance {
     }
 
     /// Start the orchestrator server in a spawned task with a watch-based shutdown
-    pub async fn serve_with_watch_shutdown(
+    pub fn serve_with_watch_shutdown(
         self,
         addr: SocketAddr,
-        mut shutdown_rx: watch::Receiver<bool>,
+        shutdown_rx: watch::Receiver<bool>,
     ) -> Result<tokio::task::JoinHandle<Result<(), tonic::transport::Error>>> {
         let shutdown_future = async move {
-            shutdown_rx.changed().await.ok();
+            let mut rx = shutdown_rx;
+            rx.changed().await.ok();
         };
 
         log::info!("Starting orchestrator server on {addr}");
@@ -114,6 +120,45 @@ impl OrchestratorInstance {
 
     /// Shutdown the orchestrator engine
     pub async fn shutdown(self) -> Result<()> {
+        self.engine.shutdown().await
+    }
+}
+
+/// A running orchestrator instance with lifecycle management
+pub struct RunningOrchestratorInstance {
+    pub engine: Engine,
+    pub server_handle: tokio::task::JoinHandle<Result<(), tonic::transport::Error>>,
+    pub shutdown_tx: watch::Sender<bool>,
+}
+
+impl RunningOrchestratorInstance {
+    /// Create a new running orchestrator instance
+    pub fn new(orchestrator: OrchestratorInstance, addr: SocketAddr) -> Result<Self> {
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let engine = orchestrator.engine.clone();
+        let server_handle = orchestrator.serve_with_watch_shutdown(addr, shutdown_rx)?;
+
+        Ok(Self {
+            engine,
+            server_handle,
+            shutdown_tx,
+        })
+    }
+
+    /// Get a reference to the engine
+    pub fn engine(&self) -> &Engine {
+        &self.engine
+    }
+
+    /// Shutdown the orchestrator
+    pub async fn shutdown(self) -> Result<()> {
+        // Signal shutdown
+        let _ = self.shutdown_tx.send(true);
+
+        // Wait for server to shutdown
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), self.server_handle).await;
+
+        // Shutdown engine
         self.engine.shutdown().await
     }
 }

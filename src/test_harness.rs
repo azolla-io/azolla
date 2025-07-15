@@ -1,12 +1,10 @@
 use anyhow::Result;
 use std::time::Duration;
-use tokio::sync::watch;
 use tonic::transport::Channel;
 use uuid::Uuid;
 
 use crate::orchestrator::db::{Database, EventStream, Server as DbServer, Settings};
-use crate::orchestrator::engine::Engine;
-use crate::orchestrator::startup::OrchestratorBuilder;
+use crate::orchestrator::startup::{OrchestratorBuilder, RunningOrchestratorInstance};
 use crate::proto::orchestrator::client_service_client::ClientServiceClient;
 use crate::proto::orchestrator::cluster_service_client::ClusterServiceClient;
 use crate::proto::orchestrator::CreateTaskRequest;
@@ -23,12 +21,10 @@ pub struct IntegrationTestEnvironment {
     pub shepherd_config: ShepherdConfig,
     pub client: ClientServiceClient<Channel>,
     pub cluster_client: ClusterServiceClient<Channel>,
-    pub engine: Engine,
 
-    // Component handles for lifecycle management
-    orchestrator_handle: Option<tokio::task::JoinHandle<Result<(), tonic::transport::Error>>>,
+    // Component instances for lifecycle management
+    orchestrator_instance: Option<RunningOrchestratorInstance>,
     shepherd_handles: Vec<crate::shepherd::ShepherdInstance>,
-    shutdown_tx: Option<watch::Sender<bool>>,
 
     // Database container for cleanup
     #[allow(dead_code)]
@@ -71,19 +67,15 @@ impl IntegrationTestEnvironment {
             event_stream: EventStream::default(),
         };
 
-        // Build orchestrator using the abstraction
-        let orchestrator = OrchestratorBuilder::new(settings).build().await?;
-        let engine = orchestrator.engine().clone();
+        // Build and start orchestrator using the abstraction
+        let builder = OrchestratorBuilder::new(settings);
+        let engine = builder.create_engine().await?;
+        let orchestrator = builder.build(engine.clone())?;
 
         // Start orchestrator server
         let orchestrator_addr = format!("127.0.0.1:{}", config.orchestrator_port);
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        let orchestrator_handle = {
-            let addr = orchestrator_addr.parse()?;
-            orchestrator
-                .serve_with_watch_shutdown(addr, shutdown_rx)
-                .await?
-        };
+        let addr = orchestrator_addr.parse()?;
+        let orchestrator_instance = RunningOrchestratorInstance::new(orchestrator, addr)?;
 
         // Wait for orchestrator to be ready and create clients with retry
         let client_addr = format!("http://127.0.0.1:{}", config.orchestrator_port);
@@ -123,12 +115,14 @@ impl IntegrationTestEnvironment {
             shepherd_config,
             client,
             cluster_client,
-            engine,
-            orchestrator_handle: Some(orchestrator_handle),
+            orchestrator_instance: Some(orchestrator_instance),
             shepherd_handles: Vec::new(),
-            shutdown_tx: Some(shutdown_tx),
             db_container,
         })
+    }
+
+    pub fn engine(&self) -> &crate::orchestrator::engine::Engine {
+        self.orchestrator_instance.as_ref().unwrap().engine()
     }
 
     pub async fn start_shepherd(&mut self) -> Result<&crate::shepherd::ShepherdInstance> {
@@ -148,12 +142,12 @@ impl IntegrationTestEnvironment {
 
         while start.elapsed() < timeout_duration {
             // First try to merge events to ensure database is up to date
-            if let Err(e) = self.engine.merge_events_to_db().await {
+            if let Err(e) = self.engine().merge_events_to_db().await {
                 log::warn!("Failed to merge events: {e}");
             }
 
             // Check task status from database
-            let pool = &self.engine.pool;
+            let pool = &self.engine().pool;
             let client = pool.get().await?;
 
             let row = client
@@ -178,7 +172,7 @@ impl IntegrationTestEnvironment {
     }
 
     pub async fn get_task_status(&self, task_id: &str) -> Result<Option<i16>> {
-        let pool = &self.engine.pool;
+        let pool = &self.engine().pool;
         let client = pool.get().await?;
         let task_uuid = uuid::Uuid::parse_str(task_id)?;
 
@@ -193,7 +187,7 @@ impl IntegrationTestEnvironment {
     }
 
     pub async fn get_task_attempts(&self, task_id: &str) -> Result<Vec<TaskAttempt>> {
-        let pool = &self.engine.pool;
+        let pool = &self.engine().pool;
         let client = pool.get().await?;
         let task_uuid = uuid::Uuid::parse_str(task_id)?;
 
@@ -250,24 +244,16 @@ impl IntegrationTestEnvironment {
     }
 
     pub async fn shutdown(&mut self) -> Result<()> {
-        // Signal shutdown to all components
-        if let Some(shutdown_tx) = self.shutdown_tx.take() {
-            let _ = shutdown_tx.send(true);
-        }
-
-        // Wait for orchestrator to shutdown
-        if let Some(handle) = self.orchestrator_handle.take() {
-            let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
-        }
-
         // Wait for shepherd components to shutdown
         for handle in self.shepherd_handles.drain(..) {
             let _ = handle.shutdown().await;
             let _ = tokio::time::timeout(Duration::from_secs(5), handle.join()).await;
         }
 
-        // Shutdown engine
-        self.engine.shutdown().await?;
+        // Shutdown orchestrator
+        if let Some(orchestrator) = self.orchestrator_instance.take() {
+            orchestrator.shutdown().await?;
+        }
 
         Ok(())
     }
@@ -276,7 +262,7 @@ impl IntegrationTestEnvironment {
 impl Drop for IntegrationTestEnvironment {
     fn drop(&mut self) {
         // Attempt graceful shutdown in drop
-        if self.shutdown_tx.is_some() {
+        if self.orchestrator_instance.is_some() {
             let _ = futures::executor::block_on(self.shutdown());
         }
     }
