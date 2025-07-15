@@ -1,17 +1,3 @@
-// Hybrid Approach Implementation for Scheduler Actor
-// Split operations into fast synchronous decisions and slow asynchronous execution:
-// 1. Fast synchronous phase: TaskSet read/write operations (scheduling decisions)
-// 2. Slow asynchronous phase: I/O operations (find_best_shepherd, handle_attempt_started, dispatch_task, handle_attempt_failure)
-//    - Spawned to avoid blocking the actor loop
-//    - Response sent from within the spawned task after execution completes
-//
-// Benefits:
-// - TaskSet operations remain fast with zero synchronization overhead
-// - I/O operations don't block the actor loop
-// - Multiple I/O operations can run concurrently
-// - Actor loop stays responsive to other commands
-// - Caller gets actual execution result, not just decision result
-
 use crate::orchestrator::event_stream::{EventRecord, EventStream};
 use crate::orchestrator::shepherd_manager::ShepherdManager;
 use crate::orchestrator::taskset::{Task, TaskSet};
@@ -158,8 +144,27 @@ impl SchedulerActor {
                                 }
                             }
                             Some(SchedulerCommand::HandleTaskResult { task_id, result, respond_to }) => {
-                                let result = scheduler_state.handle_task_result(task_id, result).await;
-                                let _ = respond_to.send(result);
+                                match scheduler_state.decide_handle_task_result(task_id, result) {
+                                    Some((task, attempt_number, is_final_failure)) => {
+                                        let domain = scheduler_state.domain.clone();
+                                        let event_stream = scheduler_state.event_stream.clone();
+
+                                        tokio::spawn(async move {
+                                            let result = SchedulerState::execute_handle_task_result(
+                                                task_id,
+                                                task,
+                                                attempt_number,
+                                                is_final_failure,
+                                                domain,
+                                                event_stream,
+                                            ).await;
+                                            let _ = respond_to.send(result);
+                                        });
+                                    },
+                                    None => {
+                                        let _ = respond_to.send(Ok(()));
+                                    }
+                                }
                             }
                             Some(SchedulerCommand::HandleShepherdDeath { affected_task_ids, respond_to }) => {
                                 let result = scheduler_state.handle_shepherd_death(affected_task_ids).await;
@@ -418,10 +423,14 @@ impl SchedulerState {
         }
     }
 
-    /// Handle task result and determine retry logic
-    async fn handle_task_result(&mut self, task_id: Uuid, result: TaskResult) -> Result<()> {
+    /// Fast synchronous phase: Make task result decisions and update TaskSet
+    fn decide_handle_task_result(
+        &mut self,
+        task_id: Uuid,
+        result: TaskResult,
+    ) -> Option<(Task, i32, bool)> {
         debug!(
-            "Handling task result for {} in domain {}",
+            "Deciding handle task result for {} in domain {}",
             task_id, self.domain
         );
 
@@ -432,7 +441,7 @@ impl SchedulerState {
                     "Task {} not found in domain {} when handling result",
                     task_id, self.domain
                 );
-                return Ok(());
+                return None;
             }
         };
 
@@ -450,14 +459,109 @@ impl SchedulerState {
         if is_success {
             info!("Task {task_id} attempt {attempt_number} succeeded");
 
-            let mut updated_task = task;
+            let mut updated_task = task.clone();
             updated_task.status = TASK_STATUS_SUCCEEDED;
-
             self.task_set.upsert_task(updated_task);
+            None // No slow operations needed for success
         } else {
             info!("Task {task_id} attempt {attempt_number} failed");
-            self.handle_attempt_failure(task_id, task, attempt_number)
-                .await?;
+
+            // Fast operations: Update attempt status and determine retry logic
+            let mut updated_task = task.clone();
+            let actual_attempt_number = if let Some(target_attempt) = updated_task
+                .attempts
+                .iter_mut()
+                .find(|attempt| attempt.attempt == attempt_number)
+            {
+                target_attempt.end_time = Some(Utc::now());
+                target_attempt.status = crate::ATTEMPT_STATUS_FAILED;
+                target_attempt.attempt
+            } else {
+                warn!("No attempt found with number {attempt_number} when handling failure");
+                attempt_number
+            };
+
+            let retry_policy = &updated_task.retry_policy;
+            let max_attempts = retry_policy
+                .get("max_attempts")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1) as i32;
+
+            if actual_attempt_number < max_attempts - 1 {
+                info!(
+                    "Task {} attempt {} failed, {} attempts remaining",
+                    task_id,
+                    actual_attempt_number,
+                    max_attempts - actual_attempt_number - 1
+                );
+                updated_task.status = TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT;
+                self.task_set.upsert_task(updated_task.clone());
+
+                Some((updated_task, actual_attempt_number, false)) // has_retries = false
+            } else {
+                info!(
+                    "Task {task_id} attempt {actual_attempt_number} failed, no more attempts available"
+                );
+                updated_task.status = TASK_STATUS_FAILED;
+                self.task_set.upsert_task(updated_task.clone());
+
+                Some((updated_task, actual_attempt_number, true)) // has_retries = true (final failure)
+            }
+        }
+    }
+
+    /// Slow asynchronous phase: Execute I/O operations (EventStream writes)
+    async fn execute_handle_task_result(
+        task_id: Uuid,
+        task: Task,
+        attempt_number: i32,
+        is_final_failure: bool,
+        domain: String,
+        event_stream: Arc<EventStream>,
+    ) -> Result<()> {
+        debug!("Executing I/O for task result {task_id} in domain {domain}");
+
+        // Write attempt ended event
+        let event_metadata = serde_json::json!({
+            "task_id": task_id,
+            "attempt_number": attempt_number,
+            "result": "error",
+            "error_details": "Task attempt failed",
+            "ended_at": Utc::now(),
+            "attempt_status": crate::ATTEMPT_STATUS_FAILED
+        });
+
+        let event_record = crate::orchestrator::event_stream::EventRecord {
+            domain: domain.clone(),
+            task_instance_id: Some(task_id),
+            flow_instance_id: task.flow_instance_id,
+            event_type: crate::EVENT_TASK_ATTEMPT_ENDED,
+            created_at: Utc::now(),
+            metadata: event_metadata,
+        };
+
+        event_stream.write_event(event_record).await?;
+
+        // If this is the final failure, write task ended event
+        if is_final_failure {
+            let event_metadata = serde_json::json!({
+                "task_id": task_id,
+                "result": "failed",
+                "ended_at": Utc::now()
+            });
+
+            let event_record = crate::orchestrator::event_stream::EventRecord {
+                domain,
+                task_instance_id: Some(task_id),
+                flow_instance_id: task.flow_instance_id,
+                event_type: crate::EVENT_TASK_ENDED,
+                created_at: Utc::now(),
+                metadata: event_metadata,
+            };
+
+            event_stream.write_event(event_record).await?;
+        } else {
+            // TODO: schedule retry based on retry policy
         }
 
         Ok(())
@@ -472,120 +576,41 @@ impl SchedulerState {
 
         for task_id in affected_task_ids {
             if let Some(task) = self.task_set.get_task(task_id).cloned() {
-                let attempt_number = task
+                let _attempt_number = task
                     .attempts
                     .last()
                     .map(|attempt| attempt.attempt)
                     .unwrap_or(0);
-                self.handle_attempt_failure(task_id, task, attempt_number)
+
+                // Create a TaskResult for failure to use the new split approach
+                let failure_result = crate::proto::common::TaskResult {
+                    task_id: task_id.to_string(),
+                    result_type: Some(crate::proto::common::task_result::ResultType::Error(
+                        crate::proto::common::ErrorResult {
+                            r#type: "ShepherdDeath".to_string(),
+                            message: "Shepherd disconnected".to_string(),
+                            code: "503".to_string(),
+                            stacktrace: "".to_string(),
+                            data: None,
+                        },
+                    )),
+                };
+
+                if let Some((task, attempt_number, is_final_failure)) =
+                    self.decide_handle_task_result(task_id, failure_result)
+                {
+                    // Execute I/O operations for shepherd death
+                    SchedulerState::execute_handle_task_result(
+                        task_id,
+                        task,
+                        attempt_number,
+                        is_final_failure,
+                        self.domain.clone(),
+                        self.event_stream.clone(),
+                    )
                     .await?;
+                }
             }
-        }
-
-        Ok(())
-    }
-
-    async fn create_attempt_ended_event(
-        &self,
-        task_id: Uuid,
-        task: &Task,
-        attempt_number: i32,
-        success: bool,
-        error_message: Option<String>,
-    ) -> Result<()> {
-        let event_metadata = serde_json::json!({
-            "task_id": task_id,
-            "attempt_number": attempt_number,
-            "result": if success { "success" } else { "error" },
-            "error_details": error_message,
-            "ended_at": Utc::now(),
-            "attempt_status": if success { crate::ATTEMPT_STATUS_SUCCEEDED } else { crate::ATTEMPT_STATUS_FAILED }
-        });
-
-        let event_record = EventRecord {
-            domain: self.domain.clone(),
-            task_instance_id: Some(task_id),
-            flow_instance_id: task.flow_instance_id,
-            event_type: EVENT_TASK_ATTEMPT_ENDED,
-            created_at: Utc::now(),
-            metadata: event_metadata,
-        };
-
-        self.event_stream.write_event(event_record).await?;
-        Ok(())
-    }
-
-    /// Handle attempt failure and determine retry logic
-    async fn handle_attempt_failure(
-        &mut self,
-        task_id: Uuid,
-        mut task: Task,
-        attempt_number: i32,
-    ) -> Result<()> {
-        let actual_attempt_number = if let Some(target_attempt) = task
-            .attempts
-            .iter_mut()
-            .find(|attempt| attempt.attempt == attempt_number)
-        {
-            target_attempt.end_time = Some(Utc::now());
-            target_attempt.status = crate::ATTEMPT_STATUS_FAILED;
-            target_attempt.attempt
-        } else {
-            warn!("No attempt found with number {attempt_number} when handling failure");
-            attempt_number
-        };
-
-        self.create_attempt_ended_event(
-            task_id,
-            &task,
-            actual_attempt_number,
-            false, // success = false since this is a failure
-            Some("Task attempt failed".to_string()),
-        )
-        .await?;
-
-        let retry_policy = &task.retry_policy;
-        let max_attempts = retry_policy
-            .get("max_attempts")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1) as i32;
-
-        if actual_attempt_number < max_attempts - 1 {
-            info!(
-                "Task {} attempt {} failed, {} attempts remaining",
-                task_id,
-                actual_attempt_number,
-                max_attempts - actual_attempt_number - 1
-            );
-
-            task.status = TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT;
-
-            self.task_set.upsert_task(task);
-        } else {
-            info!(
-                "Task {task_id} attempt {actual_attempt_number} failed, no more attempts available"
-            );
-
-            task.status = TASK_STATUS_FAILED;
-
-            self.task_set.upsert_task(task.clone());
-
-            let event_metadata = serde_json::json!({
-                "task_id": task_id,
-                "result": "failed",
-                "ended_at": Utc::now()
-            });
-
-            let event_record = EventRecord {
-                domain: self.domain.clone(),
-                task_instance_id: Some(task_id),
-                flow_instance_id: task.flow_instance_id,
-                event_type: crate::EVENT_TASK_ENDED,
-                created_at: Utc::now(),
-                metadata: event_metadata,
-            };
-
-            self.event_stream.write_event(event_record).await?;
         }
 
         Ok(())
