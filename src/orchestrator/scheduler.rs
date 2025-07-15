@@ -490,18 +490,14 @@ impl SchedulerState {
         if is_success {
             info!("Task {task_id} attempt {attempt_number} succeeded");
 
-            let mut updated_task = task.clone();
-            updated_task.status = TASK_STATUS_SUCCEEDED;
-            self.task_set.upsert_task(updated_task);
+            task.status = TASK_STATUS_SUCCEEDED;
             None // No slow operations needed for success
         } else {
             info!("Task {task_id} attempt {attempt_number} failed");
 
             // Fast operations: Update attempt status and determine retry logic
-            let mut updated_task = task.clone();
-
             // Update the latest attempt
-            if let Some(target_attempt) = updated_task.attempts.last_mut() {
+            if let Some(target_attempt) = task.attempts.last_mut() {
                 target_attempt.end_time = Some(Utc::now());
                 target_attempt.status = crate::ATTEMPT_STATUS_FAILED;
             }
