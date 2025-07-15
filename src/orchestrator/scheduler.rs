@@ -600,7 +600,7 @@ impl SchedulerState {
         );
 
         for task_id in affected_task_ids {
-            if let Some(_task) = self.task_set.get_task(task_id).cloned() {
+            if self.task_set.get_task(task_id).is_some() {
                 // Create a TaskResult for failure to use the new split approach
                 let failure_result = crate::proto::common::TaskResult {
                     task_id: task_id.to_string(),
