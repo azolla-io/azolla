@@ -1,11 +1,9 @@
 use anyhow::Result;
 use clap::{Arg, Command};
 use log::info;
-use std::sync::Arc;
 use tokio::signal;
-use tokio::sync::{mpsc, watch};
 
-use azolla::shepherd::{load_config, start_worker_service, StreamHandler, TaskManager};
+use azolla::shepherd::{load_config, start_shepherd};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -68,85 +66,22 @@ async fn main() -> Result<()> {
     let config_path = matches.get_one::<String>("config");
     let config = load_config(config_path.map(|s| s.as_str()), &matches)?;
 
-    info!(
-        "Starting Azolla Shepherd {} with config: {:?}",
-        config.uuid, config
-    );
-
-    let (shutdown_tx, shutdown_rx1) = watch::channel(false);
-    let shutdown_rx2 = shutdown_rx1.clone();
-    let shutdown_rx3 = shutdown_rx1.clone();
-
-    let (result_tx, result_rx) = mpsc::unbounded_channel();
-    let (stream_event_tx, stream_event_rx) = mpsc::unbounded_channel();
-
-    let current_load = Arc::new(std::sync::atomic::AtomicU32::new(0));
-
-    info!("Starting Azolla Shepherd components...");
-
-    let worker_service_handle = {
-        let port = config.worker_grpc_port;
-        let result_sender = result_tx;
-        let _shutdown_rx = shutdown_rx1;
-
-        tokio::spawn(async move {
-            // TODO: Update start_worker_service to accept shutdown signal
-            if let Err(e) = start_worker_service(port, result_sender).await {
-                log::error!("Worker service error: {e}");
-            }
-        })
-    };
-
-    let stream_handler_handle = {
-        let config = config.clone();
-        let current_load = current_load.clone();
-
-        tokio::spawn(async move {
-            let stream_handler = StreamHandler::new(
-                config,
-                result_rx,
-                stream_event_tx,
-                shutdown_rx2,
-                current_load,
-            );
-
-            if let Err(e) = stream_handler.start().await {
-                log::error!("Stream handler error: {e}");
-            }
-        })
-    };
-
-    let task_manager_handle = {
-        let config = config.clone();
-        let current_load = current_load.clone();
-
-        tokio::spawn(async move {
-            let task_manager =
-                TaskManager::new(config, stream_event_rx, shutdown_rx3, current_load);
-
-            if let Err(e) = task_manager.start().await {
-                log::error!("Task manager error: {e}");
-            }
-        })
-    };
+    // Start shepherd using the reusable function
+    let shepherd_handle = start_shepherd(config).await?;
 
     // Wait for shutdown signal
     info!(
         "Shepherd {} is running. Press Ctrl+C to shutdown.",
-        config.uuid
+        shepherd_handle.config.uuid
     );
     signal::ctrl_c().await?;
     info!("Shutdown signal received, stopping shepherd...");
 
-    if let Err(e) = shutdown_tx.send(true) {
+    if let Err(e) = shepherd_handle.shutdown().await {
         log::error!("Failed to send shutdown signal: {e}");
     }
 
-    let _ = tokio::join!(
-        worker_service_handle,
-        stream_handler_handle,
-        task_manager_handle
-    );
+    shepherd_handle.join().await?;
 
     info!("Azolla Shepherd shutdown complete");
     Ok(())
