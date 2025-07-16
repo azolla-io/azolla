@@ -3,6 +3,13 @@ use std::time::Duration;
 use tonic::transport::Channel;
 use uuid::Uuid;
 
+// Default configuration constants
+const DEFAULT_DB_STARTUP_TIMEOUT_MS: u64 = 1000;
+const DEFAULT_CLIENT_CONNECTION_RETRY_INTERVAL_MS: u64 = 100;
+const DEFAULT_CLIENT_CONNECTION_MAX_RETRIES: usize = 10;
+const DEFAULT_TASK_COMPLETION_POLL_INTERVAL_MS: u64 = 100;
+const DEFAULT_MAX_CONCURRENT_TASKS: usize = 4;
+
 use crate::orchestrator::db::{Database, EventStream, Server as DbServer, Settings};
 use crate::orchestrator::startup::{OrchestratorBuilder, RunningOrchestratorInstance};
 use crate::proto::orchestrator::client_service_client::ClientServiceClient;
@@ -21,6 +28,7 @@ pub struct IntegrationTestEnvironment {
     pub shepherd_config: ShepherdConfig,
     pub client: ClientServiceClient<Channel>,
     pub cluster_client: ClusterServiceClient<Channel>,
+    config: IntegrationTestConfig,
 
     // Component instances for lifecycle management
     orchestrator_instance: Option<RunningOrchestratorInstance>,
@@ -32,10 +40,17 @@ pub struct IntegrationTestEnvironment {
 }
 
 impl IntegrationTestEnvironment {
+    /// Creates a new integration test environment with default configuration.
+    ///
+    /// This will start a PostgreSQL container, initialize the orchestrator,
+    /// and set up all necessary components for integration testing.
     pub async fn new() -> Result<Self> {
         Self::with_config(IntegrationTestConfig::default()).await
     }
 
+    /// Creates a new integration test environment with custom configuration.
+    ///
+    /// This allows you to override default timeouts, ports, and other test parameters.
     pub async fn with_config(config: IntegrationTestConfig) -> Result<Self> {
         // Start database container
         let db_container = GenericImage::new("postgres", "16-alpine")
@@ -49,7 +64,7 @@ impl IntegrationTestEnvironment {
             .start()
             .await?;
 
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        tokio::time::sleep(Duration::from_millis(config.db_startup_timeout_ms)).await;
         let db_port = db_container.get_host_port_ipv4(5432).await?;
 
         // Create database settings
@@ -87,9 +102,12 @@ impl IntegrationTestEnvironment {
                     ClusterServiceClient::connect(client_addr.clone())
                 ) {
                     Ok((client, cluster_client)) => break (client, cluster_client),
-                    Err(_e) if retries < 10 => {
+                    Err(_e) if retries < config.client_connection_max_retries => {
                         retries += 1;
-                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        tokio::time::sleep(Duration::from_millis(
+                            config.client_connection_retry_interval_ms,
+                        ))
+                        .await;
                         continue;
                     }
                     Err(e) => return Err(e.into()),
@@ -115,6 +133,7 @@ impl IntegrationTestEnvironment {
             shepherd_config,
             client,
             cluster_client,
+            config,
             orchestrator_instance: Some(orchestrator_instance),
             shepherd_handles: Vec::new(),
             db_container,
@@ -125,6 +144,10 @@ impl IntegrationTestEnvironment {
         self.orchestrator_instance.as_ref().unwrap().engine()
     }
 
+    /// Starts a new shepherd instance and registers it with the orchestrator.
+    ///
+    /// Returns a reference to the shepherd instance that can be used to
+    /// check its status and configuration.
     pub async fn start_shepherd(&mut self) -> Result<&crate::shepherd::ShepherdInstance> {
         let config = self.shepherd_config.clone();
         let shepherd_handle = start_shepherd(config).await?;
@@ -132,6 +155,14 @@ impl IntegrationTestEnvironment {
         Ok(self.shepherd_handles.last().unwrap())
     }
 
+    /// Waits for a task to complete (succeed or fail) within the specified timeout.
+    ///
+    /// This method polls the in-memory TaskSet through the SchedulerActor to check
+    /// task status. Returns `true` if the task completed, `false` if it timed out.
+    ///
+    /// # Arguments
+    /// * `task_id` - The UUID of the task to wait for
+    /// * `timeout_duration` - Maximum time to wait for completion
     pub async fn wait_for_task_completion(
         &self,
         task_id: &str,
@@ -141,78 +172,107 @@ impl IntegrationTestEnvironment {
         let task_uuid = uuid::Uuid::parse_str(task_id)?;
 
         while start.elapsed() < timeout_duration {
-            // First try to merge events to ensure database is up to date
-            if let Err(e) = self.engine().merge_events_to_db().await {
-                log::warn!("Failed to merge events: {e}");
-            }
-
-            // Check task status from database
-            let pool = &self.engine().pool;
-            let client = pool.get().await?;
-
-            let row = client
-                .query_opt(
-                    "SELECT status FROM task_instance WHERE id = $1",
-                    &[&task_uuid],
-                )
-                .await?;
-
-            if let Some(row) = row {
-                let status: i16 = row.get(0);
-                // Check if task is completed (succeeded or failed)
-                if status == crate::TASK_STATUS_SUCCEEDED || status == crate::TASK_STATUS_FAILED {
-                    return Ok(true);
+            // Check task status through SchedulerActor (which owns the TaskSet)
+            // TaskSet updates are synchronous, so we should see status changes immediately
+            if let Some(scheduler) = self.engine().scheduler_registry.get_scheduler("test") {
+                if let Ok(Some(task)) = scheduler.get_task_for_test(task_uuid).await {
+                    // Check if task is completed (succeeded or failed)
+                    if task.status == crate::TASK_STATUS_SUCCEEDED
+                        || task.status == crate::TASK_STATUS_FAILED
+                    {
+                        return Ok(true);
+                    }
                 }
             }
 
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_millis(
+                self.config.task_completion_poll_interval_ms,
+            ))
+            .await;
         }
 
         Ok(false)
     }
 
+    /// Gets the current status of a task from the in-memory TaskSet.
+    ///
+    /// Returns the task status code (e.g., TASK_STATUS_SUCCEEDED, TASK_STATUS_FAILED)
+    /// or `None` if the task is not found.
     pub async fn get_task_status(&self, task_id: &str) -> Result<Option<i16>> {
-        let pool = &self.engine().pool;
-        let client = pool.get().await?;
         let task_uuid = uuid::Uuid::parse_str(task_id)?;
 
-        let row = client
-            .query_opt(
-                "SELECT status FROM task_instance WHERE id = $1",
-                &[&task_uuid],
-            )
-            .await?;
-
-        Ok(row.map(|r| r.get(0)))
-    }
-
-    pub async fn get_task_attempts(&self, task_id: &str) -> Result<Vec<TaskAttempt>> {
-        let pool = &self.engine().pool;
-        let client = pool.get().await?;
-        let task_uuid = uuid::Uuid::parse_str(task_id)?;
-
-        let rows = client
-            .query(
-                "SELECT attempt, status, start_time, end_time 
-                 FROM task_attempts 
-                 WHERE task_instance_id = $1 
-                 ORDER BY attempt",
-                &[&task_uuid],
-            )
-            .await?;
-
-        let mut attempts = Vec::new();
-        for row in rows {
-            attempts.push(TaskAttempt {
-                attempt_number: row.get(0),
-                status: row.get(1),
-                started_at: row.get(2),
-                ended_at: row.get(3),
-                error_message: None, // This field doesn't exist in the schema
-            });
+        // Check task status through SchedulerActor (which owns the TaskSet)
+        // TaskSet updates are synchronous, so this should reflect current state
+        if let Some(scheduler) = self.engine().scheduler_registry.get_scheduler("test") {
+            if let Ok(Some(task)) = scheduler.get_task_for_test(task_uuid).await {
+                return Ok(Some(task.status));
+            }
         }
 
-        Ok(attempts)
+        // Try other domains if not found in test domain
+        let domains = self.engine().scheduler_registry.domains();
+        for domain in domains {
+            if domain != "test" {
+                if let Some(scheduler) = self.engine().scheduler_registry.get_scheduler(&domain) {
+                    if let Ok(Some(task)) = scheduler.get_task_for_test(task_uuid).await {
+                        return Ok(Some(task.status));
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Gets all attempts for a task from the in-memory TaskSet.
+    ///
+    /// Returns a vector of TaskAttempt objects containing attempt details
+    /// like attempt number, start/end times, and status.
+    pub async fn get_task_attempts(&self, task_id: &str) -> Result<Vec<TaskAttempt>> {
+        let task_uuid = uuid::Uuid::parse_str(task_id)?;
+
+        // Get task attempts from TaskSet through SchedulerActor
+        if let Some(scheduler) = self.engine().scheduler_registry.get_scheduler("test") {
+            if let Ok(Some(task)) = scheduler.get_task_for_test(task_uuid).await {
+                let attempts = task
+                    .attempts
+                    .into_iter()
+                    .map(|attempt| TaskAttempt {
+                        attempt_number: attempt.attempt,
+                        status: 0, // TaskAttempt status is not tracked in the in-memory version
+                        started_at: attempt.start_time.unwrap_or_else(chrono::Utc::now),
+                        ended_at: attempt.end_time,
+                        error_message: None,
+                    })
+                    .collect();
+                return Ok(attempts);
+            }
+        }
+
+        // Try other domains if not found in test domain
+        let domains = self.engine().scheduler_registry.domains();
+        for domain in domains {
+            if domain != "test" {
+                if let Some(scheduler) = self.engine().scheduler_registry.get_scheduler(&domain) {
+                    if let Ok(Some(task)) = scheduler.get_task_for_test(task_uuid).await {
+                        let attempts = task
+                            .attempts
+                            .into_iter()
+                            .map(|attempt| TaskAttempt {
+                                attempt_number: attempt.attempt,
+                                status: 0, // TaskAttempt status is not tracked in the in-memory version
+                                started_at: attempt.start_time.unwrap_or_else(chrono::Utc::now),
+                                ended_at: attempt.end_time,
+                                error_message: None,
+                            })
+                            .collect();
+                        return Ok(attempts);
+                    }
+                }
+            }
+        }
+
+        Ok(Vec::new())
     }
 
     pub async fn get_shepherd_count(&self) -> Result<i64> {
@@ -222,6 +282,10 @@ impl IntegrationTestEnvironment {
         Ok(self.shepherd_handles.len() as i64)
     }
 
+    /// Ensures the worker binary is built and available for testing.
+    ///
+    /// If the binary doesn't exist, this will run `cargo build --bin azolla-worker`
+    /// to build it automatically.
     pub async fn ensure_worker_binary(&self) -> Result<()> {
         let binary_path = &self.shepherd_config.worker_binary_path;
 
@@ -243,6 +307,11 @@ impl IntegrationTestEnvironment {
         Ok(())
     }
 
+    /// Shuts down all components of the test environment.
+    ///
+    /// This stops all shepherd instances, shuts down the orchestrator,
+    /// and cleans up resources. The database container is automatically
+    /// cleaned up when the struct is dropped.
     pub async fn shutdown(&mut self) -> Result<()> {
         // Wait for shepherd components to shutdown
         for handle in self.shepherd_handles.drain(..) {
@@ -274,6 +343,10 @@ pub struct IntegrationTestConfig {
     pub shepherd_worker_port: u16,
     pub worker_binary_path: String,
     pub max_concurrent_tasks: usize,
+    pub db_startup_timeout_ms: u64,
+    pub client_connection_retry_interval_ms: u64,
+    pub client_connection_max_retries: usize,
+    pub task_completion_poll_interval_ms: u64,
 }
 
 impl Default for IntegrationTestConfig {
@@ -282,7 +355,11 @@ impl Default for IntegrationTestConfig {
             orchestrator_port: find_available_port(),
             shepherd_worker_port: find_available_port(),
             worker_binary_path: "./target/debug/azolla-worker".to_string(),
-            max_concurrent_tasks: 4,
+            max_concurrent_tasks: DEFAULT_MAX_CONCURRENT_TASKS,
+            db_startup_timeout_ms: DEFAULT_DB_STARTUP_TIMEOUT_MS,
+            client_connection_retry_interval_ms: DEFAULT_CLIENT_CONNECTION_RETRY_INTERVAL_MS,
+            client_connection_max_retries: DEFAULT_CLIENT_CONNECTION_MAX_RETRIES,
+            task_completion_poll_interval_ms: DEFAULT_TASK_COMPLETION_POLL_INTERVAL_MS,
         }
     }
 }
