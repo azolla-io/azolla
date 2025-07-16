@@ -46,9 +46,10 @@ impl ShepherdInstance {
 /// Start a shepherd instance with the given configuration
 pub async fn start_shepherd(config: ShepherdConfig) -> Result<ShepherdInstance> {
     log::info!(
-        "Starting Azolla Shepherd {} with config: {:?}",
+        "Starting Azolla Shepherd {} on port {} with max_concurrency={}",
         config.uuid,
-        config
+        config.worker_grpc_port,
+        config.max_concurrency
     );
 
     let (shutdown_tx, shutdown_rx1) = watch::channel(false);

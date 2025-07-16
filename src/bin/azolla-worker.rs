@@ -115,6 +115,12 @@ async fn execute_task(task_name: &str, args: &Value, kwargs: &Value) -> common::
         _ => {}
     }
 
+    // Handle generic tasks with potential failure
+    handle_generic_task(task_name, args, kwargs)
+}
+
+/// Handle generic tasks with potential failure simulation
+fn handle_generic_task(task_name: &str, args: &Value, kwargs: &Value) -> common::TaskResult {
     // Simulate success/failure based on task name or arguments
     let should_fail = task_name.contains("fail")
         || kwargs
@@ -132,74 +138,11 @@ async fn execute_task(task_name: &str, args: &Value, kwargs: &Value) -> common::
     } else {
         info!("Task {task_name} completed successfully");
 
-        // Create a simple result based on task type
         let result_value = match task_name {
-            "echo" => {
-                // Echo back the first argument
-                if let Some(arr) = args.as_array() {
-                    if let Some(first_arg) = arr.first() {
-                        match first_arg {
-                            Value::String(s) => common::AnyValue {
-                                value: Some(common::any_value::Value::StringValue(s.clone())),
-                            },
-                            Value::Number(n) => {
-                                if let Some(i) = n.as_i64() {
-                                    common::AnyValue {
-                                        value: Some(common::any_value::Value::IntValue(i)),
-                                    }
-                                } else {
-                                    common::AnyValue {
-                                        value: Some(common::any_value::Value::DoubleValue(
-                                            n.as_f64().unwrap_or(0.0),
-                                        )),
-                                    }
-                                }
-                            }
-                            Value::Bool(b) => common::AnyValue {
-                                value: Some(common::any_value::Value::BoolValue(*b)),
-                            },
-                            _ => common::AnyValue {
-                                value: Some(common::any_value::Value::JsonValue(
-                                    first_arg.to_string(),
-                                )),
-                            },
-                        }
-                    } else {
-                        common::AnyValue {
-                            value: Some(common::any_value::Value::StringValue(
-                                "empty_args".to_string(),
-                            )),
-                        }
-                    }
-                } else {
-                    common::AnyValue {
-                        value: Some(common::any_value::Value::StringValue("no_args".to_string())),
-                    }
-                }
-            }
-            "math_add" => {
-                // Add two numbers from kwargs
-                let a = kwargs.get("a").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let b = kwargs.get("b").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                common::AnyValue {
-                    value: Some(common::any_value::Value::DoubleValue(a + b)),
-                }
-            }
-            "count_args" => {
-                // Count the number of arguments
-                let count = args.as_array().map(|arr| arr.len()).unwrap_or(0) as i64;
-                common::AnyValue {
-                    value: Some(common::any_value::Value::IntValue(count)),
-                }
-            }
-            _ => {
-                // Default: return success message
-                common::AnyValue {
-                    value: Some(common::any_value::Value::StringValue(format!(
-                        "Task {task_name} completed"
-                    ))),
-                }
-            }
+            "echo" => handle_echo_task(args),
+            "math_add" => handle_math_add_task(kwargs),
+            "count_args" => handle_count_args_task(args),
+            _ => handle_default_task(task_name),
         };
 
         common::TaskResult {
@@ -213,6 +156,74 @@ async fn execute_task(task_name: &str, args: &Value, kwargs: &Value) -> common::
     }
 }
 
+/// Handle echo task - echo back the first argument
+fn handle_echo_task(args: &Value) -> common::AnyValue {
+    if let Some(arr) = args.as_array() {
+        if let Some(first_arg) = arr.first() {
+            match first_arg {
+                Value::String(s) => common::AnyValue {
+                    value: Some(common::any_value::Value::StringValue(s.clone())),
+                },
+                Value::Number(n) => {
+                    if let Some(i) = n.as_i64() {
+                        common::AnyValue {
+                            value: Some(common::any_value::Value::IntValue(i)),
+                        }
+                    } else {
+                        common::AnyValue {
+                            value: Some(common::any_value::Value::DoubleValue(
+                                n.as_f64().unwrap_or(0.0),
+                            )),
+                        }
+                    }
+                }
+                Value::Bool(b) => common::AnyValue {
+                    value: Some(common::any_value::Value::BoolValue(*b)),
+                },
+                _ => common::AnyValue {
+                    value: Some(common::any_value::Value::JsonValue(first_arg.to_string())),
+                },
+            }
+        } else {
+            common::AnyValue {
+                value: Some(common::any_value::Value::StringValue(
+                    "empty_args".to_string(),
+                )),
+            }
+        }
+    } else {
+        common::AnyValue {
+            value: Some(common::any_value::Value::StringValue("no_args".to_string())),
+        }
+    }
+}
+
+/// Handle math_add task - add two numbers from kwargs
+fn handle_math_add_task(kwargs: &Value) -> common::AnyValue {
+    let a = kwargs.get("a").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let b = kwargs.get("b").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    common::AnyValue {
+        value: Some(common::any_value::Value::DoubleValue(a + b)),
+    }
+}
+
+/// Handle count_args task - count the number of arguments
+fn handle_count_args_task(args: &Value) -> common::AnyValue {
+    let count = args.as_array().map(|arr| arr.len()).unwrap_or(0) as i64;
+    common::AnyValue {
+        value: Some(common::any_value::Value::IntValue(count)),
+    }
+}
+
+/// Handle default task - return success message
+fn handle_default_task(task_name: &str) -> common::AnyValue {
+    common::AnyValue {
+        value: Some(common::any_value::Value::StringValue(format!(
+            "Task {task_name} completed"
+        ))),
+    }
+}
+
 async fn handle_flaky_task(kwargs: &Value) -> common::TaskResult {
     let fail_first_attempt = kwargs
         .get("fail_first_attempt")
@@ -221,7 +232,8 @@ async fn handle_flaky_task(kwargs: &Value) -> common::TaskResult {
 
     if fail_first_attempt {
         // Check if we have a state file to track attempts
-        let state_file = format!("/tmp/flaky_task_state_{}", std::process::id());
+        let state_file =
+            std::env::temp_dir().join(format!("flaky_task_state_{}", std::process::id()));
 
         // Read attempt count from state file
         let attempt_count = match std::fs::read_to_string(&state_file) {
