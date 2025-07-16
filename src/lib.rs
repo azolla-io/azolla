@@ -2,6 +2,9 @@ pub mod orchestrator;
 pub mod proto;
 pub mod shepherd;
 
+#[cfg(any(test, feature = "test-harness"))]
+pub mod test_harness;
+
 // Event type constants
 pub const EVENT_TASK_CREATED: i16 = 1;
 pub const EVENT_TASK_STARTED: i16 = 2;
