@@ -77,7 +77,6 @@ pub enum SchedulerCommand {
     Shutdown {
         respond_to: oneshot::Sender<()>,
     },
-    #[cfg(test)]
     GetTaskForTest {
         task_id: Uuid,
         respond_to: oneshot::Sender<Option<Task>>,
@@ -119,6 +118,7 @@ impl SchedulerActor {
                     command = receiver.recv() => {
                         match command {
                             Some(SchedulerCommand::StartTask { task_id, respond_to }) => {
+                                info!("Scheduler received StartTask command for task {} in domain {}", task_id, scheduler_state.domain);
                                 match scheduler_state.decide_start_task(task_id) {
                                     Some(task_start_data) => {
                                         let domain = scheduler_state.domain.clone();
@@ -171,7 +171,6 @@ impl SchedulerActor {
                                 let _ = respond_to.send(());
                                 break;
                             }
-                            #[cfg(test)]
                             Some(SchedulerCommand::GetTaskForTest { task_id, respond_to }) => {
                                 let task = scheduler_state.task_set.get_task(task_id).cloned();
                                 let _ = respond_to.send(task);
@@ -212,6 +211,10 @@ impl SchedulerActor {
     }
 
     pub async fn start_task_async(&self, task_id: Uuid) -> Result<(), SchedulerError> {
+        info!(
+            "SchedulerActor::start_task_async called for task {} in domain {}",
+            task_id, self.domain
+        );
         let (tx, _rx) = oneshot::channel();
         let cmd = SchedulerCommand::StartTask {
             task_id,
@@ -223,6 +226,10 @@ impl SchedulerActor {
             .await
             .map_err(|_| SchedulerError::ChannelClosed)?;
 
+        info!(
+            "SchedulerActor::start_task_async sent command for task {} in domain {}",
+            task_id, self.domain
+        );
         Ok(())
     }
 
@@ -283,7 +290,6 @@ impl SchedulerActor {
         Ok(())
     }
 
-    #[cfg(test)]
     pub async fn get_task_for_test(&self, task_id: Uuid) -> Result<Option<Task>, SchedulerError> {
         let (tx, rx) = oneshot::channel();
         let cmd = SchedulerCommand::GetTaskForTest {
@@ -327,13 +333,19 @@ struct SchedulerState {
 impl SchedulerState {
     /// Fast synchronous phase: Make scheduling decisions and update TaskSet
     fn decide_start_task(&mut self, task_id: Uuid) -> Option<TaskStartData> {
-        debug!(
+        info!(
             "Deciding start for task {} in domain {}",
             task_id, self.domain
         );
 
         let task = match self.task_set.get_task_mut(task_id) {
-            Some(task) => task,
+            Some(task) => {
+                info!(
+                    "Found task {} with status {} in domain {}",
+                    task_id, task.status, self.domain
+                );
+                task
+            }
             None => {
                 warn!("Task {} not found in domain {}", task_id, self.domain);
                 return None;
@@ -351,9 +363,15 @@ impl SchedulerState {
         }
 
         let shepherd_id = match self.shepherd_manager.find_best_shepherd() {
-            Some(id) => id,
+            Some(id) => {
+                info!(
+                    "Found shepherd {} for task {} in domain {}",
+                    id, task_id, self.domain
+                );
+                id
+            }
             None => {
-                debug!(
+                info!(
                     "No shepherds available for task {} in domain {}",
                     task_id, self.domain
                 );
@@ -363,6 +381,10 @@ impl SchedulerState {
 
         let attempt_number = task.attempts.len() as i32;
 
+        info!(
+            "Updating task {} status from {} to ATTEMPT_STARTED in domain {}",
+            task_id, task.status, self.domain
+        );
         task.status = TASK_STATUS_ATTEMPT_STARTED;
 
         let new_attempt = crate::orchestrator::taskset::TaskAttempt {
@@ -586,7 +608,9 @@ impl SchedulerState {
 
             event_stream.write_event(event_record).await?;
         } else {
-            // TODO: schedule retry based on retry policy
+            // TODO: Implement automatic retry triggering
+            // When task_result_data.is_final_failure is false, automatically
+            // send a StartTask command to trigger the next retry attempt
         }
 
         Ok(())

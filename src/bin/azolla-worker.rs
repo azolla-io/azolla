@@ -104,6 +104,23 @@ async fn execute_task(task_name: &str, args: &Value, kwargs: &Value) -> common::
 
     tokio::time::sleep(Duration::from_secs_f64(execution_time)).await;
 
+    // Handle special test tasks
+    match task_name {
+        "flaky_task" => {
+            return handle_flaky_task(kwargs).await;
+        }
+        "always_fail" => {
+            return create_error_result(task_name, "This task always fails", "ALWAYS_FAIL");
+        }
+        _ => {}
+    }
+
+    // Handle generic tasks with potential failure
+    handle_generic_task(task_name, args, kwargs)
+}
+
+/// Handle generic tasks with potential failure simulation
+fn handle_generic_task(task_name: &str, args: &Value, kwargs: &Value) -> common::TaskResult {
     // Simulate success/failure based on task name or arguments
     let should_fail = task_name.contains("fail")
         || kwargs
@@ -113,96 +130,19 @@ async fn execute_task(task_name: &str, args: &Value, kwargs: &Value) -> common::
 
     if should_fail {
         info!("Task {task_name} simulated failure");
-        common::TaskResult {
-            task_id: "".to_string(), // Will be set by caller
-            result_type: Some(common::task_result::ResultType::Error(
-                common::ErrorResult {
-                    r#type: "SimulatedError".to_string(),
-                    message: format!("Task {task_name} was configured to fail"),
-                    code: "SIMULATED_FAILURE".to_string(),
-                    stacktrace: "".to_string(),
-                    data: Some(common::StructValue {
-                        json_data: serde_json::json!({
-                            "task_name": task_name,
-                            "args": args,
-                            "kwargs": kwargs
-                        })
-                        .to_string(),
-                    }),
-                },
-            )),
-        }
+        create_error_result(
+            task_name,
+            &format!("Task {task_name} was configured to fail"),
+            "SIMULATED_FAILURE",
+        )
     } else {
         info!("Task {task_name} completed successfully");
 
-        // Create a simple result based on task type
         let result_value = match task_name {
-            "echo" => {
-                // Echo back the first argument
-                if let Some(arr) = args.as_array() {
-                    if let Some(first_arg) = arr.first() {
-                        match first_arg {
-                            Value::String(s) => common::AnyValue {
-                                value: Some(common::any_value::Value::StringValue(s.clone())),
-                            },
-                            Value::Number(n) => {
-                                if let Some(i) = n.as_i64() {
-                                    common::AnyValue {
-                                        value: Some(common::any_value::Value::IntValue(i)),
-                                    }
-                                } else {
-                                    common::AnyValue {
-                                        value: Some(common::any_value::Value::DoubleValue(
-                                            n.as_f64().unwrap_or(0.0),
-                                        )),
-                                    }
-                                }
-                            }
-                            Value::Bool(b) => common::AnyValue {
-                                value: Some(common::any_value::Value::BoolValue(*b)),
-                            },
-                            _ => common::AnyValue {
-                                value: Some(common::any_value::Value::JsonValue(
-                                    first_arg.to_string(),
-                                )),
-                            },
-                        }
-                    } else {
-                        common::AnyValue {
-                            value: Some(common::any_value::Value::StringValue(
-                                "empty_args".to_string(),
-                            )),
-                        }
-                    }
-                } else {
-                    common::AnyValue {
-                        value: Some(common::any_value::Value::StringValue("no_args".to_string())),
-                    }
-                }
-            }
-            "math_add" => {
-                // Add two numbers from kwargs
-                let a = kwargs.get("a").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let b = kwargs.get("b").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                common::AnyValue {
-                    value: Some(common::any_value::Value::DoubleValue(a + b)),
-                }
-            }
-            "count_args" => {
-                // Count the number of arguments
-                let count = args.as_array().map(|arr| arr.len()).unwrap_or(0) as i64;
-                common::AnyValue {
-                    value: Some(common::any_value::Value::IntValue(count)),
-                }
-            }
-            _ => {
-                // Default: return success message
-                common::AnyValue {
-                    value: Some(common::any_value::Value::StringValue(format!(
-                        "Task {task_name} completed"
-                    ))),
-                }
-            }
+            "echo" => handle_echo_task(args),
+            "math_add" => handle_math_add_task(kwargs),
+            "count_args" => handle_count_args_task(args),
+            _ => handle_default_task(task_name),
         };
 
         common::TaskResult {
@@ -213,6 +153,143 @@ async fn execute_task(task_name: &str, args: &Value, kwargs: &Value) -> common::
                 },
             )),
         }
+    }
+}
+
+/// Handle echo task - echo back the first argument
+fn handle_echo_task(args: &Value) -> common::AnyValue {
+    if let Some(arr) = args.as_array() {
+        if let Some(first_arg) = arr.first() {
+            match first_arg {
+                Value::String(s) => common::AnyValue {
+                    value: Some(common::any_value::Value::StringValue(s.clone())),
+                },
+                Value::Number(n) => {
+                    if let Some(i) = n.as_i64() {
+                        common::AnyValue {
+                            value: Some(common::any_value::Value::IntValue(i)),
+                        }
+                    } else {
+                        common::AnyValue {
+                            value: Some(common::any_value::Value::DoubleValue(
+                                n.as_f64().unwrap_or(0.0),
+                            )),
+                        }
+                    }
+                }
+                Value::Bool(b) => common::AnyValue {
+                    value: Some(common::any_value::Value::BoolValue(*b)),
+                },
+                _ => common::AnyValue {
+                    value: Some(common::any_value::Value::JsonValue(first_arg.to_string())),
+                },
+            }
+        } else {
+            common::AnyValue {
+                value: Some(common::any_value::Value::StringValue(
+                    "empty_args".to_string(),
+                )),
+            }
+        }
+    } else {
+        common::AnyValue {
+            value: Some(common::any_value::Value::StringValue("no_args".to_string())),
+        }
+    }
+}
+
+/// Handle math_add task - add two numbers from kwargs
+fn handle_math_add_task(kwargs: &Value) -> common::AnyValue {
+    let a = kwargs.get("a").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let b = kwargs.get("b").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    common::AnyValue {
+        value: Some(common::any_value::Value::DoubleValue(a + b)),
+    }
+}
+
+/// Handle count_args task - count the number of arguments
+fn handle_count_args_task(args: &Value) -> common::AnyValue {
+    let count = args.as_array().map(|arr| arr.len()).unwrap_or(0) as i64;
+    common::AnyValue {
+        value: Some(common::any_value::Value::IntValue(count)),
+    }
+}
+
+/// Handle default task - return success message
+fn handle_default_task(task_name: &str) -> common::AnyValue {
+    common::AnyValue {
+        value: Some(common::any_value::Value::StringValue(format!(
+            "Task {task_name} completed"
+        ))),
+    }
+}
+
+async fn handle_flaky_task(kwargs: &Value) -> common::TaskResult {
+    let fail_first_attempt = kwargs
+        .get("fail_first_attempt")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    if fail_first_attempt {
+        // Check if we have a state file to track attempts
+        let state_file =
+            std::env::temp_dir().join(format!("flaky_task_state_{}", std::process::id()));
+
+        // Read attempt count from state file
+        let attempt_count = match std::fs::read_to_string(&state_file) {
+            Ok(content) => content.trim().parse::<u32>().unwrap_or(0),
+            Err(_) => 0,
+        };
+
+        // Increment and write back
+        let new_attempt_count = attempt_count + 1;
+        let _ = std::fs::write(&state_file, new_attempt_count.to_string());
+
+        info!("Flaky task attempt #{new_attempt_count}");
+
+        // Fail on first attempt, succeed on subsequent attempts
+        if new_attempt_count == 1 {
+            return create_error_result(
+                "flaky_task",
+                "First attempt failure",
+                "FLAKY_TASK_FIRST_ATTEMPT",
+            );
+        }
+    }
+
+    // Success case
+    common::TaskResult {
+        task_id: "".to_string(),
+        result_type: Some(common::task_result::ResultType::Success(
+            common::SuccessResult {
+                result: Some(common::AnyValue {
+                    value: Some(common::any_value::Value::StringValue(
+                        "Flaky task succeeded on retry".to_string(),
+                    )),
+                }),
+            },
+        )),
+    }
+}
+
+fn create_error_result(task_name: &str, message: &str, code: &str) -> common::TaskResult {
+    common::TaskResult {
+        task_id: "".to_string(), // Will be set by caller
+        result_type: Some(common::task_result::ResultType::Error(
+            common::ErrorResult {
+                r#type: "TestError".to_string(),
+                message: message.to_string(),
+                code: code.to_string(),
+                stacktrace: "".to_string(),
+                data: Some(common::StructValue {
+                    json_data: serde_json::json!({
+                        "task_name": task_name,
+                        "error_code": code
+                    })
+                    .to_string(),
+                }),
+            },
+        )),
     }
 }
 
