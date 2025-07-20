@@ -3,6 +3,7 @@ pub mod cluster_service;
 pub mod db;
 pub mod engine;
 pub mod event_stream;
+pub mod retry_policy;
 pub mod scheduler;
 pub mod shepherd_manager;
 pub mod startup;
