@@ -277,10 +277,50 @@ impl IntegrationTestEnvironment {
     }
 
     pub async fn get_shepherd_count(&self) -> Result<i64> {
-        // Shepherds are tracked in-memory by the orchestrator's cluster service
-        // Since we don't have direct access to the cluster service state in tests,
-        // we'll use the number of shepherd handles we've created as a proxy
-        Ok(self.shepherd_handles.len() as i64)
+        // Get actual shepherd count from ShepherdManager
+        let stats = self.engine().shepherd_manager.get_stats();
+        Ok(stats.connected_shepherds as i64)
+    }
+
+    /// Check if a specific shepherd is registered and connected with the orchestrator
+    pub async fn is_shepherd_registered(&self, shepherd_uuid: uuid::Uuid) -> Result<bool> {
+        Ok(self
+            .engine()
+            .shepherd_manager
+            .is_shepherd_registered(shepherd_uuid))
+    }
+
+    /// Wait for a specific shepherd to be registered, with timeout
+    pub async fn wait_for_shepherd_registration(
+        &self,
+        shepherd_uuid: uuid::Uuid,
+        timeout: std::time::Duration,
+    ) -> Result<bool> {
+        let start = std::time::Instant::now();
+
+        while start.elapsed() < timeout {
+            if self.is_shepherd_registered(shepherd_uuid).await? {
+                return Ok(true);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+
+        Ok(false)
+    }
+
+    /// Wait for any shepherd to be registered, with timeout  
+    pub async fn wait_for_any_shepherd(&self, timeout: std::time::Duration) -> Result<bool> {
+        let start = std::time::Instant::now();
+
+        while start.elapsed() < timeout {
+            let count = self.get_shepherd_count().await?;
+            if count > 0 {
+                return Ok(true);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+
+        Ok(false)
     }
 
     /// Ensures the worker binary is built and available for testing.
@@ -372,6 +412,7 @@ pub fn find_available_port() -> u16 {
     addr.port()
 }
 
+#[derive(Debug)]
 pub struct TaskAttempt {
     pub attempt_number: i32,
     pub status: i16,
@@ -439,6 +480,66 @@ impl TaskTestData {
                     "jitter": "full"
                 },
                 "retry": {"include_errors": ["ValueError", "RuntimeError"]}
+            })
+            .to_string(),
+            flow_instance_id: None,
+        }
+    }
+
+    pub fn failing_task_with_longer_retry_delay() -> CreateTaskRequest {
+        CreateTaskRequest {
+            name: "always_fail".to_string(),
+            domain: "test".to_string(),
+            args: vec![],
+            kwargs: r#"{"should_fail": true}"#.to_string(),
+            retry_policy: json!({
+                "version": 1,
+                "stop": {"max_attempts": 3},
+                "wait": {
+                    "strategy": "fixed",
+                    "delay": 3.0  // 3 second delay for taskA
+                },
+                "retry": {"include_errors": ["*"]}
+            })
+            .to_string(),
+            flow_instance_id: None,
+        }
+    }
+
+    pub fn failing_task_with_shorter_retry_delay() -> CreateTaskRequest {
+        CreateTaskRequest {
+            name: "always_fail".to_string(),
+            domain: "test".to_string(),
+            args: vec![],
+            kwargs: r#"{"should_fail": true}"#.to_string(),
+            retry_policy: json!({
+                "version": 1,
+                "stop": {"max_attempts": 3},
+                "wait": {
+                    "strategy": "fixed",
+                    "delay": 1.0  // 1 second delay for taskB
+                },
+                "retry": {"include_errors": ["*"]}
+            })
+            .to_string(),
+            flow_instance_id: None,
+        }
+    }
+
+    pub fn failing_task_with_short_retry_delay() -> CreateTaskRequest {
+        CreateTaskRequest {
+            name: "always_fail".to_string(),
+            domain: "test".to_string(),
+            args: vec![],
+            kwargs: r#"{"should_fail": true}"#.to_string(),
+            retry_policy: json!({
+                "version": 1,
+                "stop": {"max_attempts": 3},
+                "wait": {
+                    "strategy": "fixed",
+                    "delay": 1.0  // 1 second delay for predictable retry timing
+                },
+                "retry": {"include_errors": ["TestError", "ValueError", "RuntimeError"]}
             })
             .to_string(),
             flow_instance_id: None,
