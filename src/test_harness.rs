@@ -1,4 +1,5 @@
 use anyhow::Result;
+use serde_json::json;
 use std::time::Duration;
 use tonic::transport::Channel;
 use uuid::Uuid;
@@ -388,7 +389,13 @@ impl TaskTestData {
             domain: "test".to_string(),
             args: vec![message.to_string()],
             kwargs: "{}".to_string(),
-            retry_policy: r#"{"max_attempts": 1}"#.to_string(),
+            retry_policy: json!({
+                "version": 1,
+                "stop": {"max_attempts": 1},
+                "wait": {"strategy": "fixed", "delay": 1},
+                "retry": {"include_errors": ["ValueError"]}
+            })
+            .to_string(),
             flow_instance_id: None,
         }
     }
@@ -399,7 +406,18 @@ impl TaskTestData {
             domain: "test".to_string(),
             args: vec![],
             kwargs: r#"{"fail_first_attempt": true}"#.to_string(),
-            retry_policy: r#"{"max_attempts": 3, "backoff": "linear"}"#.to_string(),
+            retry_policy: json!({
+                "version": 1,
+                "stop": {"max_attempts": 3},
+                "wait": {
+                    "strategy": "exponential",
+                    "initial_delay": 1,
+                    "multiplier": 2,
+                    "max_delay": 60
+                },
+                "retry": {"include_errors": ["ValueError", "RuntimeError"]}
+            })
+            .to_string(),
             flow_instance_id: None,
         }
     }
@@ -410,7 +428,19 @@ impl TaskTestData {
             domain: "test".to_string(),
             args: vec![],
             kwargs: r#"{"should_fail": true}"#.to_string(),
-            retry_policy: r#"{"max_attempts": 3, "backoff": "exponential"}"#.to_string(),
+            retry_policy: json!({
+                "version": 1,
+                "stop": {"max_attempts": 3},
+                "wait": {
+                    "strategy": "exponential_jitter",
+                    "initial_delay": 1,
+                    "multiplier": 2,
+                    "max_delay": 60,
+                    "jitter": "full"
+                },
+                "retry": {"include_errors": ["ValueError", "RuntimeError"]}
+            })
+            .to_string(),
             flow_instance_id: None,
         }
     }

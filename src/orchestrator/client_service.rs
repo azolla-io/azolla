@@ -1,5 +1,6 @@
 use crate::orchestrator::engine::Engine;
 use crate::orchestrator::event_stream::EventRecord;
+use crate::orchestrator::retry_policy::RetryPolicy;
 use crate::orchestrator::taskset::Task;
 use anyhow::Result;
 use chrono::Utc;
@@ -53,6 +54,14 @@ impl ClientService for ClientServiceImpl {
         let task_id = Uuid::new_v4();
         let retry_policy: serde_json::Value = serde_json::from_str(&req.retry_policy)
             .map_err(|e| Status::invalid_argument(format!("Invalid retry_policy JSON: {e}")))?;
+
+        // Validate retry policy
+        let parsed_retry_policy = RetryPolicy::from_json(&retry_policy)
+            .map_err(|e| Status::invalid_argument(format!("Invalid retry policy: {e}")))?;
+
+        parsed_retry_policy.validate().map_err(|e| {
+            Status::invalid_argument(format!("Retry policy validation failed: {e}"))
+        })?;
         let kwargs: serde_json::Value = serde_json::from_str(&req.kwargs)
             .map_err(|e| Status::invalid_argument(format!("Invalid kwargs JSON: {e}")))?;
 
