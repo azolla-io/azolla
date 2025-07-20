@@ -568,7 +568,8 @@ impl SchedulerState {
 
             // Check max_attempts
             if let Some(max_attempts) = retry_policy.stop.max_attempts {
-                if attempt_number >= max_attempts as i32 {
+                // attempt_number is 0-based, so +1 to get total attempts made
+                if (attempt_number + 1) >= max_attempts as i32 {
                     info!("Max attempts ({max_attempts}) reached for task {task_id}");
                     task.status = TASK_STATUS_FAILED;
                     return Some(TaskResultData {
@@ -686,7 +687,7 @@ impl SchedulerState {
                     task_id: task_id.to_string(),
                     result_type: Some(crate::proto::common::task_result::ResultType::Error(
                         crate::proto::common::ErrorResult {
-                            r#type: "ShepherdDeath".to_string(),
+                            r#type: "InfrastructureError".to_string(),
                             message: "Shepherd disconnected".to_string(),
                             code: "503".to_string(),
                             stacktrace: "".to_string(),
@@ -2307,7 +2308,7 @@ mod tests {
                     "version": 1,
                     "stop": {"max_attempts": 3},
                     "wait": {"strategy": "exponential_jitter", "initial_delay": 1, "multiplier": 2, "max_delay": 300},
-                    "retry": {"include_errors": ["ValueError", "RuntimeError", "RetryableError", "FatalError"]}
+                    "retry": {"include_errors": ["ValueError", "RuntimeError", "RetryableError", "FatalError", "InfrastructureError"]}
                 });
                 task.status = TASK_STATUS_CREATED;
                 task.created_at = Utc::now();
