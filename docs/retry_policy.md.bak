@@ -46,7 +46,8 @@ If the policy object is omitted entirely, the scheduler behaves as if the defaul
 
 * **`fixed`** `next_delay = delay`
 * **`exponential`** `next_delay = min(initial_delay × multiplier^(attempt‑1), max_delay)`
-* **`exponential_jitter`** compute the exponential delay above, then pick a uniform random value in `[0, computed_delay]` (always with full jitter)
+* **`exponential_jitter`** compute the deterministic exponential delay above, then
+  *if `jitter = "full"`* pick a uniform random value in `[0, deterministic_delay]`.
 
 Attempt numbers start at 0 for the *first attempt* (i.e. the original run). The first retry is attempt 1.
 
