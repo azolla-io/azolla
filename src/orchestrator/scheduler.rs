@@ -1,4 +1,5 @@
 use crate::orchestrator::event_stream::{EventRecord, EventStream};
+use crate::orchestrator::retry_policy::RetryPolicy;
 use crate::orchestrator::shepherd_manager::ShepherdManager;
 use crate::orchestrator::taskset::{Task, TaskSet};
 use crate::{
@@ -11,7 +12,7 @@ use chrono::Utc;
 use dashmap::DashMap;
 use log::{debug, error, info, warn};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
@@ -114,6 +115,16 @@ impl SchedulerActor {
                 config,
             };
             loop {
+                let next_retry_time = scheduler_state.task_set.get_next_retry_time();
+
+                let timeout_future = match next_retry_time {
+                    Some(when) => {
+                        let tokio_instant = tokio::time::Instant::from_std(when);
+                        tokio::time::sleep_until(tokio_instant)
+                    }
+                    None => tokio::time::sleep(std::time::Duration::from_secs(3600)), // 1 hour default
+                };
+
                 tokio::select! {
                     command = receiver.recv() => {
                         match command {
@@ -180,6 +191,9 @@ impl SchedulerActor {
                                 break;
                             }
                         }
+                    }
+                    _ = timeout_future => {
+                        scheduler_state.process_due_retries().await;
                     }
                 }
             }
@@ -524,38 +538,80 @@ impl SchedulerState {
                 target_attempt.status = crate::ATTEMPT_STATUS_FAILED;
             }
 
-            let retry_policy = &task.retry_policy;
-            let max_attempts = retry_policy
-                .get("max_attempts")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(1) as i32;
+            // Parse retry policy with enhanced logic
+            let retry_policy = RetryPolicy::from_json(&task.retry_policy).unwrap_or_default();
 
             let flow_instance_id = task.flow_instance_id;
 
-            if attempt_number < max_attempts - 1 {
-                info!(
-                    "Task {} attempt {} failed, {} attempts remaining",
-                    task_id,
-                    attempt_number,
-                    max_attempts - attempt_number - 1
-                );
-                task.status = TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT;
+            // Check if error type should trigger retry
+            let should_retry =
+                if let Some(crate::proto::common::task_result::ResultType::Error(error)) =
+                    result.result_type.as_ref()
+                {
+                    crate::orchestrator::retry_policy::should_retry_error(
+                        &retry_policy.retry,
+                        &error.r#type,
+                    )
+                } else {
+                    false
+                };
 
-                Some(TaskResultData {
-                    flow_instance_id,
-                    attempt_number,
-                    is_final_failure: false,
-                })
-            } else {
-                info!("Task {task_id} attempt {attempt_number} failed, no more attempts available");
+            if !should_retry {
+                info!("Error type not in retry list, failing task {task_id}");
                 task.status = TASK_STATUS_FAILED;
-
-                Some(TaskResultData {
+                return Some(TaskResultData {
                     flow_instance_id,
                     attempt_number,
                     is_final_failure: true,
-                })
+                });
             }
+
+            // Check max_attempts
+            if let Some(max_attempts) = retry_policy.stop.max_attempts {
+                if attempt_number >= max_attempts as i32 {
+                    info!("Max attempts ({max_attempts}) reached for task {task_id}");
+                    task.status = TASK_STATUS_FAILED;
+                    return Some(TaskResultData {
+                        flow_instance_id,
+                        attempt_number,
+                        is_final_failure: true,
+                    });
+                }
+            }
+
+            // Check max_delay
+            if task.has_exceeded_max_delay(retry_policy.stop.max_delay) {
+                info!("Max delay exceeded for task {task_id}");
+                task.status = TASK_STATUS_FAILED;
+                return Some(TaskResultData {
+                    flow_instance_id,
+                    attempt_number,
+                    is_final_failure: true,
+                });
+            }
+
+            // Task can be retried - schedule the retry
+            info!("Task {task_id} attempt {attempt_number} failed, scheduling retry");
+            task.status = TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT;
+
+            // Calculate retry delay and schedule
+            let retry_attempt_number = task.attempts.len() as u32;
+            let delay = retry_policy.wait.calculate_delay(retry_attempt_number);
+            let retry_time = Instant::now() + delay;
+
+            self.task_set.schedule_retry(task_id, retry_time);
+
+            info!(
+                "Scheduled retry for task {} in {} seconds",
+                task_id,
+                delay.as_secs_f64()
+            );
+
+            Some(TaskResultData {
+                flow_instance_id,
+                attempt_number,
+                is_final_failure: false,
+            })
         }
     }
 
@@ -608,9 +664,9 @@ impl SchedulerState {
 
             event_stream.write_event(event_record).await?;
         } else {
-            // TODO: Implement automatic retry triggering
-            // When task_result_data.is_final_failure is false, automatically
-            // send a StartTask command to trigger the next retry attempt
+            // Retry scheduling is handled in the synchronous decide_handle_task_result phase
+            // The task is now scheduled in the BinaryHeap and will be retried by process_due_retries
+            debug!("Task {task_id} retry scheduled, no immediate action needed");
         }
 
         Ok(())
@@ -739,6 +795,45 @@ impl SchedulerState {
 
         event_stream.write_event(event_record).await?;
         Ok(())
+    }
+
+    async fn process_due_retries(&mut self) {
+        let now = std::time::Instant::now();
+        let due_task_ids = self.task_set.pop_due_retries(now);
+
+        for task_id in due_task_ids {
+            if let Some(task) = self.task_set.get_task(task_id) {
+                if task.status == crate::TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT {
+                    info!(
+                        "Processing due retry for task {} in domain {}",
+                        task_id, self.domain
+                    );
+
+                    // Use the existing decide_start_task logic for retry
+                    if let Some(task_start_data) = self.decide_start_task(task_id) {
+                        let domain = self.domain.clone();
+                        let shepherd_manager = self.shepherd_manager.clone();
+                        let event_stream = self.event_stream.clone();
+
+                        // Execute the retry in the background
+                        tokio::spawn(async move {
+                            let result = SchedulerState::execute_start_task(
+                                task_id,
+                                task_start_data,
+                                domain,
+                                shepherd_manager,
+                                event_stream,
+                            )
+                            .await;
+
+                            if let Err(e) = result {
+                                log::error!("Failed to execute retry for task {task_id}: {e}");
+                            }
+                        });
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -992,7 +1087,15 @@ mod tests {
             config,
         ));
 
-        let task = create_test_task("test_domain", json!({"max_attempts": 3}));
+        let task = create_test_task(
+            "test_domain",
+            json!({
+                "version": 1,
+                "stop": {"max_attempts": 3},
+                "wait": {"strategy": "exponential_jitter", "initial_delay": 1, "multiplier": 2, "max_delay": 300},
+                "retry": {"include_errors": ["ValueError", "RuntimeError", "RetryableError", "FatalError"]}
+            }),
+        );
         let task_id = task.id;
 
         let domain_actor = task_registry.get_or_create_domain("test_domain");
@@ -1021,7 +1124,15 @@ mod tests {
             config,
         ));
 
-        let task = create_test_task("test_domain", json!({"max_attempts": 3}));
+        let task = create_test_task(
+            "test_domain",
+            json!({
+                "version": 1,
+                "stop": {"max_attempts": 3},
+                "wait": {"strategy": "exponential_jitter", "initial_delay": 1, "multiplier": 2, "max_delay": 300},
+                "retry": {"include_errors": ["ValueError", "RuntimeError", "RetryableError", "FatalError"]}
+            }),
+        );
         let task_id = task.id;
 
         let domain_actor = task_registry.get_or_create_domain("test_domain");
@@ -1056,7 +1167,15 @@ mod tests {
         ));
 
         // Create and add a task in ATTEMPT_STARTED state with a proper attempt
-        let mut task = create_test_task("test_domain", json!({"max_attempts": 3}));
+        let mut task = create_test_task(
+            "test_domain",
+            json!({
+                "version": 1,
+                "stop": {"max_attempts": 3},
+                "wait": {"strategy": "exponential_jitter", "initial_delay": 1, "multiplier": 2, "max_delay": 300},
+                "retry": {"include_errors": ["ValueError", "RuntimeError", "RetryableError", "FatalError"]}
+            }),
+        );
         task.status = TASK_STATUS_ATTEMPT_STARTED;
         task.attempts
             .push(crate::orchestrator::taskset::TaskAttempt {
@@ -1104,7 +1223,15 @@ mod tests {
             engine.initialize().await.unwrap();
 
             // Create and add a task in ATTEMPT_STARTED state with multiple attempts allowed
-            let mut task = create_test_task("test_domain", json!({"max_attempts": 3}));
+            let mut task = create_test_task(
+                "test_domain",
+                json!({
+                    "version": 1,
+                    "stop": {"max_attempts": 3},
+                    "wait": {"strategy": "exponential_jitter", "initial_delay": 1, "multiplier": 2, "max_delay": 300},
+                    "retry": {"include_errors": ["ValueError", "RuntimeError", "RetryableError", "FatalError"]}
+                }),
+            );
             task.status = TASK_STATUS_ATTEMPT_STARTED;
             task.attempts = vec![crate::orchestrator::taskset::TaskAttempt {
                 attempt: 1,
@@ -1159,7 +1286,15 @@ mod tests {
             engine.initialize().await.unwrap();
 
             // Create and add a task in ATTEMPT_STARTED state with max attempts reached
-            let mut task = create_test_task("test_domain", json!({"max_attempts": 1}));
+            let mut task = create_test_task(
+                "test_domain",
+                json!({
+                    "version": 1,
+                    "stop": {"max_attempts": 1},
+                    "wait": {"strategy": "fixed", "delay": 1},
+                    "retry": {"include_errors": ["ValueError", "RuntimeError", "RetryableError", "FatalError"]}
+                }),
+            );
             task.status = TASK_STATUS_ATTEMPT_STARTED;
             task.attempts = vec![crate::orchestrator::taskset::TaskAttempt {
                 attempt: 1,
@@ -1225,14 +1360,38 @@ mod tests {
         let task_registry = Arc::new(TaskSetRegistry::new());
         let domain_actor = task_registry.get_or_create_domain("test_domain");
 
-        let created_task = create_test_task("test_domain", json!({"max_attempts": 3}));
+        let created_task = create_test_task(
+            "test_domain",
+            json!({
+                "version": 1,
+                "stop": {"max_attempts": 3},
+                "wait": {"strategy": "exponential_jitter", "initial_delay": 1, "multiplier": 2, "max_delay": 300},
+                "retry": {"include_errors": ["ValueError", "RuntimeError", "RetryableError", "FatalError"]}
+            }),
+        );
         let created_id = created_task.id;
 
-        let mut started_task = create_test_task("test_domain", json!({"max_attempts": 3}));
+        let mut started_task = create_test_task(
+            "test_domain",
+            json!({
+                "version": 1,
+                "stop": {"max_attempts": 3},
+                "wait": {"strategy": "exponential_jitter", "initial_delay": 1, "multiplier": 2, "max_delay": 300},
+                "retry": {"include_errors": ["ValueError", "RuntimeError", "RetryableError", "FatalError"]}
+            }),
+        );
         started_task.status = TASK_STATUS_ATTEMPT_STARTED;
         let started_id = started_task.id;
 
-        let mut retry_task = create_test_task("test_domain", json!({"max_attempts": 3}));
+        let mut retry_task = create_test_task(
+            "test_domain",
+            json!({
+                "version": 1,
+                "stop": {"max_attempts": 3},
+                "wait": {"strategy": "exponential_jitter", "initial_delay": 1, "multiplier": 2, "max_delay": 300},
+                "retry": {"include_errors": ["ValueError", "RuntimeError", "RetryableError", "FatalError"]}
+            }),
+        );
         retry_task.status = crate::TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT;
         let retry_id = retry_task.id;
 
@@ -1266,7 +1425,15 @@ mod tests {
             config,
         ));
 
-        let mut task = create_test_task("test_domain", json!({"max_attempts": 3}));
+        let mut task = create_test_task(
+            "test_domain",
+            json!({
+                "version": 1,
+                "stop": {"max_attempts": 3},
+                "wait": {"strategy": "exponential_jitter", "initial_delay": 1, "multiplier": 2, "max_delay": 300},
+                "retry": {"include_errors": ["ValueError", "RuntimeError", "RetryableError", "FatalError"]}
+            }),
+        );
         task.created_at = Utc::now() - chrono::Duration::seconds(5); // 5 seconds ago
         let task_id = task.id;
 
@@ -1302,7 +1469,12 @@ mod tests {
 
             let mut task = Task::new();
             task.name = "integration_test_task".to_string();
-            task.retry_policy = json!({"max_attempts": 3});
+            task.retry_policy = json!({
+                "version": 1,
+                "stop": {"max_attempts": 3},
+                "wait": {"strategy": "exponential_jitter", "initial_delay": 1, "multiplier": 2, "max_delay": 300},
+                "retry": {"include_errors": ["ValueError", "RuntimeError", "RetryableError", "FatalError"]}
+            });
             task.status = TASK_STATUS_CREATED;
             task.created_at = Utc::now();
             let task_id = task.id;
@@ -1393,7 +1565,12 @@ mod tests {
                     for i in 0..3 {
                         let mut task = Task::new();
                         task.name = format!("isolation_task_{domain}_{i}");
-                        task.retry_policy = json!({"max_attempts": 2});
+                        task.retry_policy = json!({
+                            "version": 1,
+                            "stop": {"max_attempts": 2},
+                            "wait": {"strategy": "fixed", "delay": 1},
+                            "retry": {"include_errors": ["ValueError", "RuntimeError", "RetryableError", "FatalError"]}
+                        });
                         task.args = vec![format!("arg_{i}")];
                         task.kwargs = json!({"domain": domain, "index": i});
                         task.status = TASK_STATUS_CREATED;
@@ -1518,7 +1695,12 @@ mod tests {
                 // Create task with retry policy
                 let mut task = Task::new();
                 task.name = "retry_test_task".to_string();
-                task.retry_policy = json!({"max_attempts": 3});
+                task.retry_policy = json!({
+                    "version": 1,
+                    "stop": {"max_attempts": 3},
+                    "wait": {"strategy": "exponential_jitter", "initial_delay": 1, "multiplier": 2, "max_delay": 300},
+                    "retry": {"include_errors": ["ValueError", "RuntimeError", "RetryableError", "FatalError"]}
+                });
                 task.status = TASK_STATUS_ATTEMPT_STARTED;
                 task.created_at = Utc::now();
                 task.attempts = vec![crate::orchestrator::taskset::TaskAttempt {
@@ -1630,7 +1812,12 @@ mod tests {
             // Create a task manually and persist to database
             let task_name = "db_integration_test_task";
             let domain = "test_domain";
-            let retry_policy = json!({"max_attempts": 3, "task_timeout": 60});
+            let retry_policy = json!({
+                "version": 1,
+                "stop": {"max_attempts": 3},
+                "wait": {"strategy": "exponential", "initial_delay": 1, "multiplier": 2, "max_delay": 60},
+                "retry": {"include_errors": ["ValueError", "RuntimeError", "RetryableError", "FatalError"]}
+            });
 
             let mut task = Task::new();
             task.name = task_name.to_string();
@@ -1901,7 +2088,12 @@ mod tests {
             // Create task with specific retry policy
             let mut task = Task::new();
             task.name = "db_retry_test_task".to_string();
-            task.retry_policy = json!({"max_attempts": 3, "task_timeout": 30});
+            task.retry_policy = json!({
+                "version": 1,
+                "stop": {"max_attempts": 3, "max_delay": 30},
+                "wait": {"strategy": "exponential_jitter", "initial_delay": 1, "multiplier": 2, "max_delay": 30},
+                "retry": {"include_errors": ["ValueError", "RuntimeError", "RetryableError", "FatalError"]}
+            });
             task.status = TASK_STATUS_ATTEMPT_STARTED;
             task.created_at = Utc::now();
             task.attempts = vec![TaskAttempt {
@@ -2111,7 +2303,12 @@ mod tests {
             for i in 0..3 {
                 let mut task = Task::new();
                 task.name = format!("shepherd_failure_task_{i}");
-                task.retry_policy = json!({"max_attempts": 3});
+                task.retry_policy = json!({
+                    "version": 1,
+                    "stop": {"max_attempts": 3},
+                    "wait": {"strategy": "exponential_jitter", "initial_delay": 1, "multiplier": 2, "max_delay": 300},
+                    "retry": {"include_errors": ["ValueError", "RuntimeError", "RetryableError", "FatalError"]}
+                });
                 task.status = TASK_STATUS_CREATED;
                 task.created_at = Utc::now();
                 let task_id = task.id;

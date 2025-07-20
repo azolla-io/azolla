@@ -50,7 +50,7 @@ If the policy object is omitted entirely, the scheduler behaves as if the defaul
 * **`exponential_jitter`** compute the deterministic exponential delay above, then
   *if `jitter = "full"`* pick a uniform random value in `[0, deterministic_delay]`.
 
-Attempt numbers start at 1 for the *first retry* (i.e. after the original failure).
+Attempt numbers start at 0 for the *first attempt* (i.e. the original run). The first retry is attempt 1.
 
 ---
 
@@ -59,7 +59,7 @@ Attempt numbers start at 1 for the *first retry* (i.e. after the original fa
 | field                | type                        | default                  | meaning                                                                                            |
 | -------------------- | --------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------- |
 | `include_errors` | array of string-ErrorResult‑types | `["ValueError"]` | *Any* listed triggers a retry. Empty array ⇒ “retry on **nothing**”.         |
-| `exclude_errors` | array of string‑ErrorResult‑types | `[]`                     | If an error matches **any** here, do **not** retry, even if it’s also in `include_exceptions`. |
+| `exclude_errors` | array of string‑ErrorResult‑types | `[]`                     | If an error matches **any** here, do **not** retry, even if it’s also in `include_errors`. |
 
 ---
 
@@ -78,7 +78,7 @@ If a field or section is absent, apply the values in **bold** above:
     "max_delay": 300,
     "jitter": "full"
   },
-  "retry": { "include_exceptions": ["builtins.Exception"] }
+  "retry": { "include_errors": ["builtins.Exception"] }
 }
 ```
 
@@ -95,7 +95,7 @@ These defaults give you **five attempts**, exponential back‑off capped at **5�
   "version": 1,
   "stop":  { "max_delay": 1800 },
   "wait":  { "strategy": "fixed", "delay": 10 },
-  "retry": { "include_exceptions": [
+  "retry": { "include_errors": [
                "requests.exceptions.ConnectionError",
                "requests.exceptions.Timeout"
              ] }

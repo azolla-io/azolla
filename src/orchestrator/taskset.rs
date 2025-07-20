@@ -10,12 +10,32 @@ use futures::StreamExt;
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use serde_json::Value as JsonValue;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio_postgres::Row;
 use uuid::Uuid;
 
 use log::{debug, info};
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct ScheduledRetry {
+    when: Instant,
+    task_id: Uuid,
+}
+
+impl Ord for ScheduledRetry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Reverse order for min-heap (earliest first)
+        other.when.cmp(&self.when)
+    }
+}
+
+impl PartialOrd for ScheduledRetry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct TaskAttempt {
@@ -74,6 +94,23 @@ impl Task {
             attempts: Vec::new(),
         }
     }
+
+    pub fn has_exceeded_max_delay(&self, max_delay_secs: Option<f64>) -> bool {
+        if let Some(max_delay) = max_delay_secs {
+            if let Some(first_attempt) = self.attempts.first() {
+                if let Some(start_time) = first_attempt.start_time {
+                    let elapsed = Utc::now().signed_duration_since(start_time);
+                    elapsed.num_seconds() as f64 >= max_delay
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
 }
 
 pub struct TaskSet {
@@ -81,6 +118,7 @@ pub struct TaskSet {
     tasks: Vec<Task>,
     id_to_index: HashMap<Uuid, usize>,
     gaps: Vec<usize>,
+    pub retry_scheduler: BinaryHeap<ScheduledRetry>,
 }
 
 impl TaskSet {
@@ -90,6 +128,7 @@ impl TaskSet {
             tasks: Vec::new(),
             id_to_index: HashMap::new(),
             gaps: Vec::new(),
+            retry_scheduler: BinaryHeap::new(),
         }
     }
 
@@ -196,6 +235,29 @@ impl TaskSet {
         self.tasks.iter_mut().for_each(|t| t.clear());
         self.id_to_index.clear();
         self.gaps.clear();
+        self.retry_scheduler.clear();
+    }
+
+    pub fn schedule_retry(&mut self, task_id: Uuid, when: Instant) {
+        self.retry_scheduler.push(ScheduledRetry { when, task_id });
+    }
+
+    pub fn get_next_retry_time(&self) -> Option<Instant> {
+        self.retry_scheduler.peek().map(|retry| retry.when)
+    }
+
+    pub fn pop_due_retries(&mut self, now: Instant) -> Vec<Uuid> {
+        let mut due_tasks = Vec::new();
+
+        while let Some(retry) = self.retry_scheduler.peek() {
+            if retry.when <= now {
+                due_tasks.push(self.retry_scheduler.pop().unwrap().task_id);
+            } else {
+                break;
+            }
+        }
+
+        due_tasks
     }
 }
 
