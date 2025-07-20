@@ -112,16 +112,20 @@ impl ClientService for ClientServiceImpl {
             attempts: Vec::new(),
         };
 
-        {
-            self.engine.registry.upsert_task(&req.domain, task);
-        }
-
-        // Schedule the task using the scheduler
+        // Create and schedule the task via the SchedulerActor
         {
             let scheduler = self
                 .engine
                 .scheduler_registry
                 .get_or_create_scheduler(&req.domain);
+
+            // First, add the task to the SchedulerActor's TaskSet
+            scheduler
+                .create_task(task)
+                .await
+                .map_err(|e| Status::internal(format!("Failed to create task: {e:?}")))?;
+
+            // Then, start the task
             scheduler
                 .start_task_async(task_id)
                 .await

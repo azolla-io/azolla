@@ -11,7 +11,32 @@ use crate::orchestrator::taskset::TaskSetRegistry;
 #[derive(Clone)]
 pub struct Engine {
     pub pool: PgPool,
+
+    /// TaskSetRegistry holds TaskSets until they are transferred to SchedulerActors.
+    ///
+    /// ⚠️  IMPORTANT USAGE WARNING:
+    ///
+    /// The TaskSetRegistry transfers ownership of TaskSets to SchedulerActors via
+    /// `extract_task_set()` when schedulers are created. Once a SchedulerActor owns
+    /// a TaskSet for a domain, direct access to the registry for that domain will
+    /// NOT reflect the current state.
+    ///
+    /// CORRECT PATTERNS:
+    /// - ✅ Create tasks via ClientService (delegates to SchedulerActor)
+    /// - ✅ Access tasks via SchedulerActor methods (get_task_for_test, etc.)
+    /// - ✅ Unit tests: Insert tasks BEFORE creating SchedulerActor
+    ///
+    /// INCORRECT PATTERNS:
+    /// - ❌ Insert tasks directly into registry after SchedulerActor exists
+    /// - ❌ Read tasks from registry when SchedulerActor owns the domain
+    /// - ❌ Bypass SchedulerActor for task operations in production code
+    ///
+    /// For task operations, always use:
+    /// 1. ClientService::create_task() (production)
+    /// 2. SchedulerActor methods (testing/internal)
+    /// 3. This registry directly only during engine initialization or unit test setup
     pub registry: Arc<TaskSetRegistry>,
+
     pub event_stream: Arc<EventStream>,
     pub shepherd_manager: Arc<ShepherdManager>,
     pub scheduler_registry: Arc<SchedulerRegistry>,
