@@ -539,7 +539,12 @@ impl SchedulerState {
             }
 
             // Parse retry policy with enhanced logic
-            let retry_policy = RetryPolicy::from_json(&task.retry_policy).unwrap_or_default();
+            let retry_policy = RetryPolicy::from_json(&task.retry_policy).unwrap_or_else(|err| {
+                warn!(
+                    "Failed to parse retry policy for task {task_id}: {err}. Using default policy."
+                );
+                RetryPolicy::default()
+            });
 
             let flow_instance_id = task.flow_instance_id;
 
@@ -664,10 +669,6 @@ impl SchedulerState {
             };
 
             event_stream.write_event(event_record).await?;
-        } else {
-            // Retry scheduling is handled in the synchronous decide_handle_task_result phase
-            // The task is now scheduled in the BinaryHeap and will be retried by process_due_retries
-            debug!("Task {task_id} retry scheduled, no immediate action needed");
         }
 
         Ok(())

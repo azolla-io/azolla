@@ -97,16 +97,9 @@ impl Task {
 
     pub fn has_exceeded_max_delay(&self, max_delay_secs: Option<f64>) -> bool {
         if let Some(max_delay) = max_delay_secs {
-            if let Some(first_attempt) = self.attempts.first() {
-                if let Some(start_time) = first_attempt.start_time {
-                    let elapsed = Utc::now().signed_duration_since(start_time);
-                    elapsed.num_seconds() as f64 >= max_delay
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
+            // Calculate elapsed time since task creation, not first attempt
+            let elapsed = Utc::now().signed_duration_since(self.created_at);
+            elapsed.num_seconds() as f64 >= max_delay
         } else {
             false
         }
@@ -1019,5 +1012,114 @@ mod tests {
 
         assert_eq!(task_set.len(), 1);
         assert_eq!(task_set.gaps.len(), 0);
+    }
+
+    #[test]
+    fn test_has_exceeded_max_delay_with_task_creation_time() {
+        let mut task = Task::new();
+
+        // Task::new() sets created_at to UNIX_EPOCH, so it will always exceed any reasonable limit
+        assert!(task.has_exceeded_max_delay(Some(10.0)));
+        assert!(!task.has_exceeded_max_delay(None)); // None means no time limit
+
+        // Set task creation time to NOW to test normal behavior
+        task.created_at = Utc::now();
+
+        // Should not exceed with reasonable max_delay
+        assert!(!task.has_exceeded_max_delay(Some(10.0)));
+
+        // Set task creation time to 5 seconds ago
+        task.created_at = Utc::now() - chrono::Duration::seconds(5);
+
+        // Should not exceed with max_delay of 10 seconds
+        assert!(!task.has_exceeded_max_delay(Some(10.0)));
+
+        // Should exceed with max_delay of 3 seconds (elapsed > 3)
+        assert!(task.has_exceeded_max_delay(Some(3.0)));
+
+        // Should not exceed with None (no time limit)
+        assert!(!task.has_exceeded_max_delay(None));
+
+        // Attempts should not affect max_delay calculation (now based on creation time)
+        task.attempts.push(TaskAttempt {
+            attempt: 0,
+            start_time: Some(Utc::now() - chrono::Duration::seconds(1)), // Recent attempt
+            end_time: None,
+            status: 1,
+        });
+
+        // Should still be based on task creation time (5 seconds ago), not attempt time
+        assert!(task.has_exceeded_max_delay(Some(3.0)));
+    }
+
+    #[test]
+    fn test_has_exceeded_max_delay_edge_cases() {
+        let mut task = Task::new();
+
+        // Set task creation time to 10 seconds ago
+        task.created_at = Utc::now() - chrono::Duration::seconds(10);
+
+        // Attempts should not affect calculation since we use task creation time
+        task.attempts.push(TaskAttempt {
+            attempt: 0,
+            start_time: None, // Even with no start_time, should work
+            end_time: None,
+            status: 1,
+        });
+
+        // Should exceed with 8 seconds limit (task created 10 seconds ago)
+        assert!(task.has_exceeded_max_delay(Some(8.0)));
+
+        // Test with multiple attempts - should still use task creation time
+        let recent_time = Utc::now() - chrono::Duration::seconds(2);
+        task.attempts.push(TaskAttempt {
+            attempt: 1,
+            start_time: Some(recent_time),
+            end_time: None,
+            status: 1,
+        });
+
+        // Should still use task creation time (10 seconds ago), not recent attempt time
+        assert!(task.has_exceeded_max_delay(Some(8.0))); // Exceeded
+        assert!(!task.has_exceeded_max_delay(Some(12.0))); // Not exceeded
+    }
+
+    #[test]
+    fn test_has_exceeded_max_delay_boundary_conditions() {
+        let mut task = Task::new();
+
+        // Test exactly at the boundary using task creation time
+        let exact_time = Utc::now() - chrono::Duration::seconds(5);
+        task.created_at = exact_time;
+
+        // Test with max_delay exactly equal to elapsed time
+        // Due to timing precision, we test within a small range
+        let elapsed_secs = (Utc::now() - exact_time).num_seconds() as f64;
+        assert!(task.has_exceeded_max_delay(Some(elapsed_secs - 1.0))); // Should exceed
+        assert!(!task.has_exceeded_max_delay(Some(elapsed_secs + 1.0))); // Should not exceed
+
+        // Test with zero max_delay - should immediately exceed
+        assert!(task.has_exceeded_max_delay(Some(0.0)));
+
+        // Test with very large max_delay - should not exceed
+        assert!(!task.has_exceeded_max_delay(Some(f64::MAX)));
+
+        // Test with very small positive max_delay - should exceed
+        assert!(task.has_exceeded_max_delay(Some(0.001)));
+    }
+
+    #[test]
+    fn test_has_exceeded_max_delay_precision() {
+        let mut task = Task::new();
+
+        // Test fractional second precision using task creation time
+        let precise_time = Utc::now() - chrono::Duration::milliseconds(1500); // 1.5 seconds ago
+        task.created_at = precise_time;
+
+        // Should exceed 1.0 second limit
+        assert!(task.has_exceeded_max_delay(Some(1.0)));
+
+        // Should not exceed 2.0 second limit
+        assert!(!task.has_exceeded_max_delay(Some(2.0)));
     }
 }

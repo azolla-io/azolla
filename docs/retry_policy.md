@@ -22,7 +22,7 @@ If the policy object is omitted entirely, the scheduler behaves as if the defaul
 | field          | type                  | default | meaning                                                                          |
 | -------------- | --------------------- | ------- | -------------------------------------------------------------------------------- |
 | `max_attempts` | integer ≥ 1 \| `null` | **5**   | maximum *total* attempts (first run + retries). `null` = no attempt cap          |
-| `max_delay`    | number ≥ 0 \| `null`  | `null`  | wall‑clock seconds since *first* attempt after which the scheduler must give up. |
+| `max_delay`    | number ≥ 0 \| `null`  | `null`  | wall‑clock seconds since *task creation* after which the scheduler must give up. |
 
 **Semantics**
 
@@ -75,7 +75,7 @@ If a field or section is absent, apply the values in **bold** above:
     "multiplier": 2,
     "max_delay": 300
   },
-  "retry": { "include_errors": ["builtins.Exception"] }
+  "retry": { "include_errors": ["ValueError"] }
 }
 ```
 
@@ -93,8 +93,9 @@ These defaults give you **five attempts**, exponential back‑off capped at **5�
   "stop":  { "max_delay": 1800 },
   "wait":  { "strategy": "fixed", "delay": 10 },
   "retry": { "include_errors": [
-               "requests.exceptions.ConnectionError",
-               "requests.exceptions.Timeout"
+               "ConnectionError",
+               "TimeoutError",
+               "NetworkError"
              ] }
 }
 ```

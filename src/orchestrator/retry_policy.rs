@@ -603,4 +603,182 @@ mod tests {
         policy.wait.multiplier = f64::MAX;
         assert!(policy.validate().is_ok());
     }
+
+    // =============================================================================
+    // Max Delay Tests
+    // =============================================================================
+
+    /// Tests wait strategy max_delay capping behavior for exponential backoff.
+    #[test]
+    fn test_wait_max_delay_capping() {
+        let config = WaitConfig {
+            strategy: WaitStrategy::Exponential,
+            initial_delay: 1.0,
+            multiplier: 10.0, // Aggressive multiplier to test capping
+            max_delay: 5.0,   // Low cap to test effectiveness
+            ..Default::default()
+        };
+
+        // Verify delays are capped at max_delay
+        assert_eq!(config.calculate_delay(0), Duration::from_secs(1)); // 1 * 10^0 = 1
+        assert_eq!(config.calculate_delay(1), Duration::from_secs(5)); // 1 * 10^1 = 10, capped to 5
+        assert_eq!(config.calculate_delay(2), Duration::from_secs(5)); // 1 * 10^2 = 100, capped to 5
+        assert_eq!(config.calculate_delay(10), Duration::from_secs(5)); // Always capped
+    }
+
+    /// Tests wait strategy max_delay capping with exponential jitter.
+    #[test]
+    fn test_wait_max_delay_capping_with_jitter() {
+        let config = WaitConfig {
+            strategy: WaitStrategy::ExponentialJitter,
+            initial_delay: 1.0,
+            multiplier: 10.0,
+            max_delay: 5.0,
+            ..Default::default()
+        };
+
+        // Test that jittered values never exceed max_delay
+        for attempt in 1..5 {
+            for _ in 0..20 {
+                // Test multiple times due to randomness
+                let delay = config.calculate_delay(attempt);
+                assert!(
+                    delay <= Duration::from_secs(5),
+                    "Jittered delay {delay:?} exceeded max_delay of 5s for attempt {attempt}"
+                );
+            }
+        }
+    }
+
+    /// Tests max_delay validation with various values.
+    #[test]
+    fn test_max_delay_validation() {
+        let mut policy = RetryPolicy::default();
+
+        // Test valid max_delay values
+        policy.stop.max_delay = Some(0.0);
+        assert!(policy.validate().is_ok());
+
+        policy.stop.max_delay = Some(1.0);
+        assert!(policy.validate().is_ok());
+
+        policy.stop.max_delay = Some(f64::MAX);
+        assert!(policy.validate().is_ok());
+
+        policy.stop.max_delay = None; // No time limit
+        assert!(policy.validate().is_ok());
+
+        // Test that negative max_delay in stop config would be invalid if supported
+        // (Currently stop.max_delay doesn't have validation, but wait.max_delay does)
+        policy.wait.max_delay = -1.0;
+        assert!(policy.validate().is_err());
+        policy.wait.max_delay = 0.0; // Reset to valid
+        assert!(policy.validate().is_ok());
+    }
+
+    /// Tests JSON parsing and serialization of max_delay configurations.
+    #[test]
+    fn test_max_delay_json_handling() {
+        // Test stop max_delay parsing
+        let json_with_stop_max_delay = json!({
+            "version": 1,
+            "stop": {"max_delay": 3600},
+            "wait": {"max_delay": 300}
+        });
+
+        let policy = RetryPolicy::from_json(&json_with_stop_max_delay).unwrap();
+        assert_eq!(policy.stop.max_delay, Some(3600.0));
+        assert_eq!(policy.wait.max_delay, 300.0);
+
+        // Test null max_delay (infinite time)
+        let json_with_null_max_delay = json!({
+            "version": 1,
+            "stop": {"max_delay": null}
+        });
+
+        let policy = RetryPolicy::from_json(&json_with_null_max_delay).unwrap();
+        assert_eq!(policy.stop.max_delay, None);
+
+        // Test fractional max_delay values
+        let json_with_fractional = json!({
+            "version": 1,
+            "stop": {"max_delay": 1.5},
+            "wait": {"max_delay": 2.75}
+        });
+
+        let policy = RetryPolicy::from_json(&json_with_fractional).unwrap();
+        assert_eq!(policy.stop.max_delay, Some(1.5));
+        assert_eq!(policy.wait.max_delay, 2.75);
+    }
+
+    /// Tests edge cases for wait strategy max_delay.
+    #[test]
+    fn test_wait_max_delay_edge_cases() {
+        // Test with max_delay = 0 (immediate retry)
+        let config_zero_delay = WaitConfig {
+            strategy: WaitStrategy::Exponential,
+            initial_delay: 10.0,
+            multiplier: 2.0,
+            max_delay: 0.0,
+            ..Default::default()
+        };
+        assert_eq!(config_zero_delay.calculate_delay(0), Duration::from_secs(0));
+        assert_eq!(config_zero_delay.calculate_delay(5), Duration::from_secs(0));
+
+        // Test with very small max_delay
+        let config_small_delay = WaitConfig {
+            strategy: WaitStrategy::Exponential,
+            initial_delay: 1.0,
+            multiplier: 2.0,
+            max_delay: 0.1,
+            ..Default::default()
+        };
+        assert_eq!(
+            config_small_delay.calculate_delay(0),
+            Duration::from_secs_f64(0.1)
+        );
+        assert_eq!(
+            config_small_delay.calculate_delay(10),
+            Duration::from_secs_f64(0.1)
+        );
+
+        // Test with max_delay smaller than initial_delay
+        let config_tiny_max = WaitConfig {
+            strategy: WaitStrategy::Exponential,
+            initial_delay: 5.0,
+            multiplier: 2.0,
+            max_delay: 1.0, // Smaller than initial_delay
+            ..Default::default()
+        };
+        assert_eq!(config_tiny_max.calculate_delay(0), Duration::from_secs(1)); // Capped immediately
+    }
+
+    /// Tests max_delay behavior with fixed strategy.
+    #[test]
+    fn test_fixed_strategy_max_delay_interaction() {
+        // When using fixed strategy, max_delay should not affect the result
+        // since fixed delay should always be constant
+        let config = WaitConfig {
+            strategy: WaitStrategy::Fixed,
+            delay: Some(10.0),
+            max_delay: 5.0, // Smaller than fixed delay
+            ..Default::default()
+        };
+
+        // Fixed strategy should ignore max_delay and use the specified delay
+        assert_eq!(config.calculate_delay(0), Duration::from_secs(10));
+        assert_eq!(config.calculate_delay(100), Duration::from_secs(10));
+
+        // Test fixed strategy fallback to initial_delay when delay is None
+        let config_fallback = WaitConfig {
+            strategy: WaitStrategy::Fixed,
+            delay: None,
+            initial_delay: 8.0,
+            max_delay: 5.0, // Smaller than initial_delay
+            ..Default::default()
+        };
+
+        // Should use initial_delay, ignoring max_delay for fixed strategy
+        assert_eq!(config_fallback.calculate_delay(0), Duration::from_secs(8));
+    }
 }
