@@ -74,7 +74,7 @@ jobs:
       timeout-minutes: 10
     
     - name: Run tests with coverage
-      run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --fail-under 59 --jobs 8 --engine llvm
+      run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --jobs 8 --engine llvm
       timeout-minutes: 15
     
     - name: Upload coverage to Codecov

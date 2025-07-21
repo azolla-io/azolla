@@ -8,6 +8,10 @@ coverage:
       default:
         target: 70%
 
+ignore:
+  - "src/proto.rs"
+  - "target/"
+
 comment:
   layout: "reach, diff, flags, files"
   behavior: default
