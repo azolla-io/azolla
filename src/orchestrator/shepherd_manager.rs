@@ -501,6 +501,21 @@ impl ShepherdManager {
             },
         }
     }
+
+    /// Check if a specific shepherd is registered and connected
+    pub fn is_shepherd_registered(&self, uuid: Uuid) -> bool {
+        self.shepherds
+            .get(&uuid)
+            .map(|shepherd| matches!(shepherd.status, ShepherdConnectionStatus::Connected))
+            .unwrap_or(false)
+    }
+
+    /// Get the connection status of a specific shepherd
+    pub fn get_shepherd_status(&self, uuid: Uuid) -> Option<ShepherdConnectionStatus> {
+        self.shepherds
+            .get(&uuid)
+            .map(|shepherd| shepherd.status.clone())
+    }
 }
 
 #[derive(Debug, Clone)]

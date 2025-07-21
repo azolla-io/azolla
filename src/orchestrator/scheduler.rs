@@ -64,6 +64,7 @@ impl SchedulerConfig {
 pub enum SchedulerCommand {
     StartTask {
         task_id: Uuid,
+        task: Option<Task>,
         respond_to: oneshot::Sender<Result<()>>,
     },
     HandleTaskResult {
@@ -113,23 +114,25 @@ impl SchedulerActor {
                 shepherd_manager,
                 event_stream,
                 config,
+                retry_schedule_changed: false,
             };
+            let mut next_retry_time = scheduler_state.task_set.get_next_retry_time();
+            let mut current_timeout_time = next_retry_time;
+            let mut timeout_future =
+                Box::pin(SchedulerState::create_timeout_future(next_retry_time));
+
             loop {
-                let next_retry_time = scheduler_state.task_set.get_next_retry_time();
-
-                let timeout_future = match next_retry_time {
-                    Some(when) => {
-                        let tokio_instant = tokio::time::Instant::from_std(when);
-                        tokio::time::sleep_until(tokio_instant)
-                    }
-                    None => tokio::time::sleep(std::time::Duration::from_secs(3600)), // 1 hour default
-                };
-
                 tokio::select! {
                     command = receiver.recv() => {
                         match command {
-                            Some(SchedulerCommand::StartTask { task_id, respond_to }) => {
+                            Some(SchedulerCommand::StartTask { task_id, task, respond_to }) => {
                                 info!("Scheduler received StartTask command for task {} in domain {}", task_id, scheduler_state.domain);
+
+                                // If task is provided, upsert it first
+                                if let Some(task) = task {
+                                    scheduler_state.task_set.upsert_task(task);
+                                }
+
                                 match scheduler_state.decide_start_task(task_id) {
                                     Some(task_start_data) => {
                                         let domain = scheduler_state.domain.clone();
@@ -191,9 +194,26 @@ impl SchedulerActor {
                                 break;
                             }
                         }
+
+                        // Efficiently recalculate timeout only if retry schedule changed
+                        if scheduler_state.retry_schedule_changed {
+                            scheduler_state.retry_schedule_changed = false;
+                            next_retry_time = scheduler_state.task_set.get_next_retry_time();
+
+                            // Replace timeout future if time changed - this cancels the old one
+                            if next_retry_time != current_timeout_time {
+                                current_timeout_time = next_retry_time;
+                                timeout_future = Box::pin(SchedulerState::create_timeout_future(next_retry_time));
+                            }
+                        }
                     }
-                    _ = timeout_future => {
+                    _ = &mut timeout_future => {
                         scheduler_state.process_due_retries().await;
+
+                        // Recalculate timeout after processing retries
+                        next_retry_time = scheduler_state.task_set.get_next_retry_time();
+                        current_timeout_time = next_retry_time;
+                        timeout_future = Box::pin(SchedulerState::create_timeout_future(next_retry_time));
                     }
                 }
             }
@@ -207,9 +227,18 @@ impl SchedulerActor {
     }
 
     pub async fn start_task(&self, task_id: Uuid) -> Result<(), SchedulerError> {
+        self.start_task_with_creation(task_id, None).await
+    }
+
+    pub async fn start_task_with_creation(
+        &self,
+        task_id: Uuid,
+        task: Option<Task>,
+    ) -> Result<(), SchedulerError> {
         let (tx, rx) = oneshot::channel();
         let cmd = SchedulerCommand::StartTask {
             task_id,
+            task,
             respond_to: tx,
         };
 
@@ -232,6 +261,7 @@ impl SchedulerActor {
         let (tx, _rx) = oneshot::channel();
         let cmd = SchedulerCommand::StartTask {
             task_id,
+            task: None,
             respond_to: tx,
         };
 
@@ -342,9 +372,20 @@ struct SchedulerState {
     shepherd_manager: Arc<ShepherdManager>,
     event_stream: Arc<EventStream>,
     config: SchedulerConfig,
+    retry_schedule_changed: bool,
 }
 
 impl SchedulerState {
+    fn create_timeout_future(next_retry_time: Option<Instant>) -> tokio::time::Sleep {
+        match next_retry_time {
+            Some(when) => {
+                let tokio_instant = tokio::time::Instant::from_std(when);
+                tokio::time::sleep_until(tokio_instant)
+            }
+            None => tokio::time::sleep(std::time::Duration::from_secs(60)), // 1 min default
+        }
+    }
+
     /// Fast synchronous phase: Make scheduling decisions and update TaskSet
     fn decide_start_task(&mut self, task_id: Uuid) -> Option<TaskStartData> {
         info!(
@@ -606,6 +647,7 @@ impl SchedulerState {
             let retry_time = Instant::now() + delay;
 
             self.task_set.schedule_retry(task_id, retry_time);
+            self.retry_schedule_changed = true;
 
             info!(
                 "Scheduled retry for task {} in {} seconds",
