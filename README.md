@@ -8,6 +8,10 @@
 
 This is the modernized async task platform you always wanted. Azolla gives you the power of Temporal with the simplicity of Celery, all running on just a database. It supports dynamic DAG workflows that adapt at runtime, durable long-running tasks without determinism headaches, and is architected for multi-tenancy, reliability, and scale. It's truly polyglot, so you can write your tasks in any language. Stop managing complex infrastructure and start building reliable applications.
 
+## Test Coverage
+
+Azolla maintains comprehensive test coverage to ensure reliability and quality.
+
 ## ✨ Why Azolla?
 
 ### 🔁 **Uncompromising Reliability**
