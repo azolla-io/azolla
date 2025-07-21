@@ -62,12 +62,9 @@ impl SchedulerConfig {
 }
 
 pub enum SchedulerCommand {
-    CreateTask {
-        task: Task,
-        respond_to: oneshot::Sender<Result<()>>,
-    },
     StartTask {
         task_id: Uuid,
+        task: Option<Task>,
         respond_to: oneshot::Sender<Result<()>>,
     },
     HandleTaskResult {
@@ -128,13 +125,14 @@ impl SchedulerActor {
                 tokio::select! {
                     command = receiver.recv() => {
                         match command {
-                            Some(SchedulerCommand::CreateTask { task, respond_to }) => {
-                                info!("Scheduler received CreateTask command for task {} in domain {}", task.id, scheduler_state.domain);
-                                scheduler_state.task_set.upsert_task(task);
-                                let _ = respond_to.send(Ok(()));
-                            }
-                            Some(SchedulerCommand::StartTask { task_id, respond_to }) => {
+                            Some(SchedulerCommand::StartTask { task_id, task, respond_to }) => {
                                 info!("Scheduler received StartTask command for task {} in domain {}", task_id, scheduler_state.domain);
+
+                                // If task is provided, upsert it first
+                                if let Some(task) = task {
+                                    scheduler_state.task_set.upsert_task(task);
+                                }
+
                                 match scheduler_state.decide_start_task(task_id) {
                                     Some(task_start_data) => {
                                         let domain = scheduler_state.domain.clone();
@@ -228,28 +226,19 @@ impl SchedulerActor {
         &self.domain
     }
 
-    pub async fn create_task(&self, task: Task) -> Result<(), SchedulerError> {
-        let (tx, rx) = oneshot::channel();
-        let cmd = SchedulerCommand::CreateTask {
-            task,
-            respond_to: tx,
-        };
-
-        self.sender
-            .send(cmd)
-            .await
-            .map_err(|_| SchedulerError::ChannelClosed)?;
-
-        match rx.await.map_err(|_| SchedulerError::ResponseLost)? {
-            Ok(_) => Ok(()),
-            Err(_) => Err(SchedulerError::ResponseLost),
-        }
+    pub async fn start_task(&self, task_id: Uuid) -> Result<(), SchedulerError> {
+        self.start_task_with_creation(task_id, None).await
     }
 
-    pub async fn start_task(&self, task_id: Uuid) -> Result<(), SchedulerError> {
+    pub async fn start_task_with_creation(
+        &self,
+        task_id: Uuid,
+        task: Option<Task>,
+    ) -> Result<(), SchedulerError> {
         let (tx, rx) = oneshot::channel();
         let cmd = SchedulerCommand::StartTask {
             task_id,
+            task,
             respond_to: tx,
         };
 
@@ -272,6 +261,7 @@ impl SchedulerActor {
         let (tx, _rx) = oneshot::channel();
         let cmd = SchedulerCommand::StartTask {
             task_id,
+            task: None,
             respond_to: tx,
         };
 

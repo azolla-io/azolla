@@ -112,24 +112,18 @@ impl ClientService for ClientServiceImpl {
             attempts: Vec::new(),
         };
 
-        // Create and schedule the task via the SchedulerActor
+        // Create and start the task via the SchedulerActor
         {
             let scheduler = self
                 .engine
                 .scheduler_registry
                 .get_or_create_scheduler(&req.domain);
 
-            // First, add the task to the SchedulerActor's TaskSet
+            // Create and start the task in a single operation
             scheduler
-                .create_task(task)
+                .start_task_with_creation(task_id, Some(task))
                 .await
-                .map_err(|e| Status::internal(format!("Failed to create task: {e:?}")))?;
-
-            // Then, start the task
-            scheduler
-                .start_task_async(task_id)
-                .await
-                .map_err(|e| Status::internal(format!("Failed to start task: {e:?}")))?;
+                .map_err(|e| Status::internal(format!("Failed to create and start task: {e:?}")))?;
         }
 
         info!(
