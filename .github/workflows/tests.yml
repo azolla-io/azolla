@@ -36,6 +36,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      # Fetch full git history for accurate Codecov coverage diffs
+      with:
+        fetch-depth: 0
     
     - name: Cache apt packages
       uses: awalsh128/cache-apt-pkgs-action@latest
