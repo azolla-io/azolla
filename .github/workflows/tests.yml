@@ -89,7 +89,7 @@ jobs:
     # Download baseline coverage for PR differential analysis
     - name: Download baseline coverage
       if: github.event_name == 'pull_request'
-      uses: dawidd6/action-download-artifact@v3
+      uses: dawidd6/action-download-artifact@v6
       with:
         workflow: tests.yml
         branch: main
