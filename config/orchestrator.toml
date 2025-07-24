@@ -11,3 +11,8 @@ max_batch_size = 100
 adaptive_threshold = 10
 max_wait_time_ms = 1
 channel_capacity = 1000 
+
+[domains]
+default_concurrency_limit = 100
+
+[domains.specific]

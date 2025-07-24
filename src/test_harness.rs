@@ -11,7 +11,7 @@ const DEFAULT_CLIENT_CONNECTION_MAX_RETRIES: usize = 10;
 const DEFAULT_TASK_COMPLETION_POLL_INTERVAL_MS: u64 = 100;
 const DEFAULT_MAX_CONCURRENT_TASKS: usize = 4;
 
-use crate::orchestrator::db::{Database, EventStream, Server as DbServer, Settings};
+use crate::orchestrator::db::{Database, Domains, EventStream, Server as DbServer, Settings};
 use crate::orchestrator::startup::{OrchestratorBuilder, RunningOrchestratorInstance};
 use crate::proto::orchestrator::client_service_client::ClientServiceClient;
 use crate::proto::orchestrator::cluster_service_client::ClusterServiceClient;
@@ -81,6 +81,7 @@ impl IntegrationTestEnvironment {
                 port: config.orchestrator_port,
             },
             event_stream: EventStream::default(),
+            domains: Domains::default(),
         };
 
         // Build and start orchestrator using the abstraction

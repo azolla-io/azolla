@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::sync::Arc;
 
-use crate::orchestrator::db::PgPool;
+use crate::orchestrator::db::{Domains, PgPool};
 use crate::orchestrator::event_stream::{EventStream, EventStreamConfig};
 use crate::orchestrator::scheduler::{SchedulerConfig, SchedulerRegistry};
 use crate::orchestrator::shepherd_manager::ShepherdManager;
@@ -44,20 +44,34 @@ pub struct Engine {
 
 impl Engine {
     /// Create a new orchestration engine with the given database pool and configuration
-    pub fn new(pool: PgPool, event_stream_config: EventStreamConfig) -> Self {
-        Self::with_scheduler_config(pool, event_stream_config, SchedulerConfig::default())
+    pub fn new(
+        pool: PgPool,
+        event_stream_config: EventStreamConfig,
+        domains_config: Domains,
+    ) -> Self {
+        Self::with_scheduler_config(
+            pool,
+            event_stream_config,
+            domains_config,
+            SchedulerConfig::default(),
+        )
     }
 
     /// Create a new orchestration engine with custom scheduler configuration
     pub fn with_scheduler_config(
         pool: PgPool,
         event_stream_config: EventStreamConfig,
+        domains_config: Domains,
         scheduler_config: SchedulerConfig,
     ) -> Self {
         let event_stream = Arc::new(EventStream::new(pool.clone(), event_stream_config));
         let registry = Arc::new(TaskSetRegistry::new());
-        let shepherd_manager =
-            Arc::new(ShepherdManager::new(registry.clone(), event_stream.clone()));
+        let domains_config_arc = Arc::new(domains_config);
+        let shepherd_manager = Arc::new(ShepherdManager::new(
+            domains_config_arc.clone(),
+            registry.clone(),
+            event_stream.clone(),
+        ));
         let scheduler_registry = Arc::new(SchedulerRegistry::new(
             registry.clone(),
             shepherd_manager.clone(),
@@ -78,8 +92,12 @@ impl Engine {
     pub async fn initialize(&self) -> Result<()> {
         // Load existing tasks from database into the registry
         self.registry.load_from_db(&self.pool).await?;
+
+        // Start the virtual queue dispatcher loop
+        let _dispatcher_handle = self.shepherd_manager.clone().start_dispatcher_loop();
+
         log::info!(
-            "Engine initialized - TaskSetRegistry loaded with {} domains",
+            "Engine initialized - TaskSetRegistry loaded with {} domains and virtual queue dispatcher started",
             self.registry.domains().len()
         );
         Ok(())

@@ -3,7 +3,8 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use dashmap::DashMap;
 use log::{error, info, warn};
 use std::cmp::Ordering;
-use std::collections::BinaryHeap;
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -11,6 +12,7 @@ use tokio::time;
 use tonic::Status;
 use uuid::Uuid;
 
+use crate::orchestrator::db::Domains;
 use crate::orchestrator::event_stream::EventStream;
 use crate::orchestrator::taskset::TaskSetRegistry;
 use crate::proto::{common, orchestrator::ServerMsg};
@@ -34,6 +36,76 @@ pub struct TaskDispatch {
     pub cpu_limit: Option<u32>,
 }
 
+/// Per-domain virtual queue for task dispatch
+#[derive(Debug)]
+pub struct VirtualQueue {
+    /// FIFO queue of tasks waiting to be dispatched
+    queue: VecDeque<TaskDispatch>,
+    /// Current number of in-flight tasks for this domain
+    in_flight_count: AtomicU32,
+    /// Maximum number of concurrent tasks allowed for this domain
+    concurrency_limit: u32,
+}
+
+impl VirtualQueue {
+    pub fn new(concurrency_limit: u32) -> Self {
+        Self {
+            queue: VecDeque::new(),
+            in_flight_count: AtomicU32::new(0),
+            concurrency_limit,
+        }
+    }
+
+    /// Check if we can dispatch more tasks based on concurrency limit
+    pub fn can_dispatch(&self) -> bool {
+        self.in_flight_count.load(AtomicOrdering::Relaxed) < self.concurrency_limit
+    }
+
+    /// Get the number of tasks available to dispatch
+    pub fn available_dispatch_count(&self) -> u32 {
+        let in_flight = self.in_flight_count.load(AtomicOrdering::Relaxed);
+        if in_flight >= self.concurrency_limit {
+            0
+        } else {
+            std::cmp::min(self.queue.len() as u32, self.concurrency_limit - in_flight)
+        }
+    }
+
+    /// Enqueue a task for dispatch
+    pub fn enqueue(&mut self, task: TaskDispatch) -> Result<()> {
+        self.queue.push_back(task);
+        Ok(())
+    }
+
+    /// Dequeue a task for dispatch (if any available)
+    pub fn dequeue(&mut self) -> Option<TaskDispatch> {
+        if self.can_dispatch() && !self.queue.is_empty() {
+            let task = self.queue.pop_front();
+            if task.is_some() {
+                self.in_flight_count.fetch_add(1, AtomicOrdering::Relaxed);
+            }
+            task
+        } else {
+            None
+        }
+    }
+
+    /// Decrement in-flight counter when task completes
+    pub fn decrement_in_flight(&self) {
+        self.in_flight_count.fetch_sub(1, AtomicOrdering::Relaxed);
+    }
+
+    /// Get current queue length
+    pub fn queue_len(&self) -> usize {
+        self.queue.len()
+    }
+
+    /// Get current in-flight count
+    pub fn in_flight_count(&self) -> u32 {
+        self.in_flight_count.load(AtomicOrdering::Relaxed)
+    }
+}
+
 /// Entry for priority queue in find_best_shepherd
 /// Implements Ord to create a min-heap based on load_ratio
 #[derive(Debug, Clone, PartialEq)]
@@ -54,11 +126,10 @@ impl PartialOrd for ShepherdLoadEntry {
 
 impl Ord for ShepherdLoadEntry {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Reverse comparison for min-heap behavior (BinaryHeap is max-heap by default)
         // Primary: lower load ratio is better
-        let load_cmp = other
+        let load_cmp = self
             .load_ratio
-            .partial_cmp(&self.load_ratio)
+            .partial_cmp(&other.load_ratio)
             .unwrap_or(Ordering::Equal);
 
         if load_cmp != Ordering::Equal {
@@ -66,7 +137,7 @@ impl Ord for ShepherdLoadEntry {
         }
 
         // Secondary: higher available capacity is better (tie-breaker)
-        let capacity_cmp = self.available_capacity.cmp(&other.available_capacity);
+        let capacity_cmp = other.available_capacity.cmp(&self.available_capacity);
 
         if capacity_cmp != Ordering::Equal {
             return capacity_cmp;
@@ -197,14 +268,22 @@ impl ShepherdStatus {
 
 pub struct ShepherdManager {
     shepherds: DashMap<Uuid, ShepherdStatus>,
+    virtual_queues: Arc<DashMap<String, VirtualQueue>>,
+    domains_config: Arc<Domains>,
     task_registry: Arc<TaskSetRegistry>,
     event_stream: Arc<EventStream>,
 }
 
 impl ShepherdManager {
-    pub fn new(task_registry: Arc<TaskSetRegistry>, event_stream: Arc<EventStream>) -> Self {
+    pub fn new(
+        domains_config: Arc<Domains>,
+        task_registry: Arc<TaskSetRegistry>,
+        event_stream: Arc<EventStream>,
+    ) -> Self {
         Self {
             shepherds: DashMap::new(),
+            virtual_queues: Arc::new(DashMap::new()),
+            domains_config,
             task_registry,
             event_stream,
         }
@@ -377,12 +456,17 @@ impl ShepherdManager {
         }
     }
 
-    /// Find the best shepherd for task dispatch based on load using a priority queue
-    /// Returns the shepherd with the lowest load ratio among those with available capacity
-    pub fn find_best_shepherd(&self) -> Option<Uuid> {
-        let mut heap = BinaryHeap::new();
+    /// Find available shepherds for batch task dispatch based on load balancing
+    /// Returns up to `batch` shepherds with available capacity, prioritizing load balancing
+    /// Uses a fast heuristic that sacrifices perfect accuracy for speed
+    pub fn find_available_shepherds(&self, batch: u32) -> Vec<Uuid> {
+        if batch == 0 {
+            return Vec::new();
+        }
 
-        // Collect all available shepherds into a max heap (we'll use reverse ordering)
+        let mut candidates = Vec::new();
+
+        // Collect all available shepherds
         for entry in self.shepherds.iter() {
             let shepherd = entry.value();
 
@@ -390,7 +474,7 @@ impl ShepherdManager {
             if matches!(shepherd.status, ShepherdConnectionStatus::Connected)
                 && shepherd.available_capacity() > 0
             {
-                heap.push(ShepherdLoadEntry {
+                candidates.push(ShepherdLoadEntry {
                     uuid: shepherd.uuid,
                     load_ratio: shepherd.load_ratio(),
                     available_capacity: shepherd.available_capacity(),
@@ -399,8 +483,46 @@ impl ShepherdManager {
             }
         }
 
-        // Return the shepherd with the lowest load ratio (top of min heap)
-        heap.pop().map(|entry| entry.uuid)
+        // Fast heuristic: If we need fewer shepherds than available, use partial sort
+        // This is O(n + k log k) instead of O(n log n) for full sort
+        let result_count = std::cmp::min(batch as usize, candidates.len());
+
+        if result_count == 0 {
+            return Vec::new();
+        }
+
+        if result_count >= candidates.len() {
+            // Return all available shepherds, sorted
+            candidates.sort_by(|a, b| {
+                a.load_ratio
+                    .partial_cmp(&b.load_ratio)
+                    .unwrap_or(Ordering::Equal)
+                    .then_with(|| b.available_capacity.cmp(&a.available_capacity))
+            });
+            candidates.into_iter().map(|entry| entry.uuid).collect()
+        } else {
+            // Use partial sort to get the best k shepherds
+            // This will put the k best shepherds at the beginning
+            candidates.select_nth_unstable(result_count - 1);
+
+            // Take the first k shepherds and sort them for consistent ordering
+            let mut result: Vec<_> = candidates.into_iter().take(result_count).collect();
+            result.sort_by(|a, b| {
+                a.load_ratio
+                    .partial_cmp(&b.load_ratio)
+                    .unwrap_or(Ordering::Equal)
+                    .then_with(|| b.available_capacity.cmp(&a.available_capacity))
+            });
+
+            result.into_iter().map(|entry| entry.uuid).collect()
+        }
+    }
+
+    /// Legacy method for backward compatibility - returns the best single shepherd
+    /// This method will be removed once all callers are updated
+    #[deprecated(note = "Use find_available_shepherds(1) instead")]
+    pub fn find_best_shepherd(&self) -> Option<Uuid> {
+        self.find_available_shepherds(1).into_iter().next()
     }
 
     /// Remove shepherd when it disconnects
@@ -516,6 +638,153 @@ impl ShepherdManager {
             .get(&uuid)
             .map(|shepherd| shepherd.status.clone())
     }
+
+    /// Get or create a virtual queue for the specified domain
+    fn get_or_create_virtual_queue(&self, domain: &str) -> Arc<DashMap<String, VirtualQueue>> {
+        // Check if queue already exists
+        if !self.virtual_queues.contains_key(domain) {
+            // Determine concurrency limit for this domain
+            let concurrency_limit = self
+                .domains_config
+                .specific
+                .get(domain)
+                .map(|config| config.concurrency_limit)
+                .unwrap_or(self.domains_config.default_concurrency_limit);
+
+            // Create new virtual queue
+            let queue = VirtualQueue::new(concurrency_limit);
+            self.virtual_queues.insert(domain.to_string(), queue);
+
+            info!("Created virtual queue for domain '{domain}' with concurrency limit {concurrency_limit}");
+        }
+
+        self.virtual_queues.clone()
+    }
+
+    /// Get domain names that have virtual queues
+    pub fn get_active_domains(&self) -> Vec<String> {
+        self.virtual_queues
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect()
+    }
+
+    /// Get virtual queue statistics for a domain
+    pub fn get_domain_stats(&self, domain: &str) -> Option<(usize, u32)> {
+        self.virtual_queues
+            .get(domain)
+            .map(|queue| (queue.queue_len(), queue.in_flight_count()))
+    }
+
+    /// Enqueue a task for dispatch to a domain's virtual queue
+    pub fn enqueue_task(&self, domain: String, task: TaskDispatch) -> Result<()> {
+        // Ensure virtual queue exists for this domain
+        self.get_or_create_virtual_queue(&domain);
+
+        // Get mutable reference to the queue and enqueue the task
+        if let Some(mut queue) = self.virtual_queues.get_mut(&domain) {
+            queue.enqueue(task.clone())?;
+            info!(
+                "Enqueued task {} to domain '{}' virtual queue",
+                task.task_id, domain
+            );
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "Failed to access virtual queue for domain '{}'",
+                domain
+            ))
+        }
+    }
+
+    /// Decrement in-flight task counter for a domain when task completes
+    pub fn decrement_in_flight_task(&self, domain: &str) {
+        if let Some(queue) = self.virtual_queues.get(domain) {
+            queue.decrement_in_flight();
+            info!("Decremented in-flight counter for domain '{domain}'");
+        } else {
+            warn!("Attempted to decrement in-flight counter for unknown domain '{domain}'");
+        }
+    }
+
+    /// Start the virtual queue dispatcher loop
+    /// This runs a single actor loop that processes all domain virtual queues
+    pub fn start_dispatcher_loop(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let mut interval = time::interval(Duration::from_millis(100)); // 100ms dispatch interval
+
+            info!("Started virtual queue dispatcher loop");
+
+            loop {
+                interval.tick().await;
+
+                // Process all active domains
+                let domains: Vec<String> = self.get_active_domains();
+
+                for domain in domains {
+                    self.process_domain_queue(&domain).await;
+                }
+            }
+        })
+    }
+
+    /// Process tasks from a specific domain's virtual queue
+    async fn process_domain_queue(&self, domain: &str) {
+        // Get available shepherds for batch dispatch
+        let batch_size = 10; // Process up to 10 tasks per domain per cycle
+        let available_shepherds = self.find_available_shepherds(batch_size);
+
+        if available_shepherds.is_empty() {
+            return; // No shepherds available
+        }
+
+        // Get tasks from the virtual queue
+        let mut tasks_to_dispatch = Vec::new();
+
+        if let Some(mut queue) = self.virtual_queues.get_mut(domain) {
+            // Determine how many tasks we can dispatch
+            let dispatch_count = std::cmp::min(
+                available_shepherds.len() as u32,
+                queue.available_dispatch_count(),
+            );
+
+            // Dequeue tasks
+            for _ in 0..dispatch_count {
+                if let Some(task) = queue.dequeue() {
+                    tasks_to_dispatch.push(task);
+                }
+            }
+        }
+
+        // Dispatch tasks to shepherds
+        for (task, shepherd_id) in tasks_to_dispatch
+            .into_iter()
+            .zip(available_shepherds.into_iter())
+        {
+            match self
+                .dispatch_task_to_shepherd(shepherd_id, task.clone())
+                .await
+            {
+                Ok(_) => {
+                    info!(
+                        "Successfully dispatched task {} from domain '{}' to shepherd {}",
+                        task.task_id, domain, shepherd_id
+                    );
+                }
+                Err(e) => {
+                    warn!("Failed to dispatch task {} from domain '{}' to shepherd {}: {}. Treating as task attempt failure.", 
+                          task.task_id, domain, shepherd_id, e);
+
+                    // Decrement in-flight counter since we couldn't dispatch
+                    self.decrement_in_flight_task(domain);
+
+                    // TODO: In a real implementation, we'd need to notify the scheduler
+                    // about this failure so it can handle the task appropriately.
+                    // For now, we just log the failure as specified in the requirements.
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -546,6 +815,7 @@ mod tests {
             },
             server: Server { port: 0 },
             event_stream: crate::orchestrator::db::EventStream::default(),
+            domains: crate::orchestrator::db::Domains::default(),
         };
 
         // Create a dummy pool that won't actually connect
@@ -559,7 +829,9 @@ mod tests {
 
         let event_stream_config = EventStreamConfig::default();
         let event_stream = Arc::new(EventStream::new(pool, event_stream_config));
-        ShepherdManager::new(task_registry, event_stream)
+        use crate::orchestrator::db::Domains;
+        let domains_config = Arc::new(Domains::default());
+        ShepherdManager::new(domains_config, task_registry, event_stream)
     }
 
     // Helper function to manually add shepherds for testing without event stream
@@ -592,7 +864,9 @@ mod tests {
         manager.update_shepherd_status(uuid2, 8, 2); // 80%
         manager.update_shepherd_status(uuid3, 5, 5); // 50%
 
-        assert_eq!(manager.find_best_shepherd(), Some(uuid1));
+        let result = manager.find_available_shepherds(1);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], uuid1);
     }
 
     /// Tests that the shepherd selection algorithm ignores unavailable shepherds.
@@ -619,7 +893,9 @@ mod tests {
             shepherd.status = ShepherdConnectionStatus::Disconnected;
         }
 
-        assert_eq!(manager.find_best_shepherd(), Some(uuid3));
+        let result = manager.find_available_shepherds(1);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], uuid3);
     }
 
     /// Tests the tiebreaker logic when shepherds have identical load ratios.
@@ -638,7 +914,9 @@ mod tests {
         manager.update_shepherd_status(uuid1, 5, 5); // 5 available
         manager.update_shepherd_status(uuid2, 10, 10); // 10 available - should win tiebreaker
 
-        assert_eq!(manager.find_best_shepherd(), Some(uuid2));
+        let result = manager.find_available_shepherds(1);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], uuid2);
     }
 
     /// Tests edge cases in shepherd selection including empty pool, zero capacity, and normal operation.
@@ -648,19 +926,23 @@ mod tests {
         let manager = create_test_manager();
 
         // No shepherds
-        assert_eq!(manager.find_best_shepherd(), None);
+        let result = manager.find_available_shepherds(1);
+        assert_eq!(result.len(), 0);
 
         // Zero max concurrency
         let uuid1 = Uuid::new_v4();
         add_test_shepherd(&manager, uuid1, 0);
         manager.update_shepherd_status(uuid1, 0, 0);
-        assert_eq!(manager.find_best_shepherd(), None);
+        let result = manager.find_available_shepherds(1);
+        assert_eq!(result.len(), 0);
 
         // Normal shepherd
         let uuid2 = Uuid::new_v4();
         add_test_shepherd(&manager, uuid2, 10);
         manager.update_shepherd_status(uuid2, 3, 7);
-        assert_eq!(manager.find_best_shepherd(), Some(uuid2));
+        let result = manager.find_available_shepherds(1);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], uuid2);
     }
 
     /// Tests that shepherd selection is deterministic and consistent across multiple calls.
@@ -679,12 +961,12 @@ mod tests {
         }
 
         // Selection should be consistent
-        let selection1 = manager.find_best_shepherd();
-        let selection2 = manager.find_best_shepherd();
+        let result1 = manager.find_available_shepherds(1);
+        let result2 = manager.find_available_shepherds(1);
 
-        assert_eq!(selection1, selection2);
-        assert!(selection1.is_some());
-        assert!(uuids.contains(&selection1.unwrap()));
+        assert_eq!(result1, result2);
+        assert_eq!(result1.len(), 1);
+        assert!(uuids.contains(&result1[0]));
     }
 
     /// Tests the complete reconnection flow including disconnect, unavailability, and reconnection.
@@ -700,13 +982,16 @@ mod tests {
         manager.update_shepherd_status(uuid, 3, 7);
 
         // Should be available for selection
-        assert_eq!(manager.find_best_shepherd(), Some(uuid));
+        let result = manager.find_available_shepherds(1);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], uuid);
 
         // Mark as disconnected (connection drops)
         manager.mark_shepherd_disconnected(uuid);
 
         // Should not be available for new tasks
-        assert_eq!(manager.find_best_shepherd(), None);
+        let result = manager.find_available_shepherds(1);
+        assert_eq!(result.len(), 0);
 
         {
             // Shepherd should still exist but be marked as disconnected
@@ -721,7 +1006,9 @@ mod tests {
         manager.mark_shepherd_reconnected(uuid);
 
         // Should be available again
-        assert_eq!(manager.find_best_shepherd(), Some(uuid));
+        let result = manager.find_available_shepherds(1);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], uuid);
 
         // Status should be connected
         let shepherd = manager.shepherds.get(&uuid).unwrap();
@@ -742,11 +1029,14 @@ mod tests {
         // Initial setup using helper function
         add_test_shepherd(&manager, uuid, 10);
         manager.update_shepherd_status(uuid, 3, 7);
-        assert_eq!(manager.find_best_shepherd(), Some(uuid));
+        let result = manager.find_available_shepherds(1);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], uuid);
 
         // Mark as disconnected
         manager.mark_shepherd_disconnected(uuid);
-        assert_eq!(manager.find_best_shepherd(), None);
+        let result = manager.find_available_shepherds(1);
+        assert_eq!(result.len(), 0);
 
         // Verify shepherd still exists but disconnected
         {
@@ -761,7 +1051,9 @@ mod tests {
         manager.mark_shepherd_reconnected(uuid);
 
         // Should be available again
-        assert_eq!(manager.find_best_shepherd(), Some(uuid));
+        let result = manager.find_available_shepherds(1);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], uuid);
 
         // Should only have one connected shepherd entry
         let connected_count = manager
@@ -937,5 +1229,184 @@ mod tests {
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not connected"));
+    }
+
+    #[test]
+    fn test_virtual_queue_basic_operations() {
+        let mut queue = VirtualQueue::new(3);
+
+        // Test initial state
+        assert_eq!(queue.queue_len(), 0);
+        assert_eq!(queue.in_flight_count(), 0);
+        assert!(queue.can_dispatch());
+        assert_eq!(queue.available_dispatch_count(), 0);
+
+        // Test enqueue
+        let task1 = TaskDispatch {
+            task_id: Uuid::new_v4(),
+            task_name: "test_task".to_string(),
+            args: vec!["arg1".to_string()],
+            kwargs: "{}".to_string(),
+            memory_limit: None,
+            cpu_limit: None,
+        };
+        queue.enqueue(task1.clone()).unwrap();
+        assert_eq!(queue.queue_len(), 1);
+        assert_eq!(queue.available_dispatch_count(), 1);
+
+        // Test dequeue
+        let dequeued = queue.dequeue().unwrap();
+        assert_eq!(dequeued.task_id, task1.task_id);
+        assert_eq!(queue.queue_len(), 0);
+        assert_eq!(queue.in_flight_count(), 1);
+        assert_eq!(queue.available_dispatch_count(), 0);
+
+        // Test decrement
+        queue.decrement_in_flight();
+        assert_eq!(queue.in_flight_count(), 0);
+    }
+
+    #[test]
+    fn test_virtual_queue_concurrency_limits() {
+        let mut queue = VirtualQueue::new(2);
+
+        // Add tasks up to concurrency limit
+        let task1 = TaskDispatch {
+            task_id: Uuid::new_v4(),
+            task_name: "test1".to_string(),
+            args: vec![],
+            kwargs: "{}".to_string(),
+            memory_limit: None,
+            cpu_limit: None,
+        };
+        let task2 = TaskDispatch {
+            task_id: Uuid::new_v4(),
+            task_name: "test2".to_string(),
+            args: vec![],
+            kwargs: "{}".to_string(),
+            memory_limit: None,
+            cpu_limit: None,
+        };
+        let task3 = TaskDispatch {
+            task_id: Uuid::new_v4(),
+            task_name: "test3".to_string(),
+            args: vec![],
+            kwargs: "{}".to_string(),
+            memory_limit: None,
+            cpu_limit: None,
+        };
+
+        queue.enqueue(task1).unwrap();
+        queue.enqueue(task2).unwrap();
+        queue.enqueue(task3).unwrap();
+        assert_eq!(queue.queue_len(), 3);
+        assert_eq!(queue.available_dispatch_count(), 2); // Limited by concurrency
+
+        // Dequeue up to limit
+        queue.dequeue().unwrap();
+        queue.dequeue().unwrap();
+        assert_eq!(queue.in_flight_count(), 2);
+        assert!(!queue.can_dispatch());
+        assert_eq!(queue.available_dispatch_count(), 0);
+
+        // Should not be able to dequeue more
+        assert!(queue.dequeue().is_none());
+
+        // After decrementing, should be able to dispatch again
+        queue.decrement_in_flight();
+        assert!(queue.can_dispatch());
+        assert_eq!(queue.available_dispatch_count(), 1);
+        queue.dequeue().unwrap();
+        assert_eq!(queue.queue_len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_find_available_shepherds_load_balancing() {
+        let manager = create_test_manager();
+
+        let uuid1 = Uuid::new_v4();
+        let uuid2 = Uuid::new_v4();
+        let uuid3 = Uuid::new_v4();
+
+        add_test_shepherd(&manager, uuid1, 10);
+        add_test_shepherd(&manager, uuid2, 10);
+        add_test_shepherd(&manager, uuid3, 10);
+
+        // Set different load ratios: 20%, 80%, 50%
+        manager.update_shepherd_status(uuid1, 2, 8); // 20% - should be first
+        manager.update_shepherd_status(uuid2, 8, 2); // 80% - should be last
+        manager.update_shepherd_status(uuid3, 5, 5); // 50% - should be middle
+
+        let result = manager.find_available_shepherds(3);
+        assert_eq!(result.len(), 3);
+
+        // Check that result contains all shepherds
+        assert!(result.contains(&uuid1));
+        assert!(result.contains(&uuid2));
+        assert!(result.contains(&uuid3));
+
+        // Verify load ordering by checking load ratios of returned shepherds
+        let loads: Vec<f64> = result
+            .iter()
+            .map(|&uuid| {
+                if let Some(shepherd) = manager.shepherds.get(&uuid) {
+                    shepherd.load_ratio()
+                } else {
+                    1.0 // Should not happen
+                }
+            })
+            .collect();
+
+        // Should be sorted by load ratio (lowest first)
+        assert!(
+            loads.windows(2).all(|w| w[0] <= w[1]),
+            "Loads should be sorted: {loads:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_find_available_shepherds_batch_limiting() {
+        let manager = create_test_manager();
+
+        let uuid1 = Uuid::new_v4();
+        let uuid2 = Uuid::new_v4();
+        let uuid3 = Uuid::new_v4();
+
+        add_test_shepherd(&manager, uuid1, 10);
+        add_test_shepherd(&manager, uuid2, 10);
+        add_test_shepherd(&manager, uuid3, 10);
+
+        manager.update_shepherd_status(uuid1, 1, 9);
+        manager.update_shepherd_status(uuid2, 2, 8);
+        manager.update_shepherd_status(uuid3, 3, 7);
+
+        // Request only 2 shepherds out of 3 available
+        let result = manager.find_available_shepherds(2);
+        assert_eq!(result.len(), 2);
+
+        // Verify that we get the two with lowest load by checking their load ratios
+        let loads: Vec<f64> = result
+            .iter()
+            .map(|&uuid| {
+                if let Some(shepherd) = manager.shepherds.get(&uuid) {
+                    shepherd.load_ratio()
+                } else {
+                    1.0 // Should not happen
+                }
+            })
+            .collect();
+
+        // Should be the two lowest loads (10% and 20%)
+        assert!(loads[0] <= 0.2); // 10%
+        assert!(loads[1] <= 0.3); // 20%
+        assert!(loads[0] <= loads[1]); // Still sorted
+
+        // Request 0 shepherds
+        let result = manager.find_available_shepherds(0);
+        assert_eq!(result.len(), 0);
+
+        // Request more than available
+        let result = manager.find_available_shepherds(10);
+        assert_eq!(result.len(), 3);
     }
 }
