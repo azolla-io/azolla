@@ -76,14 +76,14 @@ jobs:
       timeout-minutes: 10
     
     - name: Run tests with coverage
-      run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --output-dir . --jobs 8 --engine llvm --fail-under 59
+      run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --output-dir ./coverage --jobs 8 --engine llvm --fail-under 59
       timeout-minutes: 15
     
     - name: Upload current coverage report
       uses: actions/upload-artifact@v4
       with:
         name: coverage-current
-        path: ./cobertura.xml
+        path: ./coverage/cobertura.xml
         retention-days: 1
     
     # Download baseline coverage for PR differential analysis
@@ -94,7 +94,7 @@ jobs:
         workflow: tests.yml
         branch: main
         name: coverage-baseline
-        path: .
+        path: ./baseline-coverage
       continue-on-error: true
     
     - name: Install Python and pycobertura
@@ -110,25 +110,9 @@ jobs:
     - name: Run differential coverage check
       if: github.event_name == 'pull_request'
       run: |
-        if [ -f "./cobertura.xml" ]; then
+        if [ -f "./baseline-coverage/cobertura.xml" ]; then
           echo "Checking differential coverage..."
-          COVERAGE_DIFF=$(pycobertura diff ./cobertura.xml ./cobertura.xml --format text)
-          echo "$COVERAGE_DIFF"
-          if echo "$COVERAGE_DIFF" | grep -q "No lines with coverage information in both reports."; then
-            echo "No changes in coverage."
-            exit 0
-          fi
-          TOTAL_COVERAGE=$(echo "$COVERAGE_DIFF" | grep 'TOTAL' | awk '{print $4}' | sed 's/\%//')
-          if [ -z "$TOTAL_COVERAGE" ]; then
-            echo "Could not determine total coverage from diff."
-            exit 1
-          fi
-          if (( $(echo "$TOTAL_COVERAGE < 80" | bc -l) )); then
-            echo "Error: Differential coverage is below 80% ($TOTAL_COVERAGE%)"
-            exit 1
-          else
-            echo "Differential coverage is sufficient ($TOTAL_COVERAGE%)"
-          fi
+          pycobertura diff ./baseline-coverage/cobertura.xml ./coverage/cobertura.xml --fail-under 80 --format text
         else
           echo "⚠️ No baseline coverage found. Skipping differential coverage check."
           echo "This is normal for the first PR or if baseline coverage failed to generate."
