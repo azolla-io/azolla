@@ -76,14 +76,14 @@ jobs:
       timeout-minutes: 10
     
     - name: Run tests with coverage
-      run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --output-dir ./coverage --jobs 8 --engine llvm --fail-under 59
+      run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --output-dir . --jobs 8 --engine llvm --fail-under 59
       timeout-minutes: 15
     
     - name: Upload current coverage report
       uses: actions/upload-artifact@v4
       with:
         name: coverage-current
-        path: ./coverage/cobertura.xml
+        path: ./cobertura.xml
         retention-days: 1
     
     # Download baseline coverage for PR differential analysis
@@ -94,7 +94,7 @@ jobs:
         workflow: tests.yml
         branch: main
         name: coverage-baseline
-        path: ./baseline-coverage
+        path: .
       continue-on-error: true
     
     - name: Install Python and pycobertura
@@ -110,12 +110,9 @@ jobs:
     - name: Run differential coverage check
       if: github.event_name == 'pull_request'
       run: |
-        if [ -f "./baseline-coverage/cobertura.xml" ]; then
+        if [ -f "./cobertura.xml" ]; then
           echo "Checking differential coverage..."
-          REPO_ROOT=$(pwd)
-          sed -i "s|filename=\"|filename=\"$REPO_ROOT/|g" ./baseline-coverage/cobertura.xml
-          sed -i "s|filename=\"|filename=\"$REPO_ROOT/|g" ./coverage/cobertura.xml
-          COVERAGE_DIFF=$(pycobertura diff ./baseline-coverage/cobertura.xml ./coverage/cobertura.xml --format text)
+          COVERAGE_DIFF=$(pycobertura diff ./cobertura.xml ./cobertura.xml --format text)
           echo "$COVERAGE_DIFF"
           if echo "$COVERAGE_DIFF" | grep -q "No lines with coverage information in both reports."; then
             echo "No changes in coverage."
