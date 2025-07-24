@@ -112,7 +112,10 @@ jobs:
       run: |
         if [ -f "./baseline-coverage/cobertura.xml" ]; then
           echo "Checking differential coverage..."
-          COVERAGE_DIFF=$(pycobertura --source . diff ./baseline-coverage/cobertura.xml ./coverage/cobertura.xml --format text)
+          REPO_ROOT=$(pwd)
+          sed -i "s|filename=\"|filename=\"$REPO_ROOT/|g" ./baseline-coverage/cobertura.xml
+          sed -i "s|filename=\"|filename=\"$REPO_ROOT/|g" ./coverage/cobertura.xml
+          COVERAGE_DIFF=$(pycobertura diff ./baseline-coverage/cobertura.xml ./coverage/cobertura.xml --format text)
           echo "$COVERAGE_DIFF"
           if echo "$COVERAGE_DIFF" | grep -q "No lines with coverage information in both reports."; then
             echo "No changes in coverage."
