@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::sync::Arc;
 
-use crate::orchestrator::db::{Domains, PgPool};
+use crate::orchestrator::db::{DomainsConfig, PgPool};
 use crate::orchestrator::event_stream::{EventStream, EventStreamConfig};
 use crate::orchestrator::scheduler::{SchedulerConfig, SchedulerRegistry};
 use crate::orchestrator::shepherd_manager::ShepherdManager;
@@ -47,7 +47,7 @@ impl Engine {
     pub fn new(
         pool: PgPool,
         event_stream_config: EventStreamConfig,
-        domains_config: Domains,
+        domains_config: DomainsConfig,
     ) -> Self {
         Self::with_scheduler_config(
             pool,
@@ -61,7 +61,7 @@ impl Engine {
     pub fn with_scheduler_config(
         pool: PgPool,
         event_stream_config: EventStreamConfig,
-        domains_config: Domains,
+        domains_config: DomainsConfig,
         scheduler_config: SchedulerConfig,
     ) -> Self {
         let event_stream = Arc::new(EventStream::new(pool.clone(), event_stream_config));

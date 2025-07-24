@@ -4,7 +4,7 @@ macro_rules! db_test {
         #[tokio::test]
         async fn $test_name() {
             use azolla::orchestrator::db::{
-                create_pool, run_migrations, Database, Domains, EventStream, Server, Settings,
+                create_pool, run_migrations, Database, DomainsConfig, EventStream, Server, Settings,
             };
             use testcontainers::{
                 core::{IntoContainerPort, WaitFor},
@@ -44,7 +44,7 @@ macro_rules! db_test {
                 },
                 server: Server { port: 0 }, // dummy
                 event_stream: EventStream::default(),
-                domains: Domains::default(),
+                domains: DomainsConfig::default(),
             };
             let pool = create_pool(&settings).unwrap();
 
