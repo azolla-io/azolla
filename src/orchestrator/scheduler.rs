@@ -139,16 +139,15 @@ impl SchedulerActor {
                                         let shepherd_manager = scheduler_state.shepherd_manager.clone();
                                         let event_stream = scheduler_state.event_stream.clone();
 
-                                        tokio::spawn(async move {
-                                            let result = SchedulerState::execute_start_task(
-                                                task_id,
-                                                task_start_data,
-                                                domain,
-                                                shepherd_manager,
-                                                event_stream,
-                                            ).await;
-                                            let _ = respond_to.send(result);
-                                        });
+                                        // Direct call since enqueue_task is now non-blocking
+                                        let result = SchedulerState::execute_start_task(
+                                            task_id,
+                                            task_start_data,
+                                            domain,
+                                            shepherd_manager,
+                                            event_stream,
+                                        ).await;
+                                        let _ = respond_to.send(result);
                                     },
                                     None => {
                                         let _ = respond_to.send(Ok(()));
@@ -417,7 +416,12 @@ impl SchedulerState {
             return None;
         }
 
-        let shepherd_id = match self.shepherd_manager.find_best_shepherd() {
+        let shepherd_id = match self
+            .shepherd_manager
+            .find_available_shepherds(1)
+            .into_iter()
+            .next()
+        {
             Some(id) => {
                 info!(
                     "Found shepherd {} for task {} in domain {}",
@@ -465,7 +469,7 @@ impl SchedulerState {
         })
     }
 
-    /// Slow asynchronous phase: Execute I/O operations (EventStream writes and task dispatch)
+    /// Synchronous phase: Enqueue task to virtual queue and write started event
     async fn execute_start_task(
         task_id: Uuid,
         task_start_data: TaskStartData,
@@ -473,25 +477,19 @@ impl SchedulerState {
         shepherd_manager: Arc<ShepherdManager>,
         event_stream: Arc<EventStream>,
     ) -> Result<()> {
-        debug!("Executing I/O for task {task_id} in domain {domain}");
+        debug!("Enqueuing task {task_id} to domain {domain} virtual queue");
 
+        // Write attempt started event - we no longer know the specific shepherd ID
+        // so we'll use a placeholder or modify the event structure
         SchedulerState::write_attempt_started_event(
             task_id,
             task_start_data.flow_instance_id,
             task_start_data.attempt_number,
-            task_start_data.shepherd_id,
+            task_start_data.shepherd_id, // Keep the original selected shepherd for compatibility
             &domain,
             &event_stream,
         )
         .await?;
-
-        // TODO: handle server crash before task is actually dispatched. Options:
-        // (1) Peridically checking status of dispatched tasks;
-        // (2) wait until task timeout, then fail it from server side.
-        info!(
-            "Dispatching task {task_id} to shepherd {}",
-            task_start_data.shepherd_id
-        );
 
         let task_dispatch = crate::orchestrator::shepherd_manager::TaskDispatch {
             task_id,
@@ -502,16 +500,14 @@ impl SchedulerState {
             cpu_limit: None,
         };
 
-        match shepherd_manager
-            .dispatch_task_to_shepherd(task_start_data.shepherd_id, task_dispatch)
-            .await
-        {
-            Ok(_) => Ok(()),
+        // Enqueue task to virtual queue instead of direct dispatch
+        match shepherd_manager.enqueue_task(domain.clone(), task_dispatch) {
+            Ok(_) => {
+                info!("Successfully enqueued task {task_id} to domain '{domain}' virtual queue");
+                Ok(())
+            }
             Err(e) => {
-                warn!(
-                    "Failed to dispatch task {task_id} to shepherd {}: {e}",
-                    task_start_data.shepherd_id
-                );
+                warn!("Failed to enqueue task {task_id} to domain '{domain}' virtual queue: {e}");
 
                 SchedulerState::write_attempt_failure_event(
                     task_id,
@@ -536,6 +532,9 @@ impl SchedulerState {
             "Deciding handle task result for {} in domain {}",
             task_id, self.domain
         );
+
+        // Decrement in-flight counter for the domain since task is completing
+        self.shepherd_manager.decrement_in_flight_task(&self.domain);
 
         let task = match self.task_set.get_task_mut(task_id) {
             Some(task) => task,
@@ -859,21 +858,19 @@ impl SchedulerState {
                         let shepherd_manager = self.shepherd_manager.clone();
                         let event_stream = self.event_stream.clone();
 
-                        // Execute the retry in the background
-                        tokio::spawn(async move {
-                            let result = SchedulerState::execute_start_task(
-                                task_id,
-                                task_start_data,
-                                domain,
-                                shepherd_manager,
-                                event_stream,
-                            )
-                            .await;
+                        // Direct execution since enqueue_task is now non-blocking
+                        let result = SchedulerState::execute_start_task(
+                            task_id,
+                            task_start_data,
+                            domain,
+                            shepherd_manager,
+                            event_stream,
+                        )
+                        .await;
 
-                            if let Err(e) = result {
-                                log::error!("Failed to execute retry for task {task_id}: {e}");
-                            }
-                        });
+                        if let Err(e) = result {
+                            log::error!("Failed to execute retry for task {task_id}: {e}");
+                        }
                     }
                 }
             }
@@ -1018,7 +1015,10 @@ mod tests {
             create_dummy_pool(),
             EventStreamConfig::default(),
         ));
+        use crate::orchestrator::db::Domains;
+        let domains_config = Arc::new(Domains::default());
         let shepherd_manager = Arc::new(ShepherdManager::new(
+            domains_config,
             task_registry.clone(),
             event_stream.clone(),
         ));
@@ -1033,7 +1033,7 @@ mod tests {
     fn create_dummy_pool() -> crate::orchestrator::db::PgPool {
         // For unit tests, we'll create a minimal pool that won't be used
         // In real integration tests, use the db_test! macro
-        use crate::orchestrator::db::{create_pool, Database, Server, Settings};
+        use crate::orchestrator::db::{create_pool, Database, Domains, Server, Settings};
 
         let settings = Settings {
             database: Database {
@@ -1042,6 +1042,7 @@ mod tests {
             },
             server: Server { port: 0 },
             event_stream: crate::orchestrator::db::EventStream::default(),
+            domains: Domains::default(),
         };
 
         // This will fail but we catch it for unit tests
@@ -1258,12 +1259,17 @@ mod tests {
     db_test!(
         test_scheduler_handle_task_failure_with_retries,
         (|pool: crate::orchestrator::db::PgPool| async move {
+            use crate::orchestrator::db::Domains;
             use crate::orchestrator::engine::Engine;
             use crate::orchestrator::event_stream::EventStreamConfig;
             use crate::proto::common::ErrorResult;
 
             // Create Engine with database
-            let engine = Engine::new(pool.clone(), EventStreamConfig::default());
+            let engine = Engine::new(
+                pool.clone(),
+                EventStreamConfig::default(),
+                Domains::default(),
+            );
             engine.initialize().await.unwrap();
 
             // Create and add a task in ATTEMPT_STARTED state with multiple attempts allowed
@@ -1321,12 +1327,17 @@ mod tests {
     db_test!(
         test_scheduler_handle_task_failure_no_retries,
         (|pool: crate::orchestrator::db::PgPool| async move {
+            use crate::orchestrator::db::Domains;
             use crate::orchestrator::engine::Engine;
             use crate::orchestrator::event_stream::EventStreamConfig;
             use crate::proto::common::ErrorResult;
 
             // Create Engine with database
-            let engine = Engine::new(pool.clone(), EventStreamConfig::default());
+            let engine = Engine::new(
+                pool.clone(),
+                EventStreamConfig::default(),
+                Domains::default(),
+            );
             engine.initialize().await.unwrap();
 
             // Create and add a task in ATTEMPT_STARTED state with max attempts reached
@@ -1572,6 +1583,7 @@ mod tests {
         db_test!(
             test_multi_domain_scheduler_isolation,
             (|pool: crate::orchestrator::db::PgPool| async move {
+                use crate::orchestrator::db::Domains;
                 use crate::orchestrator::engine::Engine;
                 use crate::orchestrator::event_stream::EventStreamConfig;
                 use crate::orchestrator::taskset::Task;
@@ -1579,7 +1591,11 @@ mod tests {
                 use std::collections::HashMap;
                 use tokio::time::{sleep, Duration};
 
-                let engine = Engine::new(pool.clone(), EventStreamConfig::default());
+                let engine = Engine::new(
+                    pool.clone(),
+                    EventStreamConfig::default(),
+                    Domains::default(),
+                );
                 engine.initialize().await.unwrap();
 
                 // Register multiple shepherds for realistic testing
@@ -1719,12 +1735,17 @@ mod tests {
         db_test!(
             test_retry_logic_integration,
             (|pool: crate::orchestrator::db::PgPool| async move {
+                use crate::orchestrator::db::Domains;
                 use crate::orchestrator::engine::Engine;
                 use crate::orchestrator::event_stream::EventStreamConfig;
                 use crate::orchestrator::taskset::Task;
 
                 // Create Engine with database
-                let engine = Engine::new(pool.clone(), EventStreamConfig::default());
+                let engine = Engine::new(
+                    pool.clone(),
+                    EventStreamConfig::default(),
+                    Domains::default(),
+                );
                 engine.initialize().await.unwrap();
 
                 // Register a shepherd for testing
@@ -1833,6 +1854,7 @@ mod tests {
     db_test!(
         test_scheduler_end_to_end_with_db,
         (|pool: crate::orchestrator::db::PgPool| async move {
+            use crate::orchestrator::db::Domains;
             use crate::orchestrator::engine::Engine;
             use crate::orchestrator::event_stream::EventStreamConfig;
             use crate::orchestrator::taskset::Task;
@@ -1841,7 +1863,11 @@ mod tests {
             use tokio::time::{sleep, Duration};
 
             // Create Engine with database
-            let engine = Engine::new(pool.clone(), EventStreamConfig::default());
+            let engine = Engine::new(
+                pool.clone(),
+                EventStreamConfig::default(),
+                Domains::default(),
+            );
             engine.initialize().await.unwrap();
 
             // Register a test shepherd with tx channel
@@ -1973,6 +1999,7 @@ mod tests {
     db_test!(
         test_scheduler_multi_domain_with_db,
         (|pool: crate::orchestrator::db::PgPool| async move {
+            use crate::orchestrator::db::Domains;
             use crate::orchestrator::engine::Engine;
             use crate::orchestrator::event_stream::EventStreamConfig;
             use crate::orchestrator::taskset::Task;
@@ -1980,7 +2007,11 @@ mod tests {
             use std::collections::HashMap;
             use tokio::time::{sleep, Duration};
 
-            let engine = Engine::new(pool.clone(), EventStreamConfig::default());
+            let engine = Engine::new(
+                pool.clone(),
+                EventStreamConfig::default(),
+                Domains::default(),
+            );
             engine.initialize().await.unwrap();
 
             // Register multiple shepherds
@@ -2111,13 +2142,18 @@ mod tests {
     db_test!(
         test_scheduler_retry_policy_with_db,
         (|pool: crate::orchestrator::db::PgPool| async move {
+            use crate::orchestrator::db::Domains;
             use crate::orchestrator::engine::Engine;
             use crate::orchestrator::event_stream::EventStreamConfig;
             use crate::orchestrator::taskset::{Task, TaskAttempt};
             use crate::proto::common::{ErrorResult, TaskResult};
             use crate::EVENT_TASK_CREATED;
 
-            let engine = Engine::new(pool.clone(), EventStreamConfig::default());
+            let engine = Engine::new(
+                pool.clone(),
+                EventStreamConfig::default(),
+                Domains::default(),
+            );
             engine.initialize().await.unwrap();
 
             // Register shepherd
@@ -2322,13 +2358,18 @@ mod tests {
     db_test!(
         test_scheduler_shepherd_failure_with_db,
         (|pool: crate::orchestrator::db::PgPool| async move {
+            use crate::orchestrator::db::Domains;
             use crate::orchestrator::engine::Engine;
             use crate::orchestrator::event_stream::EventStreamConfig;
             use crate::orchestrator::taskset::Task;
             use crate::EVENT_TASK_CREATED;
             use tokio::time::{sleep, Duration};
 
-            let engine = Engine::new(pool.clone(), EventStreamConfig::default());
+            let engine = Engine::new(
+                pool.clone(),
+                EventStreamConfig::default(),
+                Domains::default(),
+            );
             engine.initialize().await.unwrap();
 
             // Register a shepherd
