@@ -2,7 +2,6 @@ use anyhow::Result;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use dashmap::DashMap;
 use log::{error, info, warn};
-use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 use std::sync::Arc;
@@ -12,7 +11,7 @@ use tokio::time;
 use tonic::Status;
 use uuid::Uuid;
 
-use crate::orchestrator::db::Domains;
+use crate::orchestrator::db::DomainsConfig;
 use crate::orchestrator::event_stream::EventStream;
 use crate::orchestrator::taskset::TaskSetRegistry;
 use crate::proto::{common, orchestrator::ServerMsg};
@@ -34,6 +33,8 @@ pub struct TaskDispatch {
     pub kwargs: String,
     pub memory_limit: Option<u64>,
     pub cpu_limit: Option<u32>,
+    pub flow_instance_id: Option<Uuid>,
+    pub attempt_number: i32,
 }
 
 /// Per-domain virtual queue for task dispatch
@@ -106,49 +107,7 @@ impl VirtualQueue {
     }
 }
 
-/// Entry for priority queue in find_best_shepherd
-/// Implements Ord to create a min-heap based on load_ratio
 #[derive(Debug, Clone, PartialEq)]
-struct ShepherdLoadEntry {
-    uuid: Uuid,
-    load_ratio: f64,
-    available_capacity: u32,
-    current_load: u32,
-}
-
-impl Eq for ShepherdLoadEntry {}
-
-impl PartialOrd for ShepherdLoadEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for ShepherdLoadEntry {
-    fn cmp(&self, other: &Self) -> Ordering {
-        // Primary: lower load ratio is better
-        let load_cmp = self
-            .load_ratio
-            .partial_cmp(&other.load_ratio)
-            .unwrap_or(Ordering::Equal);
-
-        if load_cmp != Ordering::Equal {
-            return load_cmp;
-        }
-
-        // Secondary: higher available capacity is better (tie-breaker)
-        let capacity_cmp = other.available_capacity.cmp(&self.available_capacity);
-
-        if capacity_cmp != Ordering::Equal {
-            return capacity_cmp;
-        }
-
-        // Tertiary: UUID for consistent ordering (deterministic tie-breaking)
-        self.uuid.cmp(&other.uuid)
-    }
-}
-
-#[derive(Debug, Clone)]
 pub enum ShepherdConnectionStatus {
     Connected,
     Disconnected,
@@ -269,14 +228,22 @@ impl ShepherdStatus {
 pub struct ShepherdManager {
     shepherds: DashMap<Uuid, ShepherdStatus>,
     virtual_queues: Arc<DashMap<String, VirtualQueue>>,
-    domains_config: Arc<Domains>,
+    domains_config: Arc<DomainsConfig>,
     task_registry: Arc<TaskSetRegistry>,
     event_stream: Arc<EventStream>,
+
+    // Persistent bucket state for load balancing
+    // Each bucket contains shepherds with load ratios in [i*0.1, (i+1)*0.1)
+    load_buckets: Arc<DashMap<usize, Vec<Uuid>>>,
+
+    // Total capacity tracking for average load calculation
+    total_max_concurrency: Arc<std::sync::atomic::AtomicU32>,
+    total_current_load: Arc<std::sync::atomic::AtomicU32>,
 }
 
 impl ShepherdManager {
     pub fn new(
-        domains_config: Arc<Domains>,
+        domains_config: Arc<DomainsConfig>,
         task_registry: Arc<TaskSetRegistry>,
         event_stream: Arc<EventStream>,
     ) -> Self {
@@ -286,6 +253,9 @@ impl ShepherdManager {
             domains_config,
             task_registry,
             event_stream,
+            load_buckets: Arc::new(DashMap::new()),
+            total_max_concurrency: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            total_current_load: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         }
     }
 
@@ -331,6 +301,14 @@ impl ShepherdManager {
 
         // Add to in-memory tracking
         self.shepherds.insert(uuid, shepherd_status);
+
+        // Update total capacity tracking
+        self.total_max_concurrency
+            .fetch_add(max_concurrency, std::sync::atomic::Ordering::Relaxed);
+        // New shepherds start with 0 current load
+
+        // Add to appropriate load bucket (new shepherds have 0% load)
+        self.add_to_bucket(uuid, 0.0);
 
         // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
         info!("Successfully registered shepherd {uuid}");
@@ -387,6 +365,14 @@ impl ShepherdManager {
         // Add to in-memory tracking
         self.shepherds.insert(uuid, shepherd_status);
 
+        // Update total capacity tracking
+        self.total_max_concurrency
+            .fetch_add(max_concurrency, std::sync::atomic::Ordering::Relaxed);
+        // New shepherds start with 0 current load
+
+        // Add to appropriate load bucket (new shepherds have 0% load)
+        self.add_to_bucket(uuid, 0.0);
+
         // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
         info!("Successfully registered shepherd {uuid}");
         Ok(())
@@ -422,7 +408,24 @@ impl ShepherdManager {
     /// Update shepherd status (heartbeat)
     pub fn update_shepherd_status(&self, uuid: Uuid, current_load: u32, available_capacity: u32) {
         if let Some(mut shepherd) = self.shepherds.get_mut(&uuid) {
+            let old_load = shepherd.current_load;
             shepherd.update_load(current_load, available_capacity);
+
+            // Update total current load tracking
+            let load_diff = current_load as i32 - old_load as i32;
+            if load_diff != 0 {
+                if load_diff > 0 {
+                    self.total_current_load
+                        .fetch_add(load_diff as u32, std::sync::atomic::Ordering::Relaxed);
+                } else {
+                    self.total_current_load
+                        .fetch_sub((-load_diff) as u32, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+
+            // Update bucket assignment based on new load ratio
+            let new_load_ratio = shepherd.load_ratio();
+            self.update_shepherd_bucket(uuid, new_load_ratio);
         } else {
             // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
             warn!("Received status update from unknown shepherd {uuid}");
@@ -441,7 +444,11 @@ impl ShepherdManager {
         if let Some(mut shepherd) = self.shepherds.get_mut(&uuid) {
             shepherd.status = ShepherdConnectionStatus::Disconnected;
             shepherd.clear_tx(); // Clear the tx channel on disconnect
-                                 // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
+
+            // Remove from load buckets since disconnected shepherds shouldn't be selected
+            self.remove_from_all_buckets(uuid);
+
+            // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
             info!("Marked shepherd {uuid} as temporarily unavailable (connection dropped)");
         }
     }
@@ -451,6 +458,11 @@ impl ShepherdManager {
         if let Some(mut shepherd) = self.shepherds.get_mut(&uuid) {
             shepherd.status = ShepherdConnectionStatus::Connected;
             shepherd.update_last_seen();
+
+            // Add back to appropriate load bucket since shepherd is now available
+            let load_ratio = shepherd.load_ratio();
+            self.add_to_bucket(uuid, load_ratio);
+
             // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
             info!("Marked shepherd {uuid} as reconnected and available");
         }
@@ -464,70 +476,143 @@ impl ShepherdManager {
             return Vec::new();
         }
 
-        let mut candidates = Vec::new();
+        // Get total capacity stats for average load calculation
+        let total_max_concurrency = self
+            .total_max_concurrency
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let total_current_load = self
+            .total_current_load
+            .load(std::sync::atomic::Ordering::Relaxed);
 
-        // Collect all available shepherds
-        for entry in self.shepherds.iter() {
-            let shepherd = entry.value();
+        if total_max_concurrency == 0 {
+            return Vec::new(); // No shepherds available
+        }
 
-            // Only consider connected shepherds with available capacity
-            if matches!(shepherd.status, ShepherdConnectionStatus::Connected)
-                && shepherd.available_capacity() > 0
-            {
-                candidates.push(ShepherdLoadEntry {
-                    uuid: shepherd.uuid,
-                    load_ratio: shepherd.load_ratio(),
-                    available_capacity: shepherd.available_capacity(),
-                    current_load: shepherd.current_load,
-                });
+        // Calculate expected average load ratio after dispatching batch tasks
+        let expected_avg_load_ratio =
+            (total_current_load + batch) as f64 / total_max_concurrency as f64;
+
+        let mut result = Vec::new();
+        let mut remaining_batch = batch;
+
+        // Process buckets from lowest to highest load ratio (0 to 9)
+        for bucket_index in 0..10 {
+            if remaining_batch == 0 {
+                break;
+            }
+
+            if let Some(bucket_entry) = self.load_buckets.get(&bucket_index) {
+                let bucket = bucket_entry.value();
+                if bucket.is_empty() {
+                    continue;
+                }
+
+                // Try to assign tasks to shepherds in this bucket
+                let bucket_result =
+                    self.select_from_bucket(bucket, remaining_batch, expected_avg_load_ratio);
+
+                result.extend(bucket_result.iter());
+                remaining_batch = remaining_batch.saturating_sub(bucket_result.len() as u32);
             }
         }
 
-        // Fast heuristic: If we need fewer shepherds than available, use partial sort
-        // This is O(n + k log k) instead of O(n log n) for full sort
-        let result_count = std::cmp::min(batch as usize, candidates.len());
+        result
+    }
 
-        if result_count == 0 {
-            return Vec::new();
+    /// Select shepherds from a single bucket trying to match expected average load ratio
+    fn select_from_bucket(
+        &self,
+        bucket: &[Uuid],
+        batch_size: u32,
+        target_load_ratio: f64,
+    ) -> Vec<Uuid> {
+        let mut result = Vec::new();
+        let mut remaining_batch = batch_size;
+
+        // Iterate through all shepherds in the bucket
+        for &shepherd_uuid in bucket {
+            if remaining_batch == 0 {
+                break;
+            }
+
+            // Get shepherd info
+            if let Some(shepherd) = self.shepherds.get(&shepherd_uuid) {
+                // Calculate how many tasks this shepherd should get to reach target ratio
+                let _current_ratio = shepherd.load_ratio(); // For debugging if needed
+                let max_concurrency = shepherd.max_concurrency as f64;
+                let current_load = shepherd.current_load as f64;
+
+                // Target load for this shepherd to match average
+                let target_load = target_load_ratio * max_concurrency;
+                let desired_tasks = (target_load - current_load).ceil() as i32;
+
+                // Clamp to available capacity and remaining batch
+                let tasks_to_assign = std::cmp::max(
+                    0,
+                    std::cmp::min(
+                        desired_tasks,
+                        std::cmp::min(shepherd.available_capacity() as i32, remaining_batch as i32),
+                    ),
+                ) as u32;
+
+                // Add this shepherd the calculated number of times
+                for _ in 0..tasks_to_assign {
+                    result.push(shepherd_uuid);
+                }
+
+                remaining_batch = remaining_batch.saturating_sub(tasks_to_assign);
+            }
         }
 
-        if result_count >= candidates.len() {
-            // Return all available shepherds, sorted
-            candidates.sort_by(|a, b| {
-                a.load_ratio
-                    .partial_cmp(&b.load_ratio)
-                    .unwrap_or(Ordering::Equal)
-                    .then_with(|| b.available_capacity.cmp(&a.available_capacity))
-            });
-            candidates.into_iter().map(|entry| entry.uuid).collect()
-        } else {
-            // Use partial sort to get the best k shepherds
-            // This will put the k best shepherds at the beginning
-            candidates.select_nth_unstable(result_count - 1);
+        result
+    }
 
-            // Take the first k shepherds and sort them for consistent ordering
-            let mut result: Vec<_> = candidates.into_iter().take(result_count).collect();
-            result.sort_by(|a, b| {
-                a.load_ratio
-                    .partial_cmp(&b.load_ratio)
-                    .unwrap_or(Ordering::Equal)
-                    .then_with(|| b.available_capacity.cmp(&a.available_capacity))
-            });
+    /// Calculate which bucket a shepherd belongs to based on its load ratio
+    fn get_bucket_index(load_ratio: f64) -> usize {
+        // Buckets: [0-0.1), [0.1-0.2), ..., [0.9-1.0]
+        std::cmp::min(9, (load_ratio * 10.0).floor() as usize)
+    }
 
-            result.into_iter().map(|entry| entry.uuid).collect()
+    /// Add shepherd to the appropriate load bucket
+    fn add_to_bucket(&self, uuid: Uuid, load_ratio: f64) {
+        let bucket_index = Self::get_bucket_index(load_ratio);
+
+        // Remove from any existing bucket first
+        self.remove_from_all_buckets(uuid);
+
+        // Add to the appropriate bucket
+        let mut bucket = self.load_buckets.entry(bucket_index).or_default();
+        if !bucket.contains(&uuid) {
+            bucket.push(uuid);
         }
     }
 
-    /// Legacy method for backward compatibility - returns the best single shepherd
-    /// This method will be removed once all callers are updated
-    #[deprecated(note = "Use find_available_shepherds(1) instead")]
-    pub fn find_best_shepherd(&self) -> Option<Uuid> {
-        self.find_available_shepherds(1).into_iter().next()
+    /// Remove shepherd from all buckets
+    fn remove_from_all_buckets(&self, uuid: Uuid) {
+        for mut bucket in self.load_buckets.iter_mut() {
+            bucket.value_mut().retain(|&id| id != uuid);
+        }
+    }
+
+    /// Update shepherd's bucket assignment when load changes
+    fn update_shepherd_bucket(&self, uuid: Uuid, new_load_ratio: f64) {
+        self.add_to_bucket(uuid, new_load_ratio);
     }
 
     /// Remove shepherd when it disconnects
     pub fn remove_shepherd(&self, uuid: Uuid) {
-        if self.shepherds.remove(&uuid).is_some() {
+        if let Some((_, shepherd)) = self.shepherds.remove(&uuid) {
+            // Update total capacity tracking
+            self.total_max_concurrency.fetch_sub(
+                shepherd.max_concurrency,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            self.total_current_load
+                .fetch_sub(shepherd.current_load, std::sync::atomic::Ordering::Relaxed);
+
+            // Remove from load buckets
+            self.remove_from_all_buckets(uuid);
+
             // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
             info!("Removed shepherd {uuid} from tracking");
         }
@@ -720,7 +805,7 @@ impl ShepherdManager {
 
                 // Process all active domains
                 let domains: Vec<String> = self.get_active_domains();
-
+                // TODO: implement a fair dequeue algorithm so that domains are treated equally
                 for domain in domains {
                     self.process_domain_queue(&domain).await;
                 }
@@ -761,6 +846,19 @@ impl ShepherdManager {
             .into_iter()
             .zip(available_shepherds.into_iter())
         {
+            // Write attempt started event right before dispatch
+            // TODO: implement batch event write
+            if let Err(e) = self
+                .write_attempt_started_event(&task, shepherd_id, domain)
+                .await
+            {
+                warn!(
+                    "Failed to write attempt started event for task {} to shepherd {}: {}",
+                    task.task_id, shepherd_id, e
+                );
+                // Continue with dispatch even if event write fails
+            }
+
             match self
                 .dispatch_task_to_shepherd(shepherd_id, task.clone())
                 .await
@@ -784,6 +882,38 @@ impl ShepherdManager {
                 }
             }
         }
+    }
+
+    /// Write attempt started event right before dispatch
+    async fn write_attempt_started_event(
+        &self,
+        task: &TaskDispatch,
+        shepherd_id: Uuid,
+        domain: &str,
+    ) -> Result<()> {
+        let event_metadata = serde_json::json!({
+            "task_id": task.task_id,
+            "attempt_number": task.attempt_number,
+            "shepherd_id": shepherd_id,
+            "scheduled_at": chrono::Utc::now()
+        });
+
+        let event_record = crate::orchestrator::event_stream::EventRecord {
+            domain: domain.to_string(),
+            task_instance_id: Some(task.task_id),
+            flow_instance_id: task.flow_instance_id,
+            event_type: crate::EVENT_TASK_ATTEMPT_STARTED,
+            created_at: chrono::Utc::now(),
+            metadata: event_metadata,
+        };
+
+        self.event_stream.write_event(event_record).await?;
+
+        info!(
+            "Successfully started task {} attempt {} on shepherd {shepherd_id}",
+            task.task_id, task.attempt_number
+        );
+        Ok(())
     }
 }
 
@@ -815,7 +945,7 @@ mod tests {
             },
             server: Server { port: 0 },
             event_stream: crate::orchestrator::db::EventStream::default(),
-            domains: crate::orchestrator::db::Domains::default(),
+            domains: crate::orchestrator::db::DomainsConfig::default(),
         };
 
         // Create a dummy pool that won't actually connect
@@ -829,8 +959,8 @@ mod tests {
 
         let event_stream_config = EventStreamConfig::default();
         let event_stream = Arc::new(EventStream::new(pool, event_stream_config));
-        use crate::orchestrator::db::Domains;
-        let domains_config = Arc::new(Domains::default());
+        use crate::orchestrator::db::DomainsConfig;
+        let domains_config = Arc::new(DomainsConfig::default());
         ShepherdManager::new(domains_config, task_registry, event_stream)
     }
 
@@ -838,6 +968,15 @@ mod tests {
     fn add_test_shepherd(manager: &ShepherdManager, uuid: Uuid, max_concurrency: u32) {
         let shepherd_status = ShepherdStatus::new(uuid, max_concurrency);
         manager.shepherds.insert(uuid, shepherd_status);
+
+        // Update total capacity tracking (mimicking register_shepherd behavior)
+        manager
+            .total_max_concurrency
+            .fetch_add(max_concurrency, std::sync::atomic::Ordering::Relaxed);
+        // New shepherds start with 0 current load
+
+        // Add to appropriate load bucket (new shepherds have 0% load)
+        manager.add_to_bucket(uuid, 0.0);
     }
 
     // Helper function to create a test tx channel
@@ -867,56 +1006,6 @@ mod tests {
         let result = manager.find_available_shepherds(1);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], uuid1);
-    }
-
-    /// Tests that the shepherd selection algorithm ignores unavailable shepherds.
-    /// Expected behavior: Shepherds at full capacity or disconnected should not be selected, even if they would otherwise be preferred.
-    #[tokio::test]
-    async fn test_find_best_shepherd_ignores_unavailable() {
-        let manager = create_test_manager();
-
-        let uuid1 = Uuid::new_v4();
-        let uuid2 = Uuid::new_v4();
-        let uuid3 = Uuid::new_v4();
-
-        add_test_shepherd(&manager, uuid1, 10);
-        add_test_shepherd(&manager, uuid2, 10);
-        add_test_shepherd(&manager, uuid3, 10);
-
-        // uuid1: full capacity, uuid2: disconnected, uuid3: available
-        manager.update_shepherd_status(uuid1, 10, 0); // Full capacity
-        manager.update_shepherd_status(uuid2, 3, 7); // Good load but will disconnect
-        manager.update_shepherd_status(uuid3, 5, 5); // Available
-
-        // Disconnect uuid2
-        if let Some(mut shepherd) = manager.shepherds.get_mut(&uuid2) {
-            shepherd.status = ShepherdConnectionStatus::Disconnected;
-        }
-
-        let result = manager.find_available_shepherds(1);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], uuid3);
-    }
-
-    /// Tests the tiebreaker logic when shepherds have identical load ratios.
-    /// Expected behavior: When load ratios are equal, the shepherd with higher available capacity should be preferred.
-    #[tokio::test]
-    async fn test_find_best_shepherd_capacity_tiebreaker() {
-        let manager = create_test_manager();
-
-        let uuid1 = Uuid::new_v4();
-        let uuid2 = Uuid::new_v4();
-
-        add_test_shepherd(&manager, uuid1, 10);
-        add_test_shepherd(&manager, uuid2, 20);
-
-        // Same load ratio (50%) but different available capacity
-        manager.update_shepherd_status(uuid1, 5, 5); // 5 available
-        manager.update_shepherd_status(uuid2, 10, 10); // 10 available - should win tiebreaker
-
-        let result = manager.find_available_shepherds(1);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], uuid2);
     }
 
     /// Tests edge cases in shepherd selection including empty pool, zero capacity, and normal operation.
@@ -1175,6 +1264,8 @@ mod tests {
             kwargs: "{}".to_string(),
             memory_limit: Some(1024),
             cpu_limit: Some(100),
+            flow_instance_id: None,
+            attempt_number: 0,
         };
         let result = manager.dispatch_task_to_shepherd(uuid, task_dispatch).await;
 
@@ -1196,6 +1287,8 @@ mod tests {
             kwargs: "{}".to_string(),
             memory_limit: Some(1024),
             cpu_limit: Some(100),
+            flow_instance_id: None,
+            attempt_number: 0,
         };
         let result = manager.dispatch_task_to_shepherd(uuid, task_dispatch).await;
 
@@ -1224,6 +1317,8 @@ mod tests {
             kwargs: "{}".to_string(),
             memory_limit: Some(1024),
             cpu_limit: Some(100),
+            flow_instance_id: None,
+            attempt_number: 0,
         };
         let result = manager.dispatch_task_to_shepherd(uuid, task_dispatch).await;
 
@@ -1249,6 +1344,8 @@ mod tests {
             kwargs: "{}".to_string(),
             memory_limit: None,
             cpu_limit: None,
+            flow_instance_id: None,
+            attempt_number: 0,
         };
         queue.enqueue(task1.clone()).unwrap();
         assert_eq!(queue.queue_len(), 1);
@@ -1278,6 +1375,8 @@ mod tests {
             kwargs: "{}".to_string(),
             memory_limit: None,
             cpu_limit: None,
+            flow_instance_id: None,
+            attempt_number: 0,
         };
         let task2 = TaskDispatch {
             task_id: Uuid::new_v4(),
@@ -1286,6 +1385,8 @@ mod tests {
             kwargs: "{}".to_string(),
             memory_limit: None,
             cpu_limit: None,
+            flow_instance_id: None,
+            attempt_number: 1,
         };
         let task3 = TaskDispatch {
             task_id: Uuid::new_v4(),
@@ -1294,6 +1395,8 @@ mod tests {
             kwargs: "{}".to_string(),
             memory_limit: None,
             cpu_limit: None,
+            flow_instance_id: None,
+            attempt_number: 2,
         };
 
         queue.enqueue(task1).unwrap();
@@ -1320,93 +1423,93 @@ mod tests {
         assert_eq!(queue.queue_len(), 0);
     }
 
+    /// Tests the bucket-based load balancing algorithm with shepherds in different load buckets.
+    /// Expected behavior: Shepherds are distributed across 10 buckets based on load ratio, and lower bucket shepherds are prioritized for task assignment.
     #[tokio::test]
-    async fn test_find_available_shepherds_load_balancing() {
+    async fn test_bucket_based_load_balancing() {
         let manager = create_test_manager();
 
-        let uuid1 = Uuid::new_v4();
-        let uuid2 = Uuid::new_v4();
-        let uuid3 = Uuid::new_v4();
+        // Create shepherds in different buckets
+        let uuid1 = Uuid::new_v4(); // Will be in bucket 0 (0% load)
+        let uuid2 = Uuid::new_v4(); // Will be in bucket 2 (20% load)
+        let uuid3 = Uuid::new_v4(); // Will be in bucket 5 (50% load)
 
         add_test_shepherd(&manager, uuid1, 10);
         add_test_shepherd(&manager, uuid2, 10);
         add_test_shepherd(&manager, uuid3, 10);
 
-        // Set different load ratios: 20%, 80%, 50%
-        manager.update_shepherd_status(uuid1, 2, 8); // 20% - should be first
-        manager.update_shepherd_status(uuid2, 8, 2); // 80% - should be last
-        manager.update_shepherd_status(uuid3, 5, 5); // 50% - should be middle
+        manager.update_shepherd_status(uuid1, 0, 10); // 0% load -> bucket 0
+        manager.update_shepherd_status(uuid2, 2, 8); // 20% load -> bucket 2
+        manager.update_shepherd_status(uuid3, 5, 5); // 50% load -> bucket 5
 
-        let result = manager.find_available_shepherds(3);
-        assert_eq!(result.len(), 3);
+        // Total: 30 max capacity, 7 current load
+        // Expected avg after 10 tasks: (7 + 10) / 30 = 0.567
 
-        // Check that result contains all shepherds
-        assert!(result.contains(&uuid1));
-        assert!(result.contains(&uuid2));
-        assert!(result.contains(&uuid3));
+        let result = manager.find_available_shepherds(10);
+        assert_eq!(result.len(), 10);
 
-        // Verify load ordering by checking load ratios of returned shepherds
-        let loads: Vec<f64> = result
-            .iter()
-            .map(|&uuid| {
-                if let Some(shepherd) = manager.shepherds.get(&uuid) {
-                    shepherd.load_ratio()
-                } else {
-                    1.0 // Should not happen
-                }
-            })
-            .collect();
+        // Lower bucket shepherds should get more tasks
+        let uuid1_count = result.iter().filter(|&&id| id == uuid1).count();
+        let uuid2_count = result.iter().filter(|&&id| id == uuid2).count();
+        let uuid3_count = result.iter().filter(|&&id| id == uuid3).count();
 
-        // Should be sorted by load ratio (lowest first)
-        assert!(
-            loads.windows(2).all(|w| w[0] <= w[1]),
-            "Loads should be sorted: {loads:?}"
-        );
+        // uuid1 should get the most tasks (it's in bucket 0)
+        assert!(uuid1_count >= uuid2_count);
+        assert!(uuid1_count >= uuid3_count);
+
+        // Total should equal batch size
+        assert_eq!(uuid1_count + uuid2_count + uuid3_count, 10);
     }
 
+    /// Tests that the same shepherd can be selected multiple times in a single batch for load balancing.
+    /// Expected behavior: When a shepherd has capacity for multiple tasks, it can appear multiple times in the result to achieve optimal load distribution.
     #[tokio::test]
-    async fn test_find_available_shepherds_batch_limiting() {
+    async fn test_shepherd_multiple_selection() {
         let manager = create_test_manager();
 
+        // Create single shepherd
+        let uuid1 = Uuid::new_v4();
+        add_test_shepherd(&manager, uuid1, 10);
+        manager.update_shepherd_status(uuid1, 0, 10); // 0% load, full capacity
+
+        // Request multiple tasks - should get same shepherd multiple times
+        let result = manager.find_available_shepherds(5);
+        assert_eq!(result.len(), 5);
+
+        // All should be the same shepherd
+        assert!(result.iter().all(|&id| id == uuid1));
+    }
+
+    /// Tests that the algorithm distributes tasks to achieve a balanced target average load ratio across all shepherds.
+    /// Expected behavior: Tasks are assigned to minimize load imbalance, with shepherds receiving tasks proportional to reaching the expected average load ratio.
+    #[tokio::test]
+    async fn test_load_balancing_target_average() {
+        let manager = create_test_manager();
+
+        // Two shepherds with same capacity but different loads
         let uuid1 = Uuid::new_v4();
         let uuid2 = Uuid::new_v4();
-        let uuid3 = Uuid::new_v4();
 
         add_test_shepherd(&manager, uuid1, 10);
         add_test_shepherd(&manager, uuid2, 10);
-        add_test_shepherd(&manager, uuid3, 10);
 
-        manager.update_shepherd_status(uuid1, 1, 9);
-        manager.update_shepherd_status(uuid2, 2, 8);
-        manager.update_shepherd_status(uuid3, 3, 7);
+        manager.update_shepherd_status(uuid1, 0, 10); // 0% load
+        manager.update_shepherd_status(uuid2, 5, 5); // 50% load
 
-        // Request only 2 shepherds out of 3 available
-        let result = manager.find_available_shepherds(2);
-        assert_eq!(result.len(), 2);
+        // Total: 20 max capacity, 5 current load
+        // Expected avg after 10 tasks: (5 + 10) / 20 = 0.75
+        // uuid1 target: 0.75 * 10 = 7.5 -> needs 8 tasks (ceiling)
+        // uuid2 target: 0.75 * 10 = 7.5 -> needs 3 tasks (ceiling)
+        // But we only have 10 tasks total, so uuid1 gets 7, uuid2 gets 3
 
-        // Verify that we get the two with lowest load by checking their load ratios
-        let loads: Vec<f64> = result
-            .iter()
-            .map(|&uuid| {
-                if let Some(shepherd) = manager.shepherds.get(&uuid) {
-                    shepherd.load_ratio()
-                } else {
-                    1.0 // Should not happen
-                }
-            })
-            .collect();
-
-        // Should be the two lowest loads (10% and 20%)
-        assert!(loads[0] <= 0.2); // 10%
-        assert!(loads[1] <= 0.3); // 20%
-        assert!(loads[0] <= loads[1]); // Still sorted
-
-        // Request 0 shepherds
-        let result = manager.find_available_shepherds(0);
-        assert_eq!(result.len(), 0);
-
-        // Request more than available
         let result = manager.find_available_shepherds(10);
-        assert_eq!(result.len(), 3);
+        assert_eq!(result.len(), 10);
+
+        let uuid1_count = result.iter().filter(|&&id| id == uuid1).count();
+        let uuid2_count = result.iter().filter(|&&id| id == uuid2).count();
+
+        // uuid1 should get more tasks to balance the load
+        assert!(uuid1_count > uuid2_count);
+        assert_eq!(uuid1_count + uuid2_count, 10);
     }
 }

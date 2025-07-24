@@ -49,13 +49,13 @@ pub struct DomainConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct Domains {
+pub struct DomainsConfig {
     pub default_concurrency_limit: u32,
     #[serde(default)]
     pub specific: HashMap<String, DomainConfig>,
 }
 
-impl Default for Domains {
+impl Default for DomainsConfig {
     fn default() -> Self {
         Self {
             default_concurrency_limit: 100,
@@ -71,7 +71,7 @@ pub struct Settings {
     #[serde(default)]
     pub event_stream: EventStream,
     #[serde(default)]
-    pub domains: Domains,
+    pub domains: DomainsConfig,
 }
 
 fn default_pool_size() -> usize {
