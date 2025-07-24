@@ -112,7 +112,23 @@ jobs:
       run: |
         if [ -f "./baseline-coverage/cobertura.xml" ]; then
           echo "Checking differential coverage..."
-          pycobertura diff ./baseline-coverage/cobertura.xml ./coverage/cobertura.xml --fail-under 80 --format text
+          COVERAGE_DIFF=$(pycobertura diff ./baseline-coverage/cobertura.xml ./coverage/cobertura.xml --format text)
+          echo "$COVERAGE_DIFF"
+          if echo "$COVERAGE_DIFF" | grep -q "No lines with coverage information in both reports."; then
+            echo "No changes in coverage."
+            exit 0
+          fi
+          TOTAL_COVERAGE=$(echo "$COVERAGE_DIFF" | grep 'TOTAL' | awk '{print $4}' | sed 's/\%//')
+          if [ -z "$TOTAL_COVERAGE" ]; then
+            echo "Could not determine total coverage from diff."
+            exit 1
+          fi
+          if (( $(echo "$TOTAL_COVERAGE < 80" | bc -l) )); then
+            echo "Error: Differential coverage is below 80% ($TOTAL_COVERAGE%)"
+            exit 1
+          else
+            echo "Differential coverage is sufficient ($TOTAL_COVERAGE%)"
+          fi
         else
           echo "⚠️ No baseline coverage found. Skipping differential coverage check."
           echo "This is normal for the first PR or if baseline coverage failed to generate."
