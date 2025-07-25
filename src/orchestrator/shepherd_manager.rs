@@ -93,6 +93,8 @@ impl VirtualQueue {
 
     /// Decrement in-flight counter when task completes
     pub fn decrement_in_flight(&self) {
+        // TODO: Add underflow protection - this should never underflow, and it's a bug if it does
+        // Consider adding debug_assert or logging when count is already 0
         self.in_flight_count.fetch_sub(1, AtomicOrdering::Relaxed);
     }
 
