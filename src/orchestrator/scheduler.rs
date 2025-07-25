@@ -66,7 +66,7 @@ impl SchedulerConfig {
 pub enum SchedulerCommand {
     StartTask {
         task_id: Uuid,
-        task: Option<Task>,
+        task: Option<Task>, // StartTask can be used for starting a new Task, or an existing Task (none)
         respond_to: oneshot::Sender<Result<()>>,
     },
     HandleTaskResult {
@@ -127,7 +127,7 @@ impl SchedulerActor {
                 tokio::select! {
                     command = receiver.recv() => {
                         match command {
-                            Some(SchedulerCommand::StartTask { task_id, task, respond_to }) => {
+                            Some(SchedulerCommand::StartTask { task_id, task, respond_to: _ }) => {
                                 info!("Scheduler received StartTask command for task {} in domain {}", task_id, scheduler_state.domain);
 
                                 // If task is provided, upsert it first
@@ -140,17 +140,16 @@ impl SchedulerActor {
                                         let domain = scheduler_state.domain.clone();
                                         let shepherd_manager = scheduler_state.shepherd_manager.clone();
                                         let event_stream = scheduler_state.event_stream.clone();
-                                        let result = SchedulerState::execute_start_task(
+                                        let _result = SchedulerState::execute_start_task(
                                             task_id,
                                             task_start_data,
                                             domain,
                                             shepherd_manager,
                                             event_stream,
                                         ).await;
-                                        let _ = respond_to.send(result);
                                     },
                                     None => {
-                                        let _ = respond_to.send(Ok(()));
+                                        // Task not found or already processed, nothing to do
                                     }
                                 }
                             }
@@ -225,16 +224,12 @@ impl SchedulerActor {
         &self.domain
     }
 
-    pub async fn start_task(&self, task_id: Uuid) -> Result<(), SchedulerError> {
-        self.start_task_with_creation(task_id, None).await
-    }
-
-    pub async fn start_task_with_creation(
+    pub async fn start_task_async(
         &self,
         task_id: Uuid,
         task: Option<Task>,
     ) -> Result<(), SchedulerError> {
-        let (tx, rx) = oneshot::channel();
+        let (tx, _rx) = oneshot::channel();
         let cmd = SchedulerCommand::StartTask {
             task_id,
             task,
@@ -246,33 +241,6 @@ impl SchedulerActor {
             .await
             .map_err(|_| SchedulerError::ChannelClosed)?;
 
-        match rx.await.map_err(|_| SchedulerError::ResponseLost)? {
-            Ok(_) => Ok(()),
-            Err(_) => Err(SchedulerError::ResponseLost),
-        }
-    }
-
-    pub async fn start_task_async(&self, task_id: Uuid) -> Result<(), SchedulerError> {
-        info!(
-            "SchedulerActor::start_task_async called for task {} in domain {}",
-            task_id, self.domain
-        );
-        let (tx, _rx) = oneshot::channel();
-        let cmd = SchedulerCommand::StartTask {
-            task_id,
-            task: None,
-            respond_to: tx,
-        };
-
-        self.sender
-            .send(cmd)
-            .await
-            .map_err(|_| SchedulerError::ChannelClosed)?;
-
-        info!(
-            "SchedulerActor::start_task_async sent command for task {} in domain {}",
-            task_id, self.domain
-        );
         Ok(())
     }
 
@@ -1115,18 +1083,29 @@ mod tests {
             }),
         );
         let task_id = task.id;
+        let scheduler = scheduler_registry.get_or_create_scheduler("test_domain");
 
+        // Test 1: start_task_async with task creation (Some(task))
+        let start_time = std::time::Instant::now();
+        let result = scheduler
+            .start_task_async(task_id, Some(task.clone()))
+            .await;
+        let elapsed = start_time.elapsed();
+
+        assert!(
+            elapsed.as_millis() < 1,
+            "start_task_async should return immediately"
+        );
+        assert!(result.is_ok(), "start_task_async should succeed");
+
+        // Verify the task was created in the task set
         let domain_actor = task_registry.get_or_create_domain("test_domain");
-        domain_actor.upsert_task(task).await.unwrap();
-
-        // Verify the task is in the correct state before scheduler creation
         let stored_task = domain_actor.get_task(task_id).await.unwrap().unwrap();
         assert_eq!(stored_task.status, TASK_STATUS_CREATED);
 
-        let scheduler = scheduler_registry.get_or_create_scheduler("test_domain");
-
+        // Test 2: start_task_async without task creation (None) for existing task
         let start_time = std::time::Instant::now();
-        let result = scheduler.start_task_async(task_id).await;
+        let result = scheduler.start_task_async(task_id, None).await;
         let elapsed = start_time.elapsed();
 
         assert!(
@@ -1600,7 +1579,7 @@ mod tests {
                 for (domain, task_ids) in &all_task_ids {
                     let scheduler = engine.scheduler_registry.get_or_create_scheduler(domain);
                     for &task_id in task_ids {
-                        scheduler.start_task(task_id).await.unwrap();
+                        scheduler.start_task_async(task_id, None).await.unwrap();
                     }
                 }
 
@@ -1744,7 +1723,7 @@ mod tests {
 
                 // Test final failure - simulate the retry process by starting the task again
                 // This will trigger the retry logic in the scheduler
-                scheduler.start_task(task_id).await.unwrap();
+                scheduler.start_task_async(task_id, None).await.unwrap();
 
                 let final_error = TaskResult {
                     task_id: task_id.to_string(),
@@ -1773,7 +1752,7 @@ mod tests {
                 );
 
                 // Simulate third and final attempt
-                scheduler.start_task(task_id).await.unwrap();
+                scheduler.start_task_async(task_id, None).await.unwrap();
 
                 scheduler
                     .handle_task_result(task_id, final_error)
@@ -1867,7 +1846,7 @@ mod tests {
 
             // Start task through scheduler
             let scheduler = engine.scheduler_registry.get_or_create_scheduler(domain);
-            scheduler.start_task(task_id).await.unwrap();
+            scheduler.start_task_async(task_id, None).await.unwrap();
 
             // Wait for the virtual queue dispatcher to pick up and dispatch the task
             // The dispatcher runs every 100ms, so we need to wait for at least one cycle
@@ -2024,7 +2003,7 @@ mod tests {
             for (domain, task_ids) in &all_task_ids {
                 let scheduler = engine.scheduler_registry.get_or_create_scheduler(domain);
                 for &task_id in task_ids {
-                    scheduler.start_task(task_id).await.unwrap();
+                    scheduler.start_task_async(task_id, None).await.unwrap();
                 }
             }
 
@@ -2190,7 +2169,7 @@ mod tests {
             );
 
             // Start the second attempt
-            scheduler.start_task(task_id).await.unwrap();
+            scheduler.start_task_async(task_id, None).await.unwrap();
 
             // Simulate second failure
             let error_result2 = TaskResult {
@@ -2220,7 +2199,7 @@ mod tests {
             );
 
             // Start the third attempt
-            scheduler.start_task(task_id).await.unwrap();
+            scheduler.start_task_async(task_id, None).await.unwrap();
 
             // Simulate third failure (should exhaust retries)
             let error_result3 = TaskResult {
@@ -2371,7 +2350,7 @@ mod tests {
                 .scheduler_registry
                 .get_or_create_scheduler("test_domain");
             for &task_id in &task_ids {
-                scheduler.start_task(task_id).await.unwrap();
+                scheduler.start_task_async(task_id, None).await.unwrap();
             }
 
             // Wait for the virtual queue dispatcher to pick up and dispatch all tasks
