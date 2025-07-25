@@ -1,11 +1,14 @@
-use crate::orchestrator::event_stream::{EventRecord, EventStream};
+use crate::orchestrator::event_stream::EventStream;
 use crate::orchestrator::retry_policy::RetryPolicy;
 use crate::orchestrator::shepherd_manager::ShepherdManager;
 use crate::orchestrator::taskset::{Task, TaskSet};
 use crate::{
-    EVENT_TASK_ATTEMPT_ENDED, TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT,
-    TASK_STATUS_ATTEMPT_STARTED, TASK_STATUS_CREATED, TASK_STATUS_FAILED, TASK_STATUS_SUCCEEDED,
+    TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT, TASK_STATUS_ATTEMPT_STARTED,
+    TASK_STATUS_CREATED, TASK_STATUS_FAILED, TASK_STATUS_SUCCEEDED,
 };
+
+#[cfg(test)]
+use crate::EVENT_TASK_ATTEMPT_ENDED;
 
 #[cfg(test)]
 use crate::EVENT_TASK_ATTEMPT_STARTED;
@@ -135,22 +138,8 @@ impl SchedulerActor {
                                     scheduler_state.task_set.upsert_task(task);
                                 }
 
-                                match scheduler_state.decide_start_task(task_id) {
-                                    Some(task_start_data) => {
-                                        let domain = scheduler_state.domain.clone();
-                                        let shepherd_manager = scheduler_state.shepherd_manager.clone();
-                                        let event_stream = scheduler_state.event_stream.clone();
-                                        let _result = SchedulerState::execute_start_task(
-                                            task_id,
-                                            task_start_data,
-                                            domain,
-                                            shepherd_manager,
-                                            event_stream,
-                                        ).await;
-                                    },
-                                    None => {
-                                        // Task not found or already processed, nothing to do
-                                    }
+                                if let Err(e) = scheduler_state.schedule_task_once(task_id) {
+                                    error!("Failed to schedule task {task_id}: {e}");
                                 }
                             }
                             Some(SchedulerCommand::HandleTaskResult { task_id, result, respond_to }) => {
@@ -318,13 +307,6 @@ impl SchedulerActor {
 }
 
 // TaskSet uses exclusive ownership (not Arc) to avoid locking overhead per domain
-struct TaskStartData {
-    task_name: String,
-    task_args: Vec<String>,
-    task_kwargs: serde_json::Value,
-    flow_instance_id: Option<Uuid>,
-    attempt_number: i32,
-}
 
 struct TaskResultData {
     flow_instance_id: Option<Uuid>,
@@ -352,12 +334,10 @@ impl SchedulerState {
         }
     }
 
-    /// Fast synchronous phase: Make scheduling decisions and update TaskSet
-    fn decide_start_task(&mut self, task_id: Uuid) -> Option<TaskStartData> {
-        info!(
-            "Deciding start for task {} in domain {}",
-            task_id, self.domain
-        );
+    /// Schedule a task for execution: make scheduling decisions, update TaskSet, and enqueue to virtual queue
+    /// The attempt started event will be written by ShepherdManager when dispatch actually happens
+    fn schedule_task_once(&mut self, task_id: Uuid) -> Result<()> {
+        info!("Scheduling task {} in domain {}", task_id, self.domain);
 
         let task = match self.task_set.get_task_mut(task_id) {
             Some(task) => {
@@ -369,7 +349,7 @@ impl SchedulerState {
             }
             None => {
                 warn!("Task {} not found in domain {}", task_id, self.domain);
-                return None;
+                return Ok(()); // Not an error, task might have been processed elsewhere
             }
         };
 
@@ -380,7 +360,7 @@ impl SchedulerState {
                 "Task {} in domain {} is not in schedulable state (status: {})",
                 task_id, self.domain, task.status
             );
-            return None;
+            return Ok(()); // Not an error, task is in different state
         }
 
         // Shepherd selection is now handled by the ShepherdManager's virtual queue system
@@ -406,55 +386,44 @@ impl SchedulerState {
             task_id, attempt_number, self.domain
         );
 
-        Some(TaskStartData {
-            task_name: task.name.clone(),
-            task_args: task.args.clone(),
-            task_kwargs: task.kwargs.clone(),
-            flow_instance_id: task.flow_instance_id,
-            attempt_number,
-        })
-    }
-
-    /// Synchronous phase: Enqueue task to virtual queue
-    /// The attempt started event will be written by ShepherdManager when dispatch actually happens
-    async fn execute_start_task(
-        task_id: Uuid,
-        task_start_data: TaskStartData,
-        domain: String,
-        shepherd_manager: Arc<ShepherdManager>,
-        event_stream: Arc<EventStream>,
-    ) -> Result<()> {
-        debug!("Enqueuing task {task_id} to domain {domain} virtual queue");
-
+        // Create task dispatch data
         let task_dispatch = crate::orchestrator::shepherd_manager::TaskDispatch {
             task_id,
-            task_name: task_start_data.task_name,
-            args: task_start_data.task_args,
-            kwargs: task_start_data.task_kwargs.to_string(),
+            task_name: task.name.clone(),
+            args: task.args.clone(),
+            kwargs: task.kwargs.to_string(),
             memory_limit: None,
             cpu_limit: None,
-            flow_instance_id: task_start_data.flow_instance_id,
-            attempt_number: task_start_data.attempt_number,
+            flow_instance_id: task.flow_instance_id,
+            attempt_number,
         };
 
+        debug!(
+            "Enqueuing task {task_id} to domain {} virtual queue",
+            self.domain
+        );
+
         // Enqueue task to virtual queue instead of direct dispatch
-        match shepherd_manager.enqueue_task(domain.clone(), task_dispatch) {
+        match self
+            .shepherd_manager
+            .enqueue_task(self.domain.clone(), task_dispatch)
+        {
             Ok(_) => {
-                info!("Successfully enqueued task {task_id} to domain '{domain}' virtual queue");
+                info!(
+                    "Successfully scheduled task {task_id} in domain '{}' virtual queue",
+                    self.domain
+                );
                 Ok(())
             }
             Err(e) => {
-                warn!("Failed to enqueue task {task_id} to domain '{domain}' virtual queue: {e}");
-
-                SchedulerState::write_attempt_failure_event(
-                    task_id,
-                    task_start_data.flow_instance_id,
-                    task_start_data.attempt_number,
-                    &domain,
-                    &event_stream,
-                )
-                .await?;
-                Ok(())
+                warn!(
+                    "Failed to enqueue task {task_id} to domain '{}' virtual queue: {e}",
+                    self.domain
+                );
+                Err(anyhow::anyhow!(
+                    "Failed to enqueue task {task_id} to domain '{}' virtual queue: {e}",
+                    self.domain
+                ))
             }
         }
     }
@@ -714,36 +683,6 @@ impl SchedulerState {
         Ok(true)
     }
 
-    /// Write attempt failure event (static version for spawned contexts)
-    async fn write_attempt_failure_event(
-        task_id: Uuid,
-        flow_instance_id: Option<Uuid>,
-        attempt_number: i32,
-        domain: &str,
-        event_stream: &EventStream,
-    ) -> Result<()> {
-        let event_metadata = serde_json::json!({
-            "task_id": task_id,
-            "attempt_number": attempt_number,
-            "result": "error",
-            "error_details": "Task dispatch failed",
-            "ended_at": Utc::now(),
-            "attempt_status": crate::ATTEMPT_STATUS_FAILED
-        });
-
-        let event_record = EventRecord {
-            domain: domain.to_string(),
-            task_instance_id: Some(task_id),
-            flow_instance_id,
-            event_type: EVENT_TASK_ATTEMPT_ENDED,
-            created_at: Utc::now(),
-            metadata: event_metadata,
-        };
-
-        event_stream.write_event(event_record).await?;
-        Ok(())
-    }
-
     async fn process_due_retries(&mut self) {
         let now = std::time::Instant::now();
         let due_task_ids = self.task_set.pop_due_retries(now);
@@ -756,25 +695,9 @@ impl SchedulerState {
                         task_id, self.domain
                     );
 
-                    // Use the existing decide_start_task logic for retry
-                    if let Some(task_start_data) = self.decide_start_task(task_id) {
-                        let domain = self.domain.clone();
-                        let shepherd_manager = self.shepherd_manager.clone();
-                        let event_stream = self.event_stream.clone();
-
-                        // Direct execution since enqueue_task is now non-blocking
-                        let result = SchedulerState::execute_start_task(
-                            task_id,
-                            task_start_data,
-                            domain,
-                            shepherd_manager,
-                            event_stream,
-                        )
-                        .await;
-
-                        if let Err(e) = result {
-                            log::error!("Failed to execute retry for task {task_id}: {e}");
-                        }
+                    // Use the consolidated schedule_task_once logic for retry
+                    if let Err(e) = self.schedule_task_once(task_id) {
+                        error!("Failed to schedule retry task {task_id}: {e}");
                     }
                 }
             }
