@@ -961,6 +961,7 @@ pub struct ActorShepherdManager {
 
     // Configuration and shared services
     domains_config: Arc<DomainsConfig>,
+    #[allow(dead_code)]
     task_registry: Arc<TaskSetRegistry>, // Reserved for future task-related operations
     event_stream: Arc<EventStream>,
 
@@ -1274,17 +1275,17 @@ impl ActorShepherdManager {
         };
 
         // Write event if possible, but don't fail tests if database unavailable
-        if let Err(e) = self.event_stream.write_event(event_record).await {
-            #[cfg(test)]
-            {
+        #[cfg(test)]
+        {
+            if let Err(e) = self.event_stream.write_event(event_record).await {
                 // In tests, just log the error but continue
                 log::debug!("Failed to write shepherd registration event in test: {e}");
             }
-            #[cfg(not(test))]
-            {
-                // In production, this is a real error
-                return Err(e);
-            }
+        }
+        #[cfg(not(test))]
+        {
+            // In production, this is a real error
+            self.event_stream.write_event(event_record).await?;
         }
 
         // Set the TX channel
@@ -1397,8 +1398,8 @@ impl ActorShepherdManager {
         ShepherdManagerStats {
             connected_shepherds: connected,
             disconnected_shepherds: disconnected,
-            total_capacity: total_capacity,
-            total_load: total_load,
+            total_capacity,
+            total_load,
             utilization,
         }
     }
@@ -1588,8 +1589,6 @@ impl ShepherdManagerHandle {
     pub fn new(command_tx: mpsc::Sender<ShepherdManagerMessage>) -> Self {
         Self { command_tx }
     }
-
-    /// Register a new shepherd
 
     /// Register a shepherd with communication channel
     pub async fn register_shepherd(
