@@ -605,20 +605,34 @@ impl ActorShepherdManager {
     pub async fn main_loop(&mut self, mut command_rx: mpsc::Receiver<ShepherdManagerMessage>) {
         let mut dispatch_interval = time::interval(Duration::from_millis(100));
         let mut health_check_interval = time::interval(Duration::from_secs(30));
+        let mut immediate_dispatch_requested = false;
 
         loop {
             tokio::select! {
                 // Handle incoming commands
                 Some(message) = command_rx.recv() => {
+                    // Check if this message should trigger immediate dispatch
+                    if matches!(message, ShepherdManagerMessage::EnqueueTask { .. }) {
+                        immediate_dispatch_requested = true;
+                    }
+
                     if let Err(e) = self.handle_command(message).await {
                         error!("Error handling ShepherdManager command: {e}");
                     }
                 }
 
-                // Periodic task dispatch
+                // Immediate dispatch when requested
+                _ = async {}, if immediate_dispatch_requested => {
+                    immediate_dispatch_requested = false;
+                    if let Err(e) = self.handle_dispatch_tick().await {
+                        error!("Error in immediate dispatch tick: {e}");
+                    }
+                }
+
+                // Periodic task dispatch (backup)
                 _ = dispatch_interval.tick() => {
                     if let Err(e) = self.handle_dispatch_tick().await {
-                        error!("Error in dispatch tick: {e}");
+                        error!("Error in periodic dispatch tick: {e}");
                     }
                 }
 
