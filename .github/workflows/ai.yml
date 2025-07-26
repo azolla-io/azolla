@@ -13,22 +13,22 @@ on:
     types: [created]
   issues:
     types: [opened, assigned]
-  push:
-    tags:
-      - '*'
+
+concurrency:
+  group: claude-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
 
 jobs:
   claude-pr:
     if: |
       (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'issues' && contains(github.event.issue.body, '@claude')) ||
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))
+      (github.event_name == 'issues' && contains(github.event.issue.body, '@claude'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       
-      - uses: ./.github/actions/claude-pr-action
+      - uses: anthropics/claude-code-action@beta
         with:
           trigger_phrase: "@claude"
           timeout_minutes: "60"
