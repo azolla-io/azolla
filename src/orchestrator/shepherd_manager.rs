@@ -14,6 +14,7 @@ use crate::orchestrator::db::DomainsConfig;
 use crate::orchestrator::event_stream::EventStream;
 use crate::orchestrator::taskset::TaskSetRegistry;
 use crate::proto::{common, orchestrator::ServerMsg};
+use crate::EVENT_TASK_ATTEMPT_STARTED;
 
 const SHEPHERD_TIMEOUT_SECS: u64 = 300; // 5 minutes
 
@@ -1015,6 +1016,9 @@ impl ActorShepherdManager {
             )
             .await?;
 
+        // Update shepherd's current load to reflect the dispatched task
+        shepherd.current_load += 1;
+
         info!(
             "Successfully started task {} attempt {} on shepherd {}",
             task.task_id, task.attempt_number, shepherd_id
@@ -1041,7 +1045,7 @@ impl ActorShepherdManager {
             domain: domain.to_string(),
             task_instance_id: Some(task.task_id),
             flow_instance_id: None,
-            event_type: 2, // ATTEMPT_STARTED
+            event_type: EVENT_TASK_ATTEMPT_STARTED,
             created_at: Utc::now(),
             metadata: event_metadata,
         };
