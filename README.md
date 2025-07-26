@@ -1,251 +1,174 @@
 # Azolla
 
-[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org) [![PostgreSQL](https://img.shields.io/badge/postgresql-12%2B-blue.svg)](https://www.postgresql.org) [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE) [![Security Audit](https://img.shields.io/badge/security-audit%20passed-brightgreen)](https://github.com/azolla-io/azolla/security)
+[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org) [![PostgreSQL](https://img.shields.io/badge/postgresql-12%2B-blue.svg)](https://www.postgresql.org) [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-> **As simple as Celery, as durable as Temporal, and runs on just a database.**
+> **The reliable, high-performance, yet simple async task platform**
 
-**Azolla** is a high-performance, distributed task orchestration system built in Rust. Designed for ultra-low latency and enterprise-grade reliability, Azolla delivers blazing-fast task execution with exactly-once guarantees—ensuring no task is ever lost.
+**Azolla** delivers enterprise-grade task orchestration with breakthrough simplicity. Built in Rust, it achieves **sub-millisecond latency** and **10K+ tasks/sec** throughput while running on just PostgreSQL—no complex infrastructure required.
 
-This is the modernized async task platform you always wanted. Azolla gives you the power of Temporal with the simplicity of Celery, all running on just a database. It supports dynamic DAG workflows that adapt at runtime, durable long-running tasks without determinism headaches, and is architected for multi-tenancy, reliability, and scale. It's truly polyglot, so you can write your tasks in any language. Stop managing complex infrastructure and start building reliable applications.
+**Stop fighting brittle task queues. Start building with Azolla.**
 
-## ✨ Why Azolla?
+---
 
-### 🔁 **Uncompromising Reliability**
-- **Exactly-once execution** – Tasks are never lost, even during worker crashes.
-- **Complete audit trail** – Every task and workflow run is materialized in the database.
-- **Transactional enqueue** – Option for transactional enqueuing with database transactions.
-- **Durable scheduler** – Far-future tasks don't consume worker memory and survive crashes.
+## 🚀 Why Azolla?
 
-### ⚙️ **Operational Simplicity**
-- **Single database dependency** – No message brokers, no Redis clusters—just PostgreSQL.
-- **Built-in observability** – Web UI, metrics, tracing, and real-time monitoring out of the box.
-- **Zero code versioning headaches** – Run new code without breaking in-flight tasks.
-- **Global rate limiting** – Prevent noisy neighbors with built-in throttling.
+**Simple**: One database dependency. No Redis, no Kafka, no complex setup.  
+**Fast**: Sub-millisecond scheduling with 10K+ tasks/sec throughput.  
+**Reliable**: Exactly-once execution with complete audit trails.  
+**Polyglot**: Write tasks in any language via high-performance gRPC.
 
-### ⚡ **Blazing Performance**
-- **Sub-millisecond scheduling latency.**
-- **10K+ tasks/sec** throughput on a single PostgreSQL instance.
-- **In-memory DAG tracking** and **append-only event sourcing** ensure minimal DB overhead.
-- **[TaskSet™]**: our ReadySet-inspired technique for incrementally syncing memory state with durable facts for blazing-fast reads.
+## ⚡ Core Innovations
 
-### 🧑‍💻 **Developer-Friendly**
-- **Celery-like Python API** for defining tasks and flows.
-- **Durable DAG workflows** with human-in-the-loop capabilities.
-- **Polyglot by design** – language-agnostic over RPC.
-- **Built-in retry policies**, scheduling, signals, and state sharing via `flow.ctx`.
+### **EventStream** — Durable High-Throughput Events
+Append-only event sourcing delivers blazing-fast writes with zero data loss. Every task execution is captured in an immutable log, ensuring complete durability and full audit trails.
 
+### **TaskSet™** — Lightning-Fast Scheduling  
+Inspired by ReadySet, TaskSet incrementally synchronizes in-memory state with durable database facts. This hybrid approach eliminates database latency while maintaining full persistence.
 
+### **Push-Based Dispatching** — Ultra-Low Latency
+Workers receive tasks instantly through optimized push delivery, eliminating polling overhead. Tasks are dispatched in sub-millisecond timeframes.
+
+### **Polyglot gRPC Interface** — True Multi-Language Support
+Write tasks in any language through our high-performance gRPC API. **Python and Rust officially supported**, with easy extension to other languages.
+
+---
+
+## 🏃 Quick Start
+
+### 1. Start Azolla
+```bash
+# Prerequisites: PostgreSQL 12+
+export DATABASE_URL="postgresql://localhost:5432/azolla"
+
+# Start orchestrator
+cargo run --bin azolla-orchestrator
+
+# Start worker (separate terminal)
+cargo run --bin azolla-shepherd
+```
+
+### 2. Submit Your First Task
+```python
+# Python client
+import azolla
+
+client = azolla.Client("localhost:52710")
+result = client.submit_task("echo", args=["Hello, Azolla!"])
+print(result)  # "Hello, Azolla!"
+```
+
+```bash
+# Or via gRPC
+grpcurl -plaintext -d '{
+  "name": "echo",
+  "domain": "default", 
+  "args": ["Hello, Azolla!"]
+}' localhost:52710 azolla.orchestrator.ClientService/CreateTask
+```
+
+**[📖 Full Documentation](docs/) | [🐍 Python Guide](examples/python/) | [🦀 Rust Guide](examples/rust/)**
+
+---
+
+## 🔥 Performance
+
+| Metric | Performance |
+|--------|-------------|
+| **Task Creation** | < 1ms average |
+| **Throughput** | 10,000+ tasks/sec |
+| **Crash Recovery** | < 100ms |
+| **Dependencies** | PostgreSQL only |
+
+*Measured on standard cloud instances*
+
+---
 
 ## 🏗️ Architecture
 
-Azolla follows a distributed push-based execution model with three main components. The system supports **High Availability** through orchestrator replication and **Scalability** through domain-based sharding:
-
 ```
-╔══════════════════════════════════════════════════════════════════════════════════╗
-║                            AZOLLA ARCHITECTURE (One Shard)                       ║
-╚══════════════════════════════════════════════════════════════════════════════════╝
-
-  ┌─ EXECUTION LAYER ────────────────────────────────────────────────────────────┐
-  │                                                                              │
-  │  ╭─────────────────╮  ╭─────────────────╮  ╭─────────────────╮               │
-  │  │   Worker 1.1    │  │   Worker 2.1    │  │   Worker M.1    │  ••••••       │
-  │  │   ⚡ Execute     │  │   ⚡ Execute     │  │   ⚡ Execute     │               │
-  │  ╰─────────────────╯  ╰─────────────────╯  ╰─────────────────╯               │
-  │  ╭─────────────────╮  ╭─────────────────╮  ╭─────────────────╮               │
-  │  │   Worker 1.2    │  │   Worker 2.2    │  │   Worker M.2    │               │
-  │  │   ⚡ Execute     │  │   ⚡ Execute     │  │   ⚡ Execute     │               │
-  │  ╰─────────────────╯  ╰─────────────────╯  ╰─────────────────╯               │
-  │          ┃                     ┃                     ┃                       │
-  └──────────┃─────────────────────┃─────────────────────┃─────────────────-─────┘
-             ┃ IPC                 ┃ IPC                 ┃ IPC
-             ┃                     ┃                     ┃
-  ┌─ MANAGEMENT LAYER ─────────────┃───────────────-─────┃───-──────────────-────┐
-  │          ┃                     ┃                     ┃                       │
-  │  ╔═════════════════╗    ╔═════════════════╗    ╔═════════════════╗           │
-  │  ║   Shepherd 1    ║    ║   Shepherd 2    ║    ║   Shepherd M    ║           │
-  │  ║   📋 Manage     ║    ║   📋 Manage      ║    ║   📋 Manage     ║           │
-  │  ╚═════════════════╝    ╚═════════════════╝    ╚═════════════════╝           │
-  │          ▲                       ▲                       ▲                   │
-  └──────────┃───────────-───────────┃───────────-───────────┃───────────────────┘
-             ┃                       ┃                       ┃
-             ┃◄───── gRPC ──-───────►┃◄───── gRPC ──-─-─────►┃
-             ┃    Bi-directional     ┃     Bi-directional    ┃
-             ▼                       ▼                       ▼
-  ┌─ ORCHESTRATION LAYER ────────────────────────────────────────────────────────┐
-  │                                                                              │
-  │  ╔═════════════════╗  ╔═════════════════╗  ╔═════════════════╗               │
-  │  ║ Orchestrator 1  ║  ║ Orchestrator 2  ║  ║ Orchestrator N  ║               │
-  │  ║   👑 Primary    ║  ║   🔄 Secondary   ║  ║   🔄 Secondary  ║               │
-  │  ║                 ║  ║                 ║  ║                 ║               │
-  │  ║ ▓ EventStream   ║  ║ ▓ EventStream   ║  ║ ▓ EventStream   ║               │
-  │  ║ ▓ TaskSet       ║  ║ ▓ TaskSet       ║  ║ ▓ TaskSet       ║               │
-  │  ║ ▓ Scheduler     ║  ║ ▓ Scheduler     ║  ║ ▓ Scheduler     ║               │
-  │  ║ ▓ ShepherdMgr   ║  ║ ▓ ShepherdMgr   ║  ║ ▓ ShepherdMgr   ║               │
-  │  ╚═════════════════╝  ╚═════════════════╝  ╚═════════════════╝               │
-  │          ┃                     ┃                     ┃                       │
-  └──────────┃─────────────────────┃─────────────────────┃────────────-──────────┘
-             ┃                     ┃                     ┃
-             ┗━━━━━━━━━━━━━━━━━━━━━┻━━━━━━━━━━━━━━━━━━━━━┛
-                                   ┃
-                                   ┃
-  ┌─ PERSISTENCE LAYER ──────────────────────────────────────────────────────────┐
-  │                                                                              │
-  │              ╔═══════════════════════════════════════╗                       │
-  │              ║         🗃️  PostgreSQL Shard          ║                       │
-  │              ║                                       ║                       │
-  │              ║      ⚡ Hight-Performance Event Log    ║                       │
-  │              ║      📊 Indexed Task States           ║                       │
-  │              ║      🔒 Transactional Enque           ║                       │
-  │              ╚═══════════════════════════════════════╝                       │
-  │                                                                              │
-  └──────────────────────────────────────────────────────────────────────────────┘
+┌─ EXECUTION LAYER ─────────────────────────────────────┐
+│  Workers (Rust/Python/Any Language)                   │
+│  ⚡ Execute tasks with sub-ms latency                  │
+└────────────┬──────────────────────────────────────────┘
+             │ gRPC Push-Based Dispatch
+┌─ ORCHESTRATION LAYER ─────────────────────────────────┐  
+│  🧠 EventStream: Durable event sourcing               │
+│  ⚡ TaskSet™: In-memory scheduling with persistence    │
+│  📡 Push-based dispatch for instant delivery          │
+└────────────┬──────────────────────────────────────────┘
+             │ High-performance writes
+┌─ PERSISTENCE LAYER ───────────────────────────────────┐
+│  🗃️ PostgreSQL: Single source of truth                │
+│  📊 Indexed task states & event log                   │
+└───────────────────────────────────────────────────────┘
 ```
 
-## 🚨 Status
+---
 
-**Azolla is in active development and approaching production readiness.**
+## 🛠️ Use Cases
 
-Current status: **Beta** - Core functionality implemented with comprehensive testing. The codebase follows production-grade engineering practices with extensive test coverage, security auditing, and performance optimization. Feature development is ongoing, but the foundation is solid and battle-tested.
+- **Microservices Orchestration**: Coordinate complex workflows across services
+- **Data Processing Pipelines**: ETL jobs with reliability guarantees  
+- **Background Job Processing**: User uploads, email sending, report generation
+- **Multi-Language Teams**: Rust performance with Python/JS task logic
 
-For production use, please wait for the 1.0 release or contact the maintainers for early access.
+---
 
-## 🚀 Quick Start
-
-### Prerequisites
-- PostgreSQL 12+ running and accessible
-- Rust 1.70+ (for building from source)
+## 🚀 Get Started
 
 ### Installation
 
-#### Build from Source
 ```bash
+# Build from source
 git clone https://github.com/azolla-io/azolla.git
 cd azolla
 cargo build --release
 ```
 
-#### Using Docker
 ```bash
+# Or use Docker
 docker-compose up --build
 ```
 
-### Basic Usage
+### Language Support
 
-1. **Start the system**:
-   ```bash
-   export DATABASE_URL="postgresql://username:password@localhost:5432/azolla"
-   ./target/release/azolla-orchestrator
-   ```
-
-2. **Start a worker**:
-   ```bash
-   ./target/release/azolla-shepherd
-   ```
-
-3. **Submit a task**:
-   ```bash
-   grpcurl -plaintext -d '{
-     "name": "echo",
-     "domain": "default",
-     "args": ["Hello, Azolla!"]
-   }' localhost:52710 azolla.orchestrator.ClientService/CreateTask
-   ```
-
-## 🔧 Configuration
-
-### Minimal Configuration
-```toml
-# config/orchestrator.toml
-[server]
-port = 52710
-
-[database]
-url = "postgresql://localhost:5432/azolla"
-```
-
-```toml
-# config/shepherd.toml
-[orchestrator]
-endpoint = "http://localhost:52710"
-
-[worker]
-max_concurrency = 4
-```
-
-### Environment Variables
-- `DATABASE_URL`: PostgreSQL connection string
-- `AZOLLA_ORCHESTRATOR_PORT`: Override orchestrator port
-- `AZOLLA_SHEPHERD_CONCURRENCY`: Override worker concurrency
-
-## 📊 Performance Characteristics
-
-Azolla delivers exceptional performance with:
-
-- **Task Creation Latency**: < 1ms average
-- **Throughput**: 10,000+ tasks/sec on single PostgreSQL instance
-- **Worker Crash Recovery**: < 100ms detection and failover
-- **Database Dependencies**: Single PostgreSQL instance required
-
-*Performance measured on standard cloud instances with PostgreSQL 14*
-
-## 🧪 Testing & Quality Assurance
-
-Run the comprehensive test suite:
-
-```bash
-# Unit tests
-cargo test
-
-# Integration tests with database
-cargo test --test '*' -- --test-threads=1
-
-# Performance benchmarks
-cargo bench
-
-# Security audit
-cargo audit
-
-# Code coverage
-cargo tarpaulin --out html
-```
-
-### Test Categories
-- **Unit Tests**: Core logic for all major components with >95% coverage
-- **Integration Tests**: Database integration with testcontainers
-- **End-to-End Tests**: Multi-component workflow testing
-- **Performance Tests**: Event stream batching and throughput validation
-
-## 💬 Community & Support
-
-- **GitHub Discussions**: Have a question, an idea, or want to share your project? [Join the discussion!](https://github.com/azolla-io/azolla/discussions)
-- **Issue Tracker**: Found a bug? [Report it on our issue tracker](https://github.com/azolla-io/azolla/issues).
-
-We are committed to fostering an open and welcoming environment.
-
-## 🤝 Contributing
-
-We welcome contributions to Azolla! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
-### Development Setup
-1. **Fork and clone the repository**
-2. **Install Rust toolchain**: `rustup update stable`
-3. **Start development environment**: `docker-compose up --build`
-4. **Run tests**: `cargo test`
-5. **Submit pull request**
-
-### Code Standards
-- **Rust Best Practices**: Follow the official Rust style guide
-- **Memory Safety**: Zero-copy optimizations where possible
-- **Error Handling**: Comprehensive error types with context
-- **Documentation**: Inline docs for all public APIs
-- **Performance**: Benchmark-driven development for critical paths
-
-## 📝 License
-
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+- **🐍 Python**: `pip install azolla-client` 
+- **🦀 Rust**: `cargo add azolla-client`
+- **🌐 Any Language**: Use gRPC directly
 
 ---
 
-**Built with ❤️ in Rust** | **Powered by PostgreSQL** | **Designed for Scale**
+## 📊 Production Ready
 
-*Ready to orchestrate your tasks with blazing speed and rock-solid reliability?*
+✅ **Comprehensive Testing**: 95%+ test coverage with integration tests  
+✅ **Performance Benchmarks**: Continuous performance validation  
+✅ **Memory Safety**: Built in Rust with zero-copy optimizations  
+✅ **Transactional Guarantees**: ACID compliance through PostgreSQL  
+
+**Status**: Beta - Core functionality complete, approaching 1.0 release
+
+---
+
+## 🤝 Community
+
+- **💬 [Discussions](https://github.com/azolla-io/azolla/discussions)**: Questions, ideas, showcase your projects
+- **🐛 [Issues](https://github.com/azolla-io/azolla/issues)**: Bug reports and feature requests
+- **📖 [Contributing](CONTRIBUTING.md)**: Join our growing community
+
+---
+
+## 📝 License
+
+Apache License 2.0 - see [LICENSE](LICENSE) file for details.
+
+---
+
+<div align="center">
+
+**🚀 Ready to supercharge your async tasks?**
+
+[**⭐ Star this repo**](https://github.com/azolla-io/azolla) | [**🍴 Fork & contribute**](https://github.com/azolla-io/azolla/fork) | [**📖 Read the docs**](docs/)
+
+*Built with ❤️ in Rust | Powered by PostgreSQL | Designed for Scale*
+
+</div>
