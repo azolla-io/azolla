@@ -93,8 +93,7 @@ impl Engine {
         // Load existing tasks from database into the registry
         self.registry.load_from_db(&self.pool).await?;
 
-        // Start the actor-based shepherd manager (includes dispatcher and health checker)
-        let _handle = self.shepherd_manager.get_handle();
+        // The actor-based shepherd manager is already started (includes dispatcher and health checker)
 
         log::info!(
             "Engine initialized - TaskSetRegistry loaded with {} domains and virtual queue dispatcher started",

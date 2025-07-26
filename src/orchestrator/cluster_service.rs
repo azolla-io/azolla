@@ -49,7 +49,7 @@ impl ClusterService for ClusterServiceImpl {
         let client_stream = request.into_inner();
         let (tx, rx) = mpsc::channel(100);
 
-        let shepherd_manager = self.engine.shepherd_manager.get_handle();
+        let shepherd_manager = (*self.engine.shepherd_manager).clone();
         let task_registry = self.engine.registry.clone();
         let scheduler_registry = self.engine.scheduler_registry.clone();
 

@@ -553,11 +553,6 @@ impl ShepherdManager {
             .await
             .map_err(|_| anyhow::anyhow!("ShepherdManager actor channel closed"))
     }
-
-    /// Get a handle for legacy compatibility (returns clone of self)
-    pub fn get_handle(&self) -> ShepherdManager {
-        self.clone()
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1316,8 +1311,7 @@ mod tests {
 
     /// Creates a ShepherdManager for actor model testing
     async fn create_test_handle() -> ShepherdManager {
-        let manager = create_test_manager();
-        manager.get_handle()
+        create_test_manager()
     }
 
     /// Creates a test task for enqueueing

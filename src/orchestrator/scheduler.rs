@@ -113,7 +113,7 @@ impl SchedulerActor {
         let domain_clone = domain.clone();
 
         tokio::spawn(async move {
-            let shepherd_manager_clone = shepherd_manager.get_handle();
+            let shepherd_manager_clone = (*shepherd_manager).clone();
             let mut scheduler_state = SchedulerState {
                 domain: domain_clone,
                 task_set,
@@ -1513,12 +1513,7 @@ mod tests {
                 // Wait for all scheduling to complete
                 // Manually trigger dispatch multiple times instead of relying on timer to avoid CI timing issues
                 for _ in 0..5 {
-                    engine
-                        .shepherd_manager
-                        .get_handle()
-                        .dispatch_tick()
-                        .await
-                        .unwrap();
+                    engine.shepherd_manager.dispatch_tick().await.unwrap();
                     tokio::time::sleep(Duration::from_millis(30)).await;
                 }
 
@@ -1795,12 +1790,7 @@ mod tests {
             loop {
                 // Manually trigger dispatch multiple times to ensure it processes
                 for _ in 0..3 {
-                    engine
-                        .shepherd_manager
-                        .get_handle()
-                        .dispatch_tick()
-                        .await
-                        .unwrap();
+                    engine.shepherd_manager.dispatch_tick().await.unwrap();
                     tokio::time::sleep(Duration::from_millis(20)).await;
                 }
 
@@ -1968,12 +1958,7 @@ mod tests {
             // Wait for all scheduling to complete
             // Manually trigger dispatch multiple times instead of relying on timer to avoid CI timing issues
             for _ in 0..8 {
-                engine
-                    .shepherd_manager
-                    .get_handle()
-                    .dispatch_tick()
-                    .await
-                    .unwrap();
+                engine.shepherd_manager.dispatch_tick().await.unwrap();
                 tokio::time::sleep(Duration::from_millis(30)).await;
             }
 
@@ -2331,12 +2316,7 @@ mod tests {
             loop {
                 // Manually trigger dispatch multiple times to ensure it processes
                 for _ in 0..3 {
-                    engine
-                        .shepherd_manager
-                        .get_handle()
-                        .dispatch_tick()
-                        .await
-                        .unwrap();
+                    engine.shepherd_manager.dispatch_tick().await.unwrap();
                     tokio::time::sleep(Duration::from_millis(20)).await;
                 }
                 tokio::time::sleep(Duration::from_millis(80)).await;
