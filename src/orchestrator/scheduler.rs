@@ -113,11 +113,11 @@ impl SchedulerActor {
         let domain_clone = domain.clone();
 
         tokio::spawn(async move {
-            let shepherd_manager_handle = shepherd_manager.get_handle();
+            let shepherd_manager_clone = shepherd_manager.get_handle();
             let mut scheduler_state = SchedulerState {
                 domain: domain_clone,
                 task_set,
-                shepherd_manager: shepherd_manager_handle,
+                shepherd_manager: shepherd_manager_clone,
                 event_stream,
                 config,
                 retry_schedule_changed: false,
