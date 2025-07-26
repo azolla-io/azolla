@@ -173,16 +173,52 @@ async fn test_task_retry_handling() {
 /// 3. Creates TaskB with shorter retry delay (1 second) - retry scheduled for T=4
 /// 4. Verifies TaskB's retry executes before TaskA's retry (T=4 < T=6)
 ///
+/// **Expected Timeline and Behavior:**
+///
+/// **T=0**: Test starts
+///   - TaskA created with 5-second retry delay
+///
+/// **T=1**: TaskA first attempt
+///   - TaskA executes and fails
+///   - TaskA status → ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT
+///   - TaskA retry scheduled for T=6 (1+5 seconds)
+///
+/// **T=2**: Test waits 2 seconds, then creates TaskB
+///   - TaskA status should be ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT
+///   - TaskB created with 1-second retry delay
+///
+/// **T=3**: TaskB first attempt  
+///   - TaskB executes and fails
+///   - TaskB status → ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT
+///   - TaskB retry scheduled for T=4 (3+1 seconds)
+///
+/// **T=4**: Test waits 2 more seconds, TaskB retry executes
+///   - TaskB retry executes and fails again
+///   - TaskB status → ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT
+///   - TaskB next retry scheduled for T=5 (4+1 seconds)
+///
+/// **T=5**: TaskB second retry executes
+///   - TaskB retry executes and fails (3rd attempt)
+///   - TaskB status → FAILED (max attempts reached)
+///
+/// **T=6**: TaskA retry executes (5 seconds after first failure)
+///   - TaskA retry should execute and fail
+///   - TaskA status → ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT or FAILED
+///
+/// **T=8**: Test checks final status (after 2 second wait - optimized)
+///   - TaskA retry should have completed by now
+///   - TaskB should be in final failed state (max attempts reached)
+///
 /// **Expected Behavior:**
-/// - TaskA gets scheduled for retry at T=6 (5 second delay)
-/// - TaskB gets scheduled for retry at T=4 (1 second delay)
 /// - Scheduler properly reschedules to handle TaskB's earlier due time
-/// - TaskB's retry executes before TaskA's retry despite being created later
+/// - TaskB's retry executes before TaskA's retry despite being created later  
 /// - Both tasks should have proper attempt tracking
+/// - TaskA's retry should execute properly (may still be running due to timing variance)
 #[tokio::test]
 async fn test_retry_scheduling_race_condition() {
     let _ = env_logger::try_init();
 
+    // === TEST SETUP PHASE ===
     let mut harness = IntegrationTestEnvironment::new().await.unwrap();
 
     // Ensure worker binary is available
@@ -198,16 +234,18 @@ async fn test_retry_scheduling_race_condition() {
         .unwrap();
     assert!(registered, "Shepherd should register within 5 seconds");
 
-    // Create taskA with longer retry delay (3 seconds)
+    // === T=0: CREATE TASK A ===
+    // TaskA configured with 5-second retry delay, will execute immediately
     let task_a_request = RetryTestData::failing_task_with_longer_retry_delay();
     let task_a_response = harness.client.create_task(task_a_request).await.unwrap();
     let task_a_id = task_a_response.into_inner().task_id;
 
-    // Wait for taskA to complete its first attempt and be scheduled for retry (5 second delay)
-    // TaskA will fail at ~T=1, and be scheduled for retry at ~T=6
+    // === T=1: WAIT FOR TASK A FIRST ATTEMPT ===
+    // Expected: TaskA executes at ~T=1, fails, schedules retry for T=6 (1+5 seconds)
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-    // Verify TaskA is in retry state (scheduled for future retry at T=6)
+    // === T=2: VERIFY TASK A IS IN RETRY STATE ===
+    // TaskA should have failed and be scheduled for retry at T=6
     let task_a_intermediate_status = harness.get_task_status(&task_a_id).await.unwrap();
     assert_eq!(
         task_a_intermediate_status,
@@ -215,17 +253,16 @@ async fn test_retry_scheduling_race_condition() {
         "TaskA should be scheduled for retry after first failure"
     );
 
-    // Now create taskB with shorter retry delay (1 second) - this creates the race condition
-    // We're at T=2, TaskB will fail at ~T=3, and be scheduled for retry at ~T=4
-    // This means TaskB's retry (T=4) should execute BEFORE TaskA's retry (T=6)
-    // This tests if the scheduler properly reschedules when a task with earlier due time is added
-
+    // === T=2: CREATE TASK B (RACE CONDITION SETUP) ===
+    // TaskB has 1-second retry delay vs TaskA's 5-second delay
+    // Expected: TaskB will fail at ~T=3, retry at ~T=4 (BEFORE TaskA retry at T=6)
+    // This tests if scheduler properly handles task with earlier due time
     let task_b_request = RetryTestData::failing_task_with_short_retry_delay();
     let task_b_response = harness.client.create_task(task_b_request).await.unwrap();
     let task_b_id = task_b_response.into_inner().task_id;
     let _task_b_created_at = std::time::Instant::now();
 
-    // Verify both tasks are created and processed by the scheduler
+    // === T=2: VERIFY BOTH TASKS EXIST ===
     let task_a_status = harness.get_task_status(&task_a_id).await.unwrap();
     let task_b_status = harness.get_task_status(&task_b_id).await.unwrap();
 
@@ -238,9 +275,11 @@ async fn test_retry_scheduling_race_condition() {
         "TaskB should be created and available"
     );
 
-    // Wait for TaskB to complete its first attempt and be scheduled for retry
+    // === T=3: WAIT FOR TASK B FIRST ATTEMPT ===
+    // Expected: TaskB executes at ~T=3, fails, schedules retry for T=4 (3+1 seconds)
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
+    // === T=4: VERIFY TASK B IS IN RETRY STATE ===
     let task_b_first_attempts = harness.get_task_attempts(&task_b_id).await.unwrap();
     assert!(
         !task_b_first_attempts.is_empty(),
@@ -254,14 +293,12 @@ async fn test_retry_scheduling_race_condition() {
         "TaskB should be scheduled for retry after first failure"
     );
 
-    // Wait for TaskB's retry to be executed (should happen ~1 second after first failure)
-    // This tests the race condition: TaskB's retry should execute BEFORE TaskA's retry
-    // TaskB: fails at ~T=3.5, retry at ~T=4.5
-    // TaskA: already scheduled for retry at ~T=6
-    // Let's check at T=5 (before TaskA's retry but after TaskB's retry)
+    // === T=4-T=5: WAIT FOR TASK B RETRY EXECUTION ===
+    // Expected: TaskB retry executes at ~T=4 (1 second after T=3 failure)
+    // This is the KEY RACE CONDITION TEST: TaskB retry (T=4) before TaskA retry (T=6)
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-    // Verify TaskB's retry was executed
+    // === T=6: VERIFY TASK B RETRY EXECUTED (RACE CONDITION SUCCESS) ===
     let task_b_retry_attempts = harness.get_task_attempts(&task_b_id).await.unwrap();
 
     assert!(
@@ -270,11 +307,9 @@ async fn test_retry_scheduling_race_condition() {
         task_b_retry_attempts.len()
     );
 
-    // The key test: TaskB should have executed its retry
-    // We don't need to assert exact timing for TaskA since timing can be variable in tests
-    // The important thing is that both tasks are processed correctly despite the race condition
-
-    // Verify timing: TaskB's retry happened before TaskA's scheduled retry time
+    // === VERIFY RACE CONDITION: TaskB retry timing ===
+    // TaskB's retry should have executed ~1 second after first failure
+    // This proves scheduler properly reordered retry queue when TaskB (earlier due time) was added
     let task_b_first_attempt = &task_b_retry_attempts[0];
     let task_b_second_attempt = &task_b_retry_attempts[1];
 
@@ -294,10 +329,12 @@ async fn test_retry_scheduling_race_condition() {
         "TaskB retry should execute approximately 1 second after first failure (actual delay: {retry_delay:.2}s)"
     );
 
-    // Wait for TaskA's retry to also execute
-    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    // === T=6-T=8: WAIT FOR TASK A RETRY EXECUTION ===
+    // Expected: TaskA retry executes at ~T=6 (5 seconds after T=1 failure)
+    // Aggressive optimization - TaskA retry should complete within 1 second
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-    // Verify both tasks have been properly processed and retried
+    // === T=8: VERIFY BOTH TASKS HAVE RETRY ATTEMPTS ===
     let task_a_final_attempts = harness.get_task_attempts(&task_a_id).await.unwrap();
     let task_b_final_attempts = harness.get_task_attempts(&task_b_id).await.unwrap();
 
@@ -313,32 +350,40 @@ async fn test_retry_scheduling_race_condition() {
         task_b_final_attempts.len()
     );
 
-    // Verify final states
+    // === T=8: VERIFY FINAL TASK STATES ===
     let final_a_status = harness.get_task_status(&task_a_id).await.unwrap();
     let final_b_status = harness.get_task_status(&task_b_id).await.unwrap();
 
-    // Both tasks should either be in retry state or failed completely
-    assert!(
-        matches!(
-            final_a_status,
-            Some(
-                azolla::TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT | azolla::TASK_STATUS_FAILED
-            )
-        ),
-        "TaskA should be in failed or retry state (actual: {final_a_status:?})"
-    );
-    assert!(
-        matches!(
-            final_b_status,
-            Some(
-                azolla::TASK_STATUS_ATTEMPT_STARTED
-                    | azolla::TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT
-                    | azolla::TASK_STATUS_FAILED
-            )
-        ),
-        "TaskB should be executing, in retry state, or failed (actual: {final_b_status:?})"
+    // TaskA: Should be ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT by T=8
+    // (2nd attempt at T=6 completes, 3rd attempt scheduled for T=11)
+    assert_eq!(
+        final_a_status,
+        Some(azolla::TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT),
+        "TaskA should have attempts left at T=8 (actual: {final_a_status:?})"
     );
 
+    // TaskB: Should be FAILED by T=8 (multiple retry attempts with 1s delays reach max_attempts=3)
+    assert_eq!(
+        final_b_status,
+        Some(azolla::TASK_STATUS_FAILED),
+        "TaskB should be FAILED with max attempts reached at T=8 (actual: {final_b_status:?})"
+    );
+
+    // === T=8-T=11: WAIT FOR TASK A FINAL ATTEMPT TO AVOID SHUTDOWN HANG ===
+    // TaskA has a retry scheduled for T=11, we need to wait for it to complete
+    // to avoid shutdown hanging on the pending timeout_future
+    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+
+    // Verify TaskA is now FAILED after all attempts exhausted
+    let final_a_status = harness.get_task_status(&task_a_id).await.unwrap();
+    assert_eq!(
+        final_a_status,
+        Some(azolla::TASK_STATUS_FAILED),
+        "TaskA should be FAILED after all attempts exhausted (actual: {final_a_status:?})"
+    );
+
+    // === TEST CLEANUP ===
+    // Shutdown test environment and clean up resources
     harness.shutdown().await.unwrap();
 }
 
