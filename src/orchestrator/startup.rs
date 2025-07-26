@@ -48,7 +48,7 @@ impl OrchestratorBuilder {
 
         // Create orchestrator engine
         let event_stream_config = EventStreamConfig::from(&self.settings.event_stream);
-        let engine = Engine::new(pool, event_stream_config);
+        let engine = Engine::new(pool, event_stream_config, self.settings.domains.clone());
         engine.initialize().await?;
 
         Ok(engine)
@@ -82,7 +82,8 @@ impl OrchestratorInstance {
         let result = server_future.await;
 
         log::info!("Orchestrator terminated, shutting down engine...");
-        if let Err(e) = self.engine.shutdown().await {
+        let shutdown_timeout = self.settings.shutdown.timeout_secs;
+        if let Err(e) = self.engine.shutdown_with_timeout(shutdown_timeout).await {
             log::error!("Error during engine shutdown: {e}");
         }
 

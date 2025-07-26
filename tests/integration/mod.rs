@@ -9,6 +9,7 @@
 //! - **task_execution**: Basic task creation, execution, and result handling
 //! - **retry_mechanism**: Task retry policies, scheduling, and race condition handling  
 //! - **shepherd_management**: Shepherd lifecycle, registration, and cluster coordination
+//! - **life_cycle**: Orchestrator startup, shutdown, and graceful termination scenarios
 //!
 //! ## Running Integration Tests
 //!
@@ -25,6 +26,7 @@
 //! - Available ports for orchestrator and shepherd services
 //! - Worker binary (`azolla-worker`) built and available
 
+pub mod life_cycle;
 pub mod retry_mechanism;
 pub mod shepherd_management;
 pub mod task_execution;

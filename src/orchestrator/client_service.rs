@@ -121,7 +121,7 @@ impl ClientService for ClientServiceImpl {
 
             // Create and start the task in a single operation
             scheduler
-                .start_task_with_creation(task_id, Some(task))
+                .start_task_async(task_id, Some(task))
                 .await
                 .map_err(|e| Status::internal(format!("Failed to create and start task: {e:?}")))?;
         }
