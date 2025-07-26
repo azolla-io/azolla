@@ -318,7 +318,7 @@ struct TaskResultData {
 struct SchedulerState {
     domain: String,
     task_set: TaskSet,
-    shepherd_manager: crate::orchestrator::shepherd_manager::ShepherdManagerHandle,
+    shepherd_manager: crate::orchestrator::shepherd_manager::ShepherdManager,
     event_stream: Arc<EventStream>,
     config: SchedulerConfig,
     retry_schedule_changed: bool,

@@ -9,7 +9,7 @@ use tonic::{Request, Response, Streaming};
 use uuid::Uuid;
 
 use crate::orchestrator::engine::Engine;
-use crate::orchestrator::shepherd_manager::ShepherdManagerHandle;
+use crate::orchestrator::shepherd_manager::ShepherdManager;
 use crate::orchestrator::taskset::TaskSetRegistry;
 
 use crate::proto::{common, orchestrator};
@@ -80,7 +80,7 @@ impl ClusterService for ClusterServiceImpl {
 async fn handle_shepherd_connection(
     mut client_stream: Streaming<ClientMsg>,
     tx: mpsc::Sender<Result<ServerMsg, tonic::Status>>,
-    shepherd_manager: ShepherdManagerHandle,
+    shepherd_manager: ShepherdManager,
     _task_registry: Arc<TaskSetRegistry>,
     scheduler_registry: Arc<crate::orchestrator::scheduler::SchedulerRegistry>,
     liveness_probe_threshold: Duration,
@@ -159,7 +159,7 @@ async fn handle_shepherd_connection(
 async fn handle_client_message(
     client_msg: ClientMsg,
     shepherd_uuid: &mut Option<Uuid>,
-    shepherd_manager: &ShepherdManagerHandle,
+    shepherd_manager: &ShepherdManager,
     scheduler_registry: &Arc<crate::orchestrator::scheduler::SchedulerRegistry>,
     tx: &mpsc::Sender<Result<ServerMsg, tonic::Status>>,
 ) -> Result<()> {
@@ -193,7 +193,7 @@ async fn handle_client_message(
 async fn handle_hello_message(
     hello: Hello,
     shepherd_uuid: &mut Option<Uuid>,
-    shepherd_manager: &ShepherdManagerHandle,
+    shepherd_manager: &ShepherdManager,
     tx: &mpsc::Sender<Result<ServerMsg, tonic::Status>>,
 ) -> Result<()> {
     let uuid = Uuid::parse_str(&hello.shepherd_uuid)
@@ -215,7 +215,7 @@ async fn handle_hello_message(
 async fn handle_ack_message(
     ack: Ack,
     shepherd_uuid: &mut Option<Uuid>,
-    _shepherd_manager: &ShepherdManagerHandle,
+    _shepherd_manager: &ShepherdManager,
 ) -> Result<()> {
     if let Some(uuid) = shepherd_uuid {
         let task_id = Uuid::parse_str(&ack.task_id)
@@ -234,7 +234,7 @@ async fn handle_ack_message(
 async fn handle_status_message(
     status: orchestrator::Status,
     shepherd_uuid: &mut Option<Uuid>,
-    shepherd_manager: &ShepherdManagerHandle,
+    shepherd_manager: &ShepherdManager,
 ) -> Result<()> {
     if let Some(uuid) = shepherd_uuid {
         if let Err(e) = shepherd_manager
@@ -258,7 +258,7 @@ async fn handle_status_message(
 async fn handle_task_result_message(
     task_result: common::TaskResult,
     shepherd_uuid: &mut Option<Uuid>,
-    _shepherd_manager: &ShepherdManagerHandle,
+    _shepherd_manager: &ShepherdManager,
     scheduler_registry: &Arc<crate::orchestrator::scheduler::SchedulerRegistry>,
 ) -> Result<()> {
     if let Some(uuid) = shepherd_uuid {

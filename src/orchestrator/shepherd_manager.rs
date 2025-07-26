@@ -288,10 +288,11 @@ impl ShepherdStatus {
     }
 }
 
-/// ShepherdManager - Pure actor pattern wrapper
-/// All operations are delegated to the internal actor for thread safety and consistency
+/// ShepherdManager - Pure actor pattern for thread-safe shepherd management
+/// All operations communicate with an internal actor for consistency
+#[derive(Debug, Clone)]
 pub struct ShepherdManager {
-    handle: ShepherdManagerHandle,
+    command_tx: mpsc::Sender<ShepherdManagerMessage>,
 }
 
 impl ShepherdManager {
@@ -310,22 +311,31 @@ impl ShepherdManager {
             actor.main_loop(command_rx).await;
         });
 
-        // Create handle
-        let handle = ShepherdManagerHandle { command_tx };
-
-        Self { handle }
+        Self { command_tx }
     }
 
-    /// Register a new shepherd connection with communication channel
+    /// Register a shepherd with communication channel
     pub async fn register_shepherd(
         &self,
         uuid: Uuid,
         max_concurrency: u32,
         tx: ShepherdTxChannel,
     ) -> Result<()> {
-        self.handle
-            .register_shepherd(uuid, max_concurrency, tx)
+        let (response_tx, response_rx) = oneshot::channel();
+
+        self.command_tx
+            .send(ShepherdManagerMessage::RegisterShepherd {
+                uuid,
+                max_concurrency,
+                tx,
+                response_tx,
+            })
             .await
+            .map_err(|_| anyhow::anyhow!("ShepherdManager actor channel closed"))?;
+
+        response_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("ShepherdManager actor disconnected"))?
     }
 
     /// Update shepherd status (heartbeat)
@@ -335,48 +345,222 @@ impl ShepherdManager {
         current_load: u32,
         available_capacity: u32,
     ) -> Result<()> {
-        self.handle
-            .update_shepherd_status(uuid, current_load, available_capacity)
+        let (response_tx, response_rx) = oneshot::channel();
+
+        self.command_tx
+            .send(ShepherdManagerMessage::UpdateShepherdStatus {
+                uuid,
+                current_load,
+                available_capacity,
+                response_tx,
+            })
             .await
+            .map_err(|_| anyhow::anyhow!("ShepherdManager actor channel closed"))?;
+
+        response_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("ShepherdManager actor disconnected"))?
     }
 
     /// Mark shepherd as having sent a message (for liveness tracking)
     pub async fn mark_shepherd_alive(&self, uuid: Uuid) -> Result<()> {
-        self.handle.mark_shepherd_alive(uuid).await
+        let (response_tx, response_rx) = oneshot::channel();
+
+        self.command_tx
+            .send(ShepherdManagerMessage::MarkShepherdAlive { uuid, response_tx })
+            .await
+            .map_err(|_| anyhow::anyhow!("ShepherdManager actor channel closed"))?;
+
+        response_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("ShepherdManager actor disconnected"))?
     }
 
     /// Mark shepherd as temporarily unavailable (connection dropped but might reconnect)
     pub async fn mark_shepherd_disconnected(&self, uuid: Uuid) -> Result<()> {
-        self.handle.mark_shepherd_disconnected(uuid).await
+        let (response_tx, response_rx) = oneshot::channel();
+
+        self.command_tx
+            .send(ShepherdManagerMessage::MarkShepherdDisconnected { uuid, response_tx })
+            .await
+            .map_err(|_| anyhow::anyhow!("ShepherdManager actor channel closed"))?;
+
+        response_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("ShepherdManager actor disconnected"))?
     }
 
     /// Find available shepherds for batch task dispatch
     pub async fn find_available_shepherds(&self, batch: u32) -> Vec<Uuid> {
-        self.handle.find_available_shepherds(batch).await
+        let (response_tx, response_rx) = oneshot::channel();
+
+        if self
+            .command_tx
+            .send(ShepherdManagerMessage::FindAvailableShepherds { batch, response_tx })
+            .await
+            .is_err()
+        {
+            return Vec::new();
+        }
+
+        response_rx.await.unwrap_or_default()
     }
 
     /// Enqueue a task to the virtual queue for a domain
     pub async fn enqueue_task(&self, domain: String, task: TaskDispatch) -> Result<()> {
-        self.handle.enqueue_task(domain, task).await
+        let (response_tx, response_rx) = oneshot::channel();
+
+        self.command_tx
+            .send(ShepherdManagerMessage::EnqueueTask {
+                domain,
+                task,
+                response_tx,
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("ShepherdManager actor channel closed"))?;
+
+        response_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("ShepherdManager actor disconnected"))?
     }
 
     /// Get statistics about shepherds
     pub async fn get_stats(&self) -> ShepherdManagerStats {
-        self.handle.get_stats().await
+        let (response_tx, response_rx) = oneshot::channel();
+
+        if self
+            .command_tx
+            .send(ShepherdManagerMessage::GetStats { response_tx })
+            .await
+            .is_err()
+        {
+            return ShepherdManagerStats::default();
+        }
+
+        response_rx.await.unwrap_or_default()
     }
 
     /// Check if a shepherd is registered
     pub async fn is_shepherd_registered(&self, uuid: Uuid) -> bool {
-        self.handle.is_shepherd_registered(uuid).await
+        let (response_tx, response_rx) = oneshot::channel();
+
+        if self
+            .command_tx
+            .send(ShepherdManagerMessage::IsShepherdRegistered { uuid, response_tx })
+            .await
+            .is_err()
+        {
+            return false;
+        }
+
+        response_rx.await.unwrap_or(false)
     }
 
-    /// Get a handle to communicate with the actor (for direct handle access)
-    pub fn get_handle(&self) -> ShepherdManagerHandle {
-        self.handle.clone()
+    /// Trigger a manual dispatch tick (for testing)
+    pub async fn dispatch_tick(&self) -> Result<()> {
+        self.command_tx
+            .send(ShepherdManagerMessage::DispatchTick)
+            .await
+            .map_err(|_| anyhow::anyhow!("ShepherdManager actor channel closed"))
+    }
+
+    /// Decrement in-flight task count for a domain
+    pub async fn decrement_in_flight_task(&self, domain: String) -> Result<()> {
+        let (response_tx, response_rx) = oneshot::channel();
+
+        self.command_tx
+            .send(ShepherdManagerMessage::DecrementInFlightTask {
+                domain,
+                response_tx,
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("ShepherdManager actor channel closed"))?;
+
+        response_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("ShepherdManager actor disconnected"))?
+    }
+
+    /// Get shepherd connection status
+    pub async fn get_shepherd_status(&self, uuid: Uuid) -> Option<ShepherdConnectionStatus> {
+        let (response_tx, response_rx) = oneshot::channel();
+
+        if self
+            .command_tx
+            .send(ShepherdManagerMessage::GetShepherdStatus { uuid, response_tx })
+            .await
+            .is_err()
+        {
+            return None;
+        }
+
+        response_rx.await.unwrap_or(None)
+    }
+
+    /// Get active domains
+    pub async fn get_active_domains(&self) -> Vec<String> {
+        let (response_tx, response_rx) = oneshot::channel();
+
+        if self
+            .command_tx
+            .send(ShepherdManagerMessage::GetActiveDomains { response_tx })
+            .await
+            .is_err()
+        {
+            return Vec::new();
+        }
+
+        response_rx.await.unwrap_or_else(|_| Vec::new())
+    }
+
+    /// Get domain statistics
+    pub async fn get_domain_stats(&self, domain: String) -> Option<(usize, u32)> {
+        let (response_tx, response_rx) = oneshot::channel();
+
+        if self
+            .command_tx
+            .send(ShepherdManagerMessage::GetDomainStats {
+                domain,
+                response_tx,
+            })
+            .await
+            .is_err()
+        {
+            return None;
+        }
+
+        response_rx.await.unwrap_or(None)
+    }
+
+    /// Remove a shepherd
+    pub async fn remove_shepherd(&self, uuid: Uuid) -> Result<()> {
+        let (response_tx, response_rx) = oneshot::channel();
+
+        self.command_tx
+            .send(ShepherdManagerMessage::RemoveShepherd { uuid, response_tx })
+            .await
+            .map_err(|_| anyhow::anyhow!("ShepherdManager actor channel closed"))?;
+
+        response_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("ShepherdManager actor disconnected"))?
+    }
+
+    /// Send a manual health check tick (for testing)
+    pub async fn health_check_tick(&self) -> Result<()> {
+        self.command_tx
+            .send(ShepherdManagerMessage::HealthCheckTick)
+            .await
+            .map_err(|_| anyhow::anyhow!("ShepherdManager actor channel closed"))
+    }
+
+    /// Get a handle for legacy compatibility (returns clone of self)
+    pub fn get_handle(&self) -> ShepherdManager {
+        self.clone()
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ShepherdManagerStats {
     pub connected_shepherds: usize,
     pub disconnected_shepherds: usize,
@@ -1055,270 +1239,6 @@ impl ActorShepherdManager {
     }
 }
 
-/// Handle for async communication with the ShepherdManager actor
-#[derive(Clone)]
-pub struct ShepherdManagerHandle {
-    command_tx: mpsc::Sender<ShepherdManagerMessage>,
-}
-
-impl ShepherdManagerHandle {
-    pub fn new(command_tx: mpsc::Sender<ShepherdManagerMessage>) -> Self {
-        Self { command_tx }
-    }
-
-    /// Register a shepherd with communication channel
-    pub async fn register_shepherd(
-        &self,
-        uuid: Uuid,
-        max_concurrency: u32,
-        tx: ShepherdTxChannel,
-    ) -> Result<()> {
-        let (response_tx, response_rx) = oneshot::channel();
-
-        self.command_tx
-            .send(ShepherdManagerMessage::RegisterShepherd {
-                uuid,
-                max_concurrency,
-                tx,
-                response_tx,
-            })
-            .await
-            .map_err(|_| anyhow::anyhow!("ShepherdManager actor is not running"))?;
-
-        response_rx
-            .await
-            .map_err(|_| anyhow::anyhow!("ShepherdManager actor response channel closed"))?
-    }
-
-    /// Update shepherd status
-    pub async fn update_shepherd_status(
-        &self,
-        uuid: Uuid,
-        current_load: u32,
-        available_capacity: u32,
-    ) -> Result<()> {
-        let (response_tx, response_rx) = oneshot::channel();
-
-        self.command_tx
-            .send(ShepherdManagerMessage::UpdateShepherdStatus {
-                uuid,
-                current_load,
-                available_capacity,
-                response_tx,
-            })
-            .await
-            .map_err(|_| anyhow::anyhow!("ShepherdManager actor is not running"))?;
-
-        response_rx
-            .await
-            .map_err(|_| anyhow::anyhow!("ShepherdManager actor response channel closed"))?
-    }
-
-    /// Mark shepherd as alive
-    pub async fn mark_shepherd_alive(&self, uuid: Uuid) -> Result<()> {
-        let (response_tx, response_rx) = oneshot::channel();
-
-        self.command_tx
-            .send(ShepherdManagerMessage::MarkShepherdAlive { uuid, response_tx })
-            .await
-            .map_err(|_| anyhow::anyhow!("ShepherdManager actor is not running"))?;
-
-        response_rx
-            .await
-            .map_err(|_| anyhow::anyhow!("ShepherdManager actor response channel closed"))?
-    }
-
-    /// Mark shepherd as disconnected
-    pub async fn mark_shepherd_disconnected(&self, uuid: Uuid) -> Result<()> {
-        let (response_tx, response_rx) = oneshot::channel();
-
-        self.command_tx
-            .send(ShepherdManagerMessage::MarkShepherdDisconnected { uuid, response_tx })
-            .await
-            .map_err(|_| anyhow::anyhow!("ShepherdManager actor is not running"))?;
-
-        response_rx
-            .await
-            .map_err(|_| anyhow::anyhow!("ShepherdManager actor response channel closed"))?
-    }
-
-    /// Find available shepherds for task assignment
-    pub async fn find_available_shepherds(&self, batch: u32) -> Vec<Uuid> {
-        let (response_tx, response_rx) = oneshot::channel();
-
-        if self
-            .command_tx
-            .send(ShepherdManagerMessage::FindAvailableShepherds { batch, response_tx })
-            .await
-            .is_err()
-        {
-            return Vec::new(); // Actor not running
-        }
-
-        response_rx.await.unwrap_or_else(|_| Vec::new())
-    }
-
-    /// Enqueue a task to a domain's virtual queue
-    pub async fn enqueue_task(&self, domain: String, task: TaskDispatch) -> Result<()> {
-        let (response_tx, response_rx) = oneshot::channel();
-
-        self.command_tx
-            .send(ShepherdManagerMessage::EnqueueTask {
-                domain,
-                task,
-                response_tx,
-            })
-            .await
-            .map_err(|_| anyhow::anyhow!("ShepherdManager actor is not running"))?;
-
-        response_rx
-            .await
-            .map_err(|_| anyhow::anyhow!("ShepherdManager actor response channel closed"))?
-    }
-
-    /// Decrement in-flight task count for a domain
-    pub async fn decrement_in_flight_task(&self, domain: String) -> Result<()> {
-        let (response_tx, response_rx) = oneshot::channel();
-
-        self.command_tx
-            .send(ShepherdManagerMessage::DecrementInFlightTask {
-                domain,
-                response_tx,
-            })
-            .await
-            .map_err(|_| anyhow::anyhow!("ShepherdManager actor is not running"))?;
-
-        response_rx
-            .await
-            .map_err(|_| anyhow::anyhow!("ShepherdManager actor response channel closed"))?
-    }
-
-    /// Get shepherd manager statistics
-    pub async fn get_stats(&self) -> ShepherdManagerStats {
-        let (response_tx, response_rx) = oneshot::channel();
-
-        if self
-            .command_tx
-            .send(ShepherdManagerMessage::GetStats { response_tx })
-            .await
-            .is_err()
-        {
-            return ShepherdManagerStats {
-                connected_shepherds: 0,
-                disconnected_shepherds: 0,
-                total_capacity: 0,
-                total_load: 0,
-                utilization: 0.0,
-            };
-        }
-
-        response_rx.await.unwrap_or(ShepherdManagerStats {
-            connected_shepherds: 0,
-            disconnected_shepherds: 0,
-            total_capacity: 0,
-            total_load: 0,
-            utilization: 0.0,
-        })
-    }
-
-    /// Check if a shepherd is registered
-    pub async fn is_shepherd_registered(&self, uuid: Uuid) -> bool {
-        let (response_tx, response_rx) = oneshot::channel();
-
-        if self
-            .command_tx
-            .send(ShepherdManagerMessage::IsShepherdRegistered { uuid, response_tx })
-            .await
-            .is_err()
-        {
-            return false;
-        }
-
-        response_rx.await.unwrap_or(false)
-    }
-
-    /// Get shepherd connection status
-    pub async fn get_shepherd_status(&self, uuid: Uuid) -> Option<ShepherdConnectionStatus> {
-        let (response_tx, response_rx) = oneshot::channel();
-
-        if self
-            .command_tx
-            .send(ShepherdManagerMessage::GetShepherdStatus { uuid, response_tx })
-            .await
-            .is_err()
-        {
-            return None;
-        }
-
-        response_rx.await.unwrap_or(None)
-    }
-
-    /// Get active domains
-    pub async fn get_active_domains(&self) -> Vec<String> {
-        let (response_tx, response_rx) = oneshot::channel();
-
-        if self
-            .command_tx
-            .send(ShepherdManagerMessage::GetActiveDomains { response_tx })
-            .await
-            .is_err()
-        {
-            return Vec::new();
-        }
-
-        response_rx.await.unwrap_or_else(|_| Vec::new())
-    }
-
-    /// Get domain statistics
-    pub async fn get_domain_stats(&self, domain: String) -> Option<(usize, u32)> {
-        let (response_tx, response_rx) = oneshot::channel();
-
-        if self
-            .command_tx
-            .send(ShepherdManagerMessage::GetDomainStats {
-                domain,
-                response_tx,
-            })
-            .await
-            .is_err()
-        {
-            return None;
-        }
-
-        response_rx.await.unwrap_or(None)
-    }
-
-    /// Remove a shepherd
-    pub async fn remove_shepherd(&self, uuid: Uuid) -> Result<()> {
-        let (response_tx, response_rx) = oneshot::channel();
-
-        self.command_tx
-            .send(ShepherdManagerMessage::RemoveShepherd { uuid, response_tx })
-            .await
-            .map_err(|_| anyhow::anyhow!("ShepherdManager actor is not running"))?;
-
-        response_rx
-            .await
-            .map_err(|_| anyhow::anyhow!("ShepherdManager actor response channel closed"))?
-    }
-
-    /// Send a manual dispatch tick (for testing)
-    pub async fn dispatch_tick(&self) -> Result<()> {
-        self.command_tx
-            .send(ShepherdManagerMessage::DispatchTick)
-            .await
-            .map_err(|_| anyhow::anyhow!("ShepherdManager actor is not running"))
-    }
-
-    /// Send a manual health check tick (for testing)
-    pub async fn health_check_tick(&self) -> Result<()> {
-        self.command_tx
-            .send(ShepherdManagerMessage::HealthCheckTick)
-            .await
-            .map_err(|_| anyhow::anyhow!("ShepherdManager actor is not running"))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     //! # ShepherdManager Test Suite
@@ -1394,8 +1314,8 @@ mod tests {
         ShepherdManager::new(domains_config, task_registry, event_stream)
     }
 
-    /// Creates a ShepherdManagerHandle for actor model testing
-    async fn create_test_handle() -> ShepherdManagerHandle {
+    /// Creates a ShepherdManager for actor model testing
+    async fn create_test_handle() -> ShepherdManager {
         let manager = create_test_manager();
         manager.get_handle()
     }
@@ -1436,7 +1356,7 @@ mod tests {
 
     /// Test helper to register a shepherd without needing to handle TX channels
     async fn register_test_shepherd(
-        handle: &ShepherdManagerHandle,
+        handle: &ShepherdManager,
         uuid: Uuid,
         max_concurrency: u32,
     ) -> Result<()> {
