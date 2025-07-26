@@ -1447,7 +1447,7 @@ mod tests {
                     tokio::spawn(async move { while let Some(_cmd) = rx.recv().await {} });
                     engine
                         .shepherd_manager
-                        .register_shepherd_with_tx(shepherd_id, 5, tx)
+                        .register_shepherd(shepherd_id, 5, tx)
                         .await
                         .unwrap();
                 }
@@ -1591,7 +1591,7 @@ mod tests {
                 let (tx, _rx) = create_test_shepherd_tx();
                 engine
                     .shepherd_manager
-                    .register_shepherd_with_tx(shepherd_id, 10, tx)
+                    .register_shepherd(shepherd_id, 10, tx)
                     .await
                     .unwrap();
 
@@ -1713,7 +1713,7 @@ mod tests {
             let (tx, _rx) = create_test_shepherd_tx();
             engine
                 .shepherd_manager
-                .register_shepherd_with_tx(shepherd_id, 10, tx)
+                .register_shepherd(shepherd_id, 10, tx)
                 .await
                 .unwrap();
 
@@ -1876,7 +1876,7 @@ mod tests {
                 tokio::spawn(async move { while let Some(_cmd) = rx.recv().await {} });
                 engine
                     .shepherd_manager
-                    .register_shepherd_with_tx(shepherd_id, 5, tx)
+                    .register_shepherd(shepherd_id, 5, tx)
                     .await
                     .unwrap();
             }
@@ -2012,7 +2012,7 @@ mod tests {
             let (tx, _rx) = create_test_shepherd_tx();
             engine
                 .shepherd_manager
-                .register_shepherd_with_tx(shepherd_id, 10, tx)
+                .register_shepherd(shepherd_id, 10, tx)
                 .await
                 .unwrap();
 
@@ -2228,7 +2228,7 @@ mod tests {
             let (tx, _rx) = create_test_shepherd_tx();
             engine
                 .shepherd_manager
-                .register_shepherd_with_tx(shepherd_id, 10, tx)
+                .register_shepherd(shepherd_id, 10, tx)
                 .await
                 .unwrap();
 
