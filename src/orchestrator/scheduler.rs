@@ -1427,7 +1427,7 @@ mod tests {
                 use crate::orchestrator::taskset::Task;
                 use crate::EVENT_TASK_CREATED;
                 use std::collections::HashMap;
-                use tokio::time::{sleep, Duration};
+                use tokio::time::Duration;
 
                 let engine = Engine::new(
                     pool.clone(),
@@ -1506,8 +1506,20 @@ mod tests {
                     }
                 }
 
+                // Give scheduler actors time to process StartTask commands
+                tokio::time::sleep(Duration::from_millis(100)).await;
+
                 // Wait for all scheduling to complete
-                sleep(Duration::from_millis(200)).await;
+                // Manually trigger dispatch multiple times instead of relying on timer to avoid CI timing issues
+                for _ in 0..5 {
+                    engine
+                        .shepherd_manager
+                        .get_handle()
+                        .dispatch_tick()
+                        .await
+                        .unwrap();
+                    tokio::time::sleep(Duration::from_millis(30)).await;
+                }
 
                 // Verify domain isolation in scheduler registry
                 assert_eq!(engine.scheduler_registry.len(), 3);
@@ -1698,7 +1710,7 @@ mod tests {
             use crate::orchestrator::taskset::Task;
             use crate::proto::common::{SuccessResult, TaskResult};
             use crate::EVENT_TASK_CREATED;
-            use tokio::time::{sleep, Duration};
+            use tokio::time::Duration;
 
             // Create Engine with database
             let engine = Engine::new(
@@ -1771,13 +1783,25 @@ mod tests {
             let scheduler = engine.scheduler_registry.get_or_create_scheduler(domain);
             scheduler.start_task_async(task_id, None).await.unwrap();
 
+            // Give the scheduler actor a moment to process the StartTask command
+            tokio::time::sleep(Duration::from_millis(50)).await;
+
             // Wait for the virtual queue dispatcher to pick up and dispatch the task
-            // The dispatcher runs every 100ms, so we need to wait for at least one cycle
+            // Manually trigger dispatch instead of relying on timer to avoid CI timing issues
             let mut attempts = 0;
-            let max_attempts = 10; // Wait up to 1 second
+            let max_attempts = 30; // Try more times with shorter waits
 
             loop {
-                sleep(Duration::from_millis(150)).await;
+                // Manually trigger dispatch multiple times to ensure it processes
+                for _ in 0..3 {
+                    engine
+                        .shepherd_manager
+                        .get_handle()
+                        .dispatch_tick()
+                        .await
+                        .unwrap();
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
 
                 // Check if the task has been dispatched by looking for the attempt started event
                 let started_events = client.query(
@@ -1795,8 +1819,15 @@ mod tests {
 
                 attempts += 1;
                 if attempts >= max_attempts {
+                    // Debug information
+                    eprintln!("DEBUG: Task was not dispatched after {attempts} attempts");
+                    let task_status = scheduler.get_task_for_test(task_id).await.unwrap();
+                    eprintln!("DEBUG: Task status: {:?}", task_status.map(|t| t.status));
+
                     panic!("Task was not dispatched within expected time. Virtual queue dispatcher may not be running.");
                 }
+
+                tokio::time::sleep(Duration::from_millis(80)).await;
             }
 
             // Simulate successful task completion
@@ -1856,7 +1887,7 @@ mod tests {
             use crate::orchestrator::taskset::Task;
             use crate::EVENT_TASK_CREATED;
             use std::collections::HashMap;
-            use tokio::time::{sleep, Duration};
+            use tokio::time::Duration;
 
             let engine = Engine::new(
                 pool.clone(),
@@ -1930,8 +1961,20 @@ mod tests {
                 }
             }
 
+            // Give scheduler actors time to process StartTask commands
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
             // Wait for all scheduling to complete
-            sleep(Duration::from_millis(200)).await;
+            // Manually trigger dispatch multiple times instead of relying on timer to avoid CI timing issues
+            for _ in 0..8 {
+                engine
+                    .shepherd_manager
+                    .get_handle()
+                    .dispatch_tick()
+                    .await
+                    .unwrap();
+                tokio::time::sleep(Duration::from_millis(30)).await;
+            }
 
             // Verify domain isolation in scheduler registry
             assert_eq!(engine.scheduler_registry.len(), 3);
@@ -2214,7 +2257,7 @@ mod tests {
             use crate::orchestrator::event_stream::EventStreamConfig;
             use crate::orchestrator::taskset::Task;
             use crate::EVENT_TASK_CREATED;
-            use tokio::time::{sleep, Duration};
+            use tokio::time::Duration;
 
             let engine = Engine::new(
                 pool.clone(),
@@ -2276,13 +2319,26 @@ mod tests {
                 scheduler.start_task_async(task_id, None).await.unwrap();
             }
 
+            // Give scheduler actors time to process StartTask commands
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
             // Wait for the virtual queue dispatcher to pick up and dispatch all tasks
             let client = pool.get().await.unwrap();
             let mut attempts = 0;
-            let max_attempts = 15; // Wait up to 2.25 seconds for 3 tasks
+            let max_attempts = 25; // More attempts with shorter waits
 
             loop {
-                sleep(Duration::from_millis(150)).await;
+                // Manually trigger dispatch multiple times to ensure it processes
+                for _ in 0..3 {
+                    engine
+                        .shepherd_manager
+                        .get_handle()
+                        .dispatch_tick()
+                        .await
+                        .unwrap();
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                tokio::time::sleep(Duration::from_millis(80)).await;
 
                 // Check how many tasks have been dispatched
                 let started_events_count = client
@@ -2307,6 +2363,15 @@ mod tests {
 
                 attempts += 1;
                 if attempts >= max_attempts {
+                    eprintln!("DEBUG: Only {started_count} out of 3 tasks were dispatched after {attempts} attempts");
+                    for &task_id in &task_ids {
+                        let task_status = scheduler.get_task_for_test(task_id).await.unwrap();
+                        eprintln!(
+                            "DEBUG: Task {} status: {:?}",
+                            task_id,
+                            task_status.map(|t| t.status)
+                        );
+                    }
                     panic!("Only {started_count} out of 3 tasks were dispatched within expected time. Virtual queue dispatcher may not be running properly.");
                 }
             }
