@@ -576,7 +576,7 @@ pub struct ActorShepherdManager {
     event_stream: Arc<EventStream>,
 
     // Round-robin state for perfect scheduling
-    round_robin_index: usize,
+    shepherd_keys: VecDeque<Uuid>,
 
     // Total capacity tracking for load calculations
     total_max_concurrency: u32,
@@ -595,7 +595,7 @@ impl ActorShepherdManager {
             domains_config,
             task_registry,
             event_stream,
-            round_robin_index: 0,
+            shepherd_keys: VecDeque::new(),
             total_max_concurrency: 0,
             total_current_load: 0,
         }
@@ -816,61 +816,60 @@ impl ActorShepherdManager {
         Ok(())
     }
 
-    /// Perfect round-robin algorithm with skip logic for unavailable shepherds
+    /// Perfect round-robin algorithm with VecDeque and lazy cleanup
     pub fn find_available_shepherds_round_robin(&mut self, batch: u32) -> Vec<Uuid> {
         let mut result = Vec::new();
 
-        if self.shepherds.is_empty() || batch == 0 {
+        if batch == 0 || self.shepherd_keys.is_empty() {
             return result;
         }
 
-        // Create a list of available shepherds with their IDs and capacity
-        let shepherd_list: Vec<(Uuid, &ShepherdStatus)> = self
-            .shepherds
-            .iter()
-            .filter(|(_, status)| {
-                matches!(status.status, ShepherdConnectionStatus::Connected)
-                    && status.available_capacity() > 0
-            })
-            .map(|(uuid, status)| (*uuid, status))
-            .collect();
-
-        if shepherd_list.is_empty() {
-            return result;
-        }
-
-        let shepherd_count = shepherd_list.len();
         let mut tasks_assigned = 0u32;
+        let mut full_rounds_without_assignment = 0;
+        let max_rounds = self.shepherd_keys.len();
 
-        // Round-robin with skip: continue until we assign all tasks or exhaust capacity
-        while tasks_assigned < batch {
-            let mut round_complete = true;
+        // Round-robin through shepherds using VecDeque rotation
+        while tasks_assigned < batch && full_rounds_without_assignment < max_rounds {
+            let mut assignments_this_round = 0;
 
-            for i in 0..shepherd_count {
+            // Try each shepherd once per round
+            for _ in 0..self.shepherd_keys.len() {
                 if tasks_assigned >= batch {
                     break;
                 }
 
-                let index = (self.round_robin_index + i) % shepherd_count;
-                let (shepherd_id, shepherd_status) = shepherd_list[index];
+                if let Some(uuid) = self.shepherd_keys.pop_front() {
+                    if let Some(shepherd_status) = self.shepherds.get(&uuid) {
+                        // Shepherd exists - check if available and has capacity
+                        if matches!(shepherd_status.status, ShepherdConnectionStatus::Connected)
+                            && shepherd_status.available_capacity() > 0
+                        {
+                            // Check if this shepherd still has capacity for more assignments
+                            let current_assignments =
+                                result.iter().filter(|&&id| id == uuid).count() as u32;
+                            if current_assignments < shepherd_status.available_capacity() {
+                                result.push(uuid);
+                                tasks_assigned += 1;
+                                assignments_this_round += 1;
+                            }
+                        }
 
-                // Check if this shepherd still has capacity
-                let current_assignments =
-                    result.iter().filter(|&&id| id == shepherd_id).count() as u32;
-                if current_assignments < shepherd_status.available_capacity() {
-                    result.push(shepherd_id);
-                    tasks_assigned += 1;
-                    round_complete = false;
+                        // Put shepherd back at end of queue for round-robin
+                        self.shepherd_keys.push_back(uuid);
+                    }
+                    // Dead shepherds are automatically cleaned up by not being re-added
+                } else {
+                    // No more shepherds in queue
+                    break;
                 }
             }
 
-            // If we completed a full round without assigning any tasks, we're done
-            if round_complete {
-                break;
+            // If we made no assignments this round, increment counter
+            if assignments_this_round == 0 {
+                full_rounds_without_assignment += 1;
+            } else {
+                full_rounds_without_assignment = 0; // Reset on successful assignment
             }
-
-            // Update round-robin index for next call
-            self.round_robin_index = (self.round_robin_index + 1) % shepherd_count;
         }
 
         result
@@ -938,6 +937,9 @@ impl ActorShepherdManager {
 
         // Add to in-memory tracking
         self.shepherds.insert(uuid, shepherd_status);
+
+        // Add to round-robin queue
+        self.shepherd_keys.push_back(uuid);
 
         info!("Successfully registered shepherd {uuid}");
         Ok(())
