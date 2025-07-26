@@ -113,10 +113,11 @@ impl SchedulerActor {
         let domain_clone = domain.clone();
 
         tokio::spawn(async move {
+            let shepherd_manager_handle = shepherd_manager.get_handle();
             let mut scheduler_state = SchedulerState {
                 domain: domain_clone,
                 task_set,
-                shepherd_manager,
+                shepherd_manager: shepherd_manager_handle,
                 event_stream,
                 config,
                 retry_schedule_changed: false,
@@ -138,7 +139,7 @@ impl SchedulerActor {
                                     scheduler_state.task_set.upsert_task(task);
                                 }
 
-                                if let Err(e) = scheduler_state.schedule_task_once(task_id) {
+                                if let Err(e) = scheduler_state.schedule_task_once(task_id).await {
                                     error!("Failed to schedule task {task_id}: {e}");
                                 }
                             }
@@ -317,7 +318,7 @@ struct TaskResultData {
 struct SchedulerState {
     domain: String,
     task_set: TaskSet,
-    shepherd_manager: Arc<ShepherdManager>,
+    shepherd_manager: crate::orchestrator::shepherd_manager::ShepherdManagerHandle,
     event_stream: Arc<EventStream>,
     config: SchedulerConfig,
     retry_schedule_changed: bool,
@@ -336,7 +337,7 @@ impl SchedulerState {
 
     /// Schedule a task for execution: make scheduling decisions, update TaskSet, and enqueue to virtual queue
     /// The attempt started event will be written by ShepherdManager when dispatch actually happens
-    fn schedule_task_once(&mut self, task_id: Uuid) -> Result<()> {
+    async fn schedule_task_once(&mut self, task_id: Uuid) -> Result<()> {
         info!("Scheduling task {} in domain {}", task_id, self.domain);
 
         let task = match self.task_set.get_task_mut(task_id) {
@@ -407,6 +408,7 @@ impl SchedulerState {
         match self
             .shepherd_manager
             .enqueue_task(self.domain.clone(), task_dispatch)
+            .await
         {
             Ok(_) => {
                 info!(
@@ -439,8 +441,7 @@ impl SchedulerState {
             task_id, self.domain
         );
 
-        // Decrement in-flight counter for the domain since task is completing
-        self.shepherd_manager.decrement_in_flight_task(&self.domain);
+        // Note: in-flight counter will be decremented in execute_handle_task_result
 
         let task = match self.task_set.get_task_mut(task_id) {
             Some(task) => task,
@@ -696,7 +697,7 @@ impl SchedulerState {
                     );
 
                     // Use the consolidated schedule_task_once logic for retry
-                    if let Err(e) = self.schedule_task_once(task_id) {
+                    if let Err(e) = self.schedule_task_once(task_id).await {
                         error!("Failed to schedule retry task {task_id}: {e}");
                     }
                 }
@@ -2379,7 +2380,9 @@ mod tests {
             // Simulate shepherd death
             engine
                 .shepherd_manager
-                .mark_shepherd_disconnected(shepherd_id);
+                .mark_shepherd_disconnected(shepherd_id)
+                .await
+                .unwrap();
 
             // Handle shepherd death through scheduler
             scheduler

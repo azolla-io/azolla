@@ -1,6 +1,5 @@
 use anyhow::Result;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use dashmap::DashMap;
 use log::{error, info, warn};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
@@ -15,7 +14,6 @@ use crate::orchestrator::db::DomainsConfig;
 use crate::orchestrator::event_stream::EventStream;
 use crate::orchestrator::taskset::TaskSetRegistry;
 use crate::proto::{common, orchestrator::ServerMsg};
-use crate::EVENT_SHEPHERD_REGISTERED;
 
 const SHEPHERD_TIMEOUT_SECS: u64 = 300; // 5 minutes
 
@@ -289,20 +287,10 @@ impl ShepherdStatus {
     }
 }
 
+/// ShepherdManager - Pure actor pattern wrapper
+/// All operations are delegated to the internal actor for thread safety and consistency
 pub struct ShepherdManager {
-    shepherds: DashMap<Uuid, ShepherdStatus>,
-    virtual_queues: Arc<DashMap<String, VirtualQueue>>,
-    domains_config: Arc<DomainsConfig>,
-    task_registry: Arc<TaskSetRegistry>,
-    event_stream: Arc<EventStream>,
-
-    // Persistent bucket state for load balancing
-    // Each bucket contains shepherds with load ratios in [i*0.1, (i+1)*0.1)
-    load_buckets: Arc<DashMap<usize, Vec<Uuid>>>,
-
-    // Total capacity tracking for average load calculation
-    total_max_concurrency: Arc<std::sync::atomic::AtomicU32>,
-    total_current_load: Arc<std::sync::atomic::AtomicU32>,
+    handle: ShepherdManagerHandle,
 }
 
 impl ShepherdManager {
@@ -311,16 +299,20 @@ impl ShepherdManager {
         task_registry: Arc<TaskSetRegistry>,
         event_stream: Arc<EventStream>,
     ) -> Self {
-        Self {
-            shepherds: DashMap::new(),
-            virtual_queues: Arc::new(DashMap::new()),
-            domains_config,
-            task_registry,
-            event_stream,
-            load_buckets: Arc::new(DashMap::new()),
-            total_max_concurrency: Arc::new(std::sync::atomic::AtomicU32::new(0)),
-            total_current_load: Arc::new(std::sync::atomic::AtomicU32::new(0)),
-        }
+        let (command_tx, command_rx) = mpsc::channel(1000);
+
+        // Create actor instance
+        let mut actor = ActorShepherdManager::new(domains_config, task_registry, event_stream);
+
+        // Spawn actor task
+        tokio::spawn(async move {
+            actor.main_loop(command_rx).await;
+        });
+
+        // Create handle
+        let handle = ShepherdManagerHandle { command_tx };
+
+        Self { handle }
     }
 
     /// Register a new shepherd connection with communication channel
@@ -330,617 +322,56 @@ impl ShepherdManager {
         max_concurrency: u32,
         tx: ShepherdTxChannel,
     ) -> Result<()> {
-        // Check if this is a reconnection
-        if let Some(mut existing_shepherd) = self.shepherds.get_mut(&uuid) {
-            if matches!(
-                existing_shepherd.status,
-                ShepherdConnectionStatus::Disconnected
-            ) {
-                // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
-                info!("Shepherd {uuid} reconnecting (was temporarily unavailable)");
-                existing_shepherd.set_tx(tx);
-                existing_shepherd.status = ShepherdConnectionStatus::Connected;
-                existing_shepherd.update_last_seen();
-                return Ok(());
-            }
-        }
-
-        // New shepherd registration with tx
-        let shepherd_status = ShepherdStatus::with_tx(uuid, max_concurrency, tx);
-
-        // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
-        info!("Registering new shepherd {uuid} with max_concurrency={max_concurrency}");
-
-        // Create EVENT_SHEPHERD_REGISTERED event
-        let event_metadata = serde_json::json!({
-            "shepherd_uuid": uuid,
-            "max_concurrency": max_concurrency,
-            "registered_at": Utc::now()
-        });
-
-        let event_record = crate::orchestrator::event_stream::EventRecord {
-            domain: "system".to_string(), // Use system domain for shepherd events
-            task_instance_id: None,
-            flow_instance_id: None,
-            event_type: EVENT_SHEPHERD_REGISTERED,
-            created_at: Utc::now(),
-            metadata: event_metadata,
-        };
-
-        // Write event first
-        self.event_stream.write_event(event_record).await?;
-
-        // Add to in-memory tracking
-        self.shepherds.insert(uuid, shepherd_status);
-
-        // Update total capacity tracking
-        self.total_max_concurrency
-            .fetch_add(max_concurrency, std::sync::atomic::Ordering::Relaxed);
-        // New shepherds start with 0 current load
-
-        // Add to appropriate load bucket (new shepherds have 0% load)
-        self.add_to_bucket(uuid, 0.0);
-
-        // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
-        info!("Successfully registered shepherd {uuid}");
-        Ok(())
-    }
-
-    /// Dispatch task to a specific shepherd
-    pub async fn dispatch_task_to_shepherd(
-        &self,
-        shepherd_id: Uuid,
-        task_dispatch: TaskDispatch,
-    ) -> Result<()> {
-        let shepherd = self
-            .shepherds
-            .get(&shepherd_id)
-            .ok_or_else(|| anyhow::anyhow!("Shepherd {} not found", shepherd_id))?;
-
-        if !matches!(shepherd.status, ShepherdConnectionStatus::Connected) {
-            return Err(anyhow::anyhow!("Shepherd {} is not connected", shepherd_id));
-        }
-
-        shepherd
-            .dispatch_task(
-                task_dispatch.task_id,
-                task_dispatch.task_name,
-                task_dispatch.args,
-                task_dispatch.kwargs,
-                task_dispatch.memory_limit,
-                task_dispatch.cpu_limit,
-            )
+        self.handle
+            .register_shepherd(uuid, max_concurrency, tx)
             .await
     }
 
     /// Update shepherd status (heartbeat)
-    pub fn update_shepherd_status(&self, uuid: Uuid, current_load: u32, available_capacity: u32) {
-        if let Some(mut shepherd) = self.shepherds.get_mut(&uuid) {
-            let old_load = shepherd.current_load;
-            shepherd.update_load(current_load, available_capacity);
-
-            // Update total current load tracking
-            let load_diff = current_load as i32 - old_load as i32;
-            if load_diff != 0 {
-                if load_diff > 0 {
-                    self.total_current_load
-                        .fetch_add(load_diff as u32, std::sync::atomic::Ordering::Relaxed);
-                } else {
-                    self.total_current_load
-                        .fetch_sub((-load_diff) as u32, std::sync::atomic::Ordering::Relaxed);
-                }
-            }
-
-            // Update bucket assignment based on new load ratio
-            let new_load_ratio = shepherd.load_ratio();
-            self.update_shepherd_bucket(uuid, new_load_ratio);
-        } else {
-            // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
-            warn!("Received status update from unknown shepherd {uuid}");
-        }
+    pub async fn update_shepherd_status(
+        &self,
+        uuid: Uuid,
+        current_load: u32,
+        available_capacity: u32,
+    ) -> Result<()> {
+        self.handle
+            .update_shepherd_status(uuid, current_load, available_capacity)
+            .await
     }
 
     /// Mark shepherd as having sent a message (for liveness tracking)
-    pub fn mark_shepherd_alive(&self, uuid: Uuid) {
-        if let Some(mut shepherd) = self.shepherds.get_mut(&uuid) {
-            shepherd.update_last_seen();
-        }
+    pub async fn mark_shepherd_alive(&self, uuid: Uuid) -> Result<()> {
+        self.handle.mark_shepherd_alive(uuid).await
     }
 
     /// Mark shepherd as temporarily unavailable (connection dropped but might reconnect)
-    pub fn mark_shepherd_disconnected(&self, uuid: Uuid) {
-        if let Some(mut shepherd) = self.shepherds.get_mut(&uuid) {
-            shepherd.status = ShepherdConnectionStatus::Disconnected;
-            shepherd.clear_tx(); // Clear the tx channel on disconnect
-
-            // Remove from load buckets since disconnected shepherds shouldn't be selected
-            self.remove_from_all_buckets(uuid);
-
-            // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
-            info!("Marked shepherd {uuid} as temporarily unavailable (connection dropped)");
-        }
+    pub async fn mark_shepherd_disconnected(&self, uuid: Uuid) -> Result<()> {
+        self.handle.mark_shepherd_disconnected(uuid).await
     }
 
-    /// Mark shepherd as reconnected and available again
-    pub fn mark_shepherd_reconnected(&self, uuid: Uuid) {
-        if let Some(mut shepherd) = self.shepherds.get_mut(&uuid) {
-            shepherd.status = ShepherdConnectionStatus::Connected;
-            shepherd.update_last_seen();
-
-            // Add back to appropriate load bucket since shepherd is now available
-            let load_ratio = shepherd.load_ratio();
-            self.add_to_bucket(uuid, load_ratio);
-
-            // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
-            info!("Marked shepherd {uuid} as reconnected and available");
-        }
+    /// Find available shepherds for batch task dispatch
+    pub async fn find_available_shepherds(&self, batch: u32) -> Vec<Uuid> {
+        self.handle.find_available_shepherds(batch).await
     }
 
-    /// Find available shepherds for batch task dispatch based on load balancing
-    /// Returns up to `batch` shepherds with available capacity, prioritizing load balancing
-    /// Uses a fast heuristic that sacrifices perfect accuracy for speed
-    pub fn find_available_shepherds(&self, batch: u32) -> Vec<Uuid> {
-        if batch == 0 {
-            return Vec::new();
-        }
-
-        // Get total capacity stats for average load calculation
-        let total_max_concurrency = self
-            .total_max_concurrency
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let total_current_load = self
-            .total_current_load
-            .load(std::sync::atomic::Ordering::Relaxed);
-
-        if total_max_concurrency == 0 {
-            return Vec::new(); // No shepherds available
-        }
-
-        // Calculate expected average load ratio after dispatching batch tasks
-        let expected_avg_load_ratio =
-            (total_current_load + batch) as f64 / total_max_concurrency as f64;
-
-        let mut result = Vec::new();
-        let mut remaining_batch = batch;
-
-        // Process buckets from lowest to highest load ratio (0 to 9)
-        for bucket_index in 0..10 {
-            if remaining_batch == 0 {
-                break;
-            }
-
-            if let Some(bucket_entry) = self.load_buckets.get(&bucket_index) {
-                let bucket = bucket_entry.value();
-                if bucket.is_empty() {
-                    continue;
-                }
-
-                // Try to assign tasks to shepherds in this bucket
-                let bucket_result =
-                    self.select_from_bucket(bucket, remaining_batch, expected_avg_load_ratio);
-
-                result.extend(bucket_result.iter());
-                remaining_batch = remaining_batch.saturating_sub(bucket_result.len() as u32);
-            }
-        }
-
-        result
-    }
-
-    /// Select shepherds from a single bucket trying to match expected average load ratio
-    fn select_from_bucket(
-        &self,
-        bucket: &[Uuid],
-        batch_size: u32,
-        target_load_ratio: f64,
-    ) -> Vec<Uuid> {
-        let mut result = Vec::new();
-        let mut remaining_batch = batch_size;
-
-        // Iterate through all shepherds in the bucket
-        for &shepherd_uuid in bucket {
-            if remaining_batch == 0 {
-                break;
-            }
-
-            // Get shepherd info
-            if let Some(shepherd) = self.shepherds.get(&shepherd_uuid) {
-                // Calculate how many tasks this shepherd should get to reach target ratio
-                let _current_ratio = shepherd.load_ratio(); // For debugging if needed
-                let max_concurrency = shepherd.max_concurrency as f64;
-                let current_load = shepherd.current_load as f64;
-
-                // Target load for this shepherd to match average
-                let target_load = target_load_ratio * max_concurrency;
-                let desired_tasks = (target_load - current_load).ceil() as i32;
-
-                // Clamp to available capacity and remaining batch
-                let tasks_to_assign = std::cmp::max(
-                    0,
-                    std::cmp::min(
-                        desired_tasks,
-                        std::cmp::min(shepherd.available_capacity() as i32, remaining_batch as i32),
-                    ),
-                ) as u32;
-
-                // Add this shepherd the calculated number of times
-                for _ in 0..tasks_to_assign {
-                    result.push(shepherd_uuid);
-                }
-
-                remaining_batch = remaining_batch.saturating_sub(tasks_to_assign);
-            }
-        }
-
-        result
-    }
-
-    /// Calculate which bucket a shepherd belongs to based on its load ratio
-    fn get_bucket_index(load_ratio: f64) -> usize {
-        // Buckets: [0-0.1), [0.1-0.2), ..., [0.9-1.0]
-        std::cmp::min(9, (load_ratio * 10.0).floor() as usize)
-    }
-
-    /// Add shepherd to the appropriate load bucket
-    fn add_to_bucket(&self, uuid: Uuid, load_ratio: f64) {
-        let bucket_index = Self::get_bucket_index(load_ratio);
-
-        // Remove from any existing bucket first
-        self.remove_from_all_buckets(uuid);
-
-        // Add to the appropriate bucket
-        let mut bucket = self.load_buckets.entry(bucket_index).or_default();
-        if !bucket.contains(&uuid) {
-            bucket.push(uuid);
-        }
-    }
-
-    /// Remove shepherd from all buckets
-    fn remove_from_all_buckets(&self, uuid: Uuid) {
-        for mut bucket in self.load_buckets.iter_mut() {
-            bucket.value_mut().retain(|&id| id != uuid);
-        }
-    }
-
-    /// Update shepherd's bucket assignment when load changes
-    fn update_shepherd_bucket(&self, uuid: Uuid, new_load_ratio: f64) {
-        self.add_to_bucket(uuid, new_load_ratio);
-    }
-
-    /// Remove shepherd when it disconnects
-    pub fn remove_shepherd(&self, uuid: Uuid) {
-        if let Some((_, shepherd)) = self.shepherds.remove(&uuid) {
-            // Update total capacity tracking
-            self.total_max_concurrency.fetch_sub(
-                shepherd.max_concurrency,
-                std::sync::atomic::Ordering::Relaxed,
-            );
-            self.total_current_load
-                .fetch_sub(shepherd.current_load, std::sync::atomic::Ordering::Relaxed);
-
-            // Remove from load buckets
-            self.remove_from_all_buckets(uuid);
-
-            // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
-            info!("Removed shepherd {uuid} from tracking");
-        }
-    }
-
-    /// Start the dead shepherd cleanup background task
-    pub async fn start_health_checker(self: Arc<Self>) {
-        let mut interval = time::interval(Duration::from_secs(60)); // Check every minute
-
-        loop {
-            interval.tick().await;
-            if let Err(e) = self.cleanup_dead_shepherds().await {
-                error!("Error during dead shepherd cleanup: {e}");
-            }
-        }
-    }
-
-    /// Check disconnected shepherds for timeout and fail their tasks
-    async fn cleanup_dead_shepherds(&self) -> Result<()> {
-        let now = Utc::now();
-        let timeout = ChronoDuration::seconds(SHEPHERD_TIMEOUT_SECS as i64);
-        let mut dead_shepherds = Vec::new();
-
-        // Find shepherds that have been disconnected too long
-        for entry in self.shepherds.iter() {
-            let shepherd_uuid = *entry.key();
-            let shepherd = entry.value();
-
-            // Only check disconnected shepherds - they've already been marked as unavailable
-            if matches!(shepherd.status, ShepherdConnectionStatus::Disconnected) {
-                let time_since_last_seen = now.signed_duration_since(shepherd.last_seen);
-
-                if time_since_last_seen > timeout {
-                    warn!(
-                        "Shepherd {} has been disconnected too long (last seen {} seconds ago), cleaning up tasks",
-                        shepherd_uuid,
-                        time_since_last_seen.num_seconds()
-                    );
-                    dead_shepherds.push(shepherd_uuid);
-                }
-            }
-        }
-
-        // Process dead shepherds - generate failure events and remove them completely
-        for shepherd_uuid in dead_shepherds {
-            // Generate failure events for all tasks assigned to this shepherd
-            // Note: The Scheduler will handle the events and update TaskSet accordingly
-            if let Err(e) = self
-                .task_registry
-                .generate_shepherd_failure_events(shepherd_uuid, &self.event_stream)
-                .await
-            {
-                // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
-                error!("Failed to generate failure events for dead shepherd {shepherd_uuid}: {e}");
-            }
-
-            // Remove shepherd completely (they've been disconnected too long)
-            self.remove_shepherd(shepherd_uuid);
-        }
-
-        Ok(())
+    /// Enqueue a task to the virtual queue for a domain
+    pub async fn enqueue_task(&self, domain: String, task: TaskDispatch) -> Result<()> {
+        self.handle.enqueue_task(domain, task).await
     }
 
     /// Get statistics about shepherds
-    pub fn get_stats(&self) -> ShepherdManagerStats {
-        let mut connected = 0;
-        let mut disconnected = 0;
-        let mut total_capacity = 0;
-        let mut total_load = 0;
-
-        for entry in self.shepherds.iter() {
-            let shepherd = entry.value();
-            match shepherd.status {
-                ShepherdConnectionStatus::Connected => {
-                    connected += 1;
-                    total_capacity += shepherd.max_concurrency;
-                    total_load += shepherd.current_load;
-                }
-                ShepherdConnectionStatus::Disconnected => disconnected += 1,
-                ShepherdConnectionStatus::Reconnecting => {} // Count as neither
-            }
-        }
-
-        ShepherdManagerStats {
-            connected_shepherds: connected,
-            disconnected_shepherds: disconnected,
-            total_capacity,
-            total_load,
-            utilization: if total_capacity > 0 {
-                total_load as f64 / total_capacity as f64
-            } else {
-                0.0
-            },
-        }
+    pub async fn get_stats(&self) -> ShepherdManagerStats {
+        self.handle.get_stats().await
     }
 
-    /// Check if a specific shepherd is registered and connected
-    pub fn is_shepherd_registered(&self, uuid: Uuid) -> bool {
-        self.shepherds
-            .get(&uuid)
-            .map(|shepherd| matches!(shepherd.status, ShepherdConnectionStatus::Connected))
-            .unwrap_or(false)
+    /// Check if a shepherd is registered
+    pub async fn is_shepherd_registered(&self, uuid: Uuid) -> bool {
+        self.handle.is_shepherd_registered(uuid).await
     }
 
-    /// Get the connection status of a specific shepherd
-    pub fn get_shepherd_status(&self, uuid: Uuid) -> Option<ShepherdConnectionStatus> {
-        self.shepherds
-            .get(&uuid)
-            .map(|shepherd| shepherd.status.clone())
-    }
-
-    /// Get or create a virtual queue for the specified domain
-    fn get_or_create_virtual_queue(&self, domain: &str) -> Arc<DashMap<String, VirtualQueue>> {
-        // Check if queue already exists
-        if !self.virtual_queues.contains_key(domain) {
-            // Determine concurrency limit for this domain
-            let concurrency_limit = self
-                .domains_config
-                .specific
-                .get(domain)
-                .map(|config| config.concurrency_limit)
-                .unwrap_or(self.domains_config.default_concurrency_limit);
-
-            // Create new virtual queue
-            let queue = VirtualQueue::new(concurrency_limit);
-            self.virtual_queues.insert(domain.to_string(), queue);
-
-            info!("Created virtual queue for domain '{domain}' with concurrency limit {concurrency_limit}");
-        }
-
-        self.virtual_queues.clone()
-    }
-
-    /// Get domain names that have virtual queues
-    pub fn get_active_domains(&self) -> Vec<String> {
-        self.virtual_queues
-            .iter()
-            .map(|entry| entry.key().clone())
-            .collect()
-    }
-
-    /// Get virtual queue statistics for a domain
-    pub fn get_domain_stats(&self, domain: &str) -> Option<(usize, u32)> {
-        self.virtual_queues
-            .get(domain)
-            .map(|queue| (queue.queue_len(), queue.in_flight_count()))
-    }
-
-    /// Enqueue a task for dispatch to a domain's virtual queue
-    pub fn enqueue_task(&self, domain: String, task: TaskDispatch) -> Result<()> {
-        // Ensure virtual queue exists for this domain
-        self.get_or_create_virtual_queue(&domain);
-
-        // Get mutable reference to the queue and enqueue the task
-        if let Some(mut queue) = self.virtual_queues.get_mut(&domain) {
-            queue.enqueue(task.clone())?;
-            info!(
-                "Enqueued task {} to domain '{}' virtual queue",
-                task.task_id, domain
-            );
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(
-                "Failed to access virtual queue for domain '{}'",
-                domain
-            ))
-        }
-    }
-
-    /// Decrement in-flight task counter for a domain when task completes
-    pub fn decrement_in_flight_task(&self, domain: &str) {
-        if let Some(queue) = self.virtual_queues.get(domain) {
-            queue.decrement_in_flight();
-            info!("Decremented in-flight counter for domain '{domain}'");
-        } else {
-            warn!("Attempted to decrement in-flight counter for unknown domain '{domain}'");
-        }
-    }
-
-    /// Start the virtual queue dispatcher loop
-    /// This runs a single actor loop that processes all domain virtual queues
-    pub fn start_dispatcher_loop(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
-            let mut interval = time::interval(Duration::from_millis(100)); // 100ms dispatch interval
-
-            info!("Started virtual queue dispatcher loop");
-
-            loop {
-                interval.tick().await;
-
-                // Process all active domains
-                let domains: Vec<String> = self.get_active_domains();
-                // TODO: implement a fair dequeue algorithm so that domains are treated equally
-                for domain in domains {
-                    self.process_domain_queue(&domain).await;
-                }
-            }
-        })
-    }
-
-    /// Process tasks from a specific domain's virtual queue
-    async fn process_domain_queue(&self, domain: &str) {
-        // Get available shepherds for batch dispatch
-        let batch_size = 10; // Process up to 10 tasks per domain per cycle
-        let available_shepherds = self.find_available_shepherds(batch_size);
-
-        if available_shepherds.is_empty() {
-            return; // No shepherds available
-        }
-
-        // Get tasks from the virtual queue
-        let mut tasks_to_dispatch = Vec::new();
-
-        if let Some(mut queue) = self.virtual_queues.get_mut(domain) {
-            // Determine how many tasks we can dispatch
-            let dispatch_count = std::cmp::min(
-                available_shepherds.len() as u32,
-                queue.available_dispatch_count(),
-            );
-
-            // Dequeue tasks
-            for _ in 0..dispatch_count {
-                if let Some(task) = queue.dequeue() {
-                    tasks_to_dispatch.push(task);
-                }
-            }
-        }
-
-        // Dispatch tasks to shepherds
-        for (task, shepherd_id) in tasks_to_dispatch
-            .into_iter()
-            .zip(available_shepherds.into_iter())
-        {
-            // Write attempt started event right before dispatch
-            // TODO: implement batch event write
-            if let Err(e) = self
-                .write_attempt_started_event(&task, shepherd_id, domain)
-                .await
-            {
-                warn!(
-                    "Failed to write attempt started event for task {} to shepherd {}: {}",
-                    task.task_id, shepherd_id, e
-                );
-                // Continue with dispatch even if event write fails
-            }
-
-            match self
-                .dispatch_task_to_shepherd(shepherd_id, task.clone())
-                .await
-            {
-                Ok(_) => {
-                    info!(
-                        "Successfully dispatched task {} from domain '{}' to shepherd {}",
-                        task.task_id, domain, shepherd_id
-                    );
-                }
-                Err(e) => {
-                    warn!("Failed to dispatch task {} from domain '{}' to shepherd {}: {}. Treating as task attempt failure.", 
-                          task.task_id, domain, shepherd_id, e);
-
-                    // Decrement in-flight counter since we couldn't dispatch
-                    self.decrement_in_flight_task(domain);
-
-                    // TODO: In a real implementation, we'd need to notify the scheduler
-                    // about this failure so it can handle the task appropriately.
-                    // For now, we just log the failure as specified in the requirements.
-                }
-            }
-        }
-    }
-
-    /// Write attempt started event right before dispatch
-    async fn write_attempt_started_event(
-        &self,
-        task: &TaskDispatch,
-        shepherd_id: Uuid,
-        domain: &str,
-    ) -> Result<()> {
-        let event_metadata = serde_json::json!({
-            "task_id": task.task_id,
-            "attempt_number": task.attempt_number,
-            "shepherd_id": shepherd_id,
-            "scheduled_at": chrono::Utc::now()
-        });
-
-        let event_record = crate::orchestrator::event_stream::EventRecord {
-            domain: domain.to_string(),
-            task_instance_id: Some(task.task_id),
-            flow_instance_id: task.flow_instance_id,
-            event_type: crate::EVENT_TASK_ATTEMPT_STARTED,
-            created_at: chrono::Utc::now(),
-            metadata: event_metadata,
-        };
-
-        self.event_stream.write_event(event_record).await?;
-
-        info!(
-            "Successfully started task {} attempt {} on shepherd {shepherd_id}",
-            task.task_id, task.attempt_number
-        );
-        Ok(())
-    }
-
-    /// Get a handle to communicate with the actor version of ShepherdManager
+    /// Get a handle to communicate with the actor (for direct handle access)
     pub fn get_handle(&self) -> ShepherdManagerHandle {
-        let (command_tx, command_rx) = mpsc::channel(1000);
-
-        // Create actor instance
-        let mut actor = ActorShepherdManager::new(
-            self.domains_config.clone(),
-            self.task_registry.clone(),
-            self.event_stream.clone(),
-        );
-
-        // Spawn actor task
-        tokio::spawn(async move {
-            actor.main_loop(command_rx).await;
-        });
-
-        ShepherdManagerHandle::new(command_tx)
+        self.handle.clone()
     }
 }
 
@@ -953,7 +384,6 @@ pub struct ShepherdManagerStats {
     pub utilization: f64,
 }
 
-/// Actor-based ShepherdManager using HashMap for better single-threaded performance
 pub struct ActorShepherdManager {
     // Core data structures (HashMap instead of DashMap for single-threaded actor)
     shepherds: HashMap<Uuid, ShepherdStatus>,
@@ -1139,9 +569,30 @@ impl ActorShepherdManager {
         // Process each domain's virtual queue
         let domains: Vec<String> = self.virtual_queues.keys().cloned().collect();
 
+        #[cfg(test)]
+        {
+            eprintln!(
+                "DEBUG: handle_dispatch_tick called. Found {} domains: {:?}",
+                domains.len(),
+                domains
+            );
+        }
+
         for domain in domains {
+            #[cfg(test)]
+            {
+                eprintln!("DEBUG: About to process domain: {domain}");
+            }
+            #[cfg(test)]
+            {
+                eprintln!("DEBUG: Calling process_domain_queue for domain: {domain}");
+            }
             if let Err(e) = self.process_domain_queue(&domain).await {
                 error!("Error processing domain queue for {domain}: {e}");
+            }
+            #[cfg(test)]
+            {
+                eprintln!("DEBUG: Finished process_domain_queue for domain: {domain}");
             }
         }
 
@@ -1446,22 +897,43 @@ impl ActorShepherdManager {
 
     /// Process a domain's virtual queue by dispatching available tasks
     async fn process_domain_queue(&mut self, domain: &str) -> Result<()> {
+        #[cfg(test)]
+        {
+            eprintln!(
+                "DEBUG: ActorShepherdManager::process_domain_queue called for domain: {domain}"
+            );
+        }
         // Check if we can dispatch any tasks and get available count
         let available_dispatches = {
             let queue = match self.virtual_queues.get(domain) {
                 Some(q) => q,
-                None => return Ok(()), // No queue for this domain
+                None => {
+                    #[cfg(test)]
+                    eprintln!("DEBUG: No queue found for domain {domain}");
+                    return Ok(());
+                }
             };
 
             if !queue.can_dispatch() {
+                #[cfg(test)]
+                eprintln!("DEBUG: Queue for domain {domain} cannot dispatch");
                 return Ok(());
             }
 
-            queue.available_dispatch_count()
+            let count = queue.available_dispatch_count();
+            #[cfg(test)]
+            eprintln!("DEBUG: Queue for domain {domain} has {count} tasks available to dispatch");
+            count
         };
 
         // Find available shepherds
         let shepherds = self.find_available_shepherds_round_robin(available_dispatches);
+        #[cfg(test)]
+        eprintln!(
+            "DEBUG: Found {} shepherds for domain {domain}: {:?}",
+            shepherds.len(),
+            shepherds
+        );
 
         if shepherds.is_empty() {
             return Ok(()); // No shepherds available
@@ -1938,18 +1410,19 @@ mod tests {
         }
     }
 
-    /// Helper function to manually add shepherds for legacy testing (bypasses event stream)
-    fn add_test_shepherd(manager: &ShepherdManager, uuid: Uuid, max_concurrency: u32) {
-        let shepherd_status = ShepherdStatus::new(uuid, max_concurrency);
-        manager.shepherds.insert(uuid, shepherd_status);
+    /// Helper function to create test TX channel for shepherd communication
+    fn create_local_test_shepherd_tx() -> (ShepherdTxChannel, ShepherdRxChannel) {
+        tokio::sync::mpsc::channel(10)
+    }
 
-        // Update total capacity tracking
+    /// Helper function to manually add shepherds for testing
+    async fn add_test_shepherd(manager: &ShepherdManager, uuid: Uuid, max_concurrency: u32) {
+        // Use the async API to register shepherd
+        let (tx, _rx) = create_local_test_shepherd_tx();
         manager
-            .total_max_concurrency
-            .fetch_add(max_concurrency, std::sync::atomic::Ordering::Relaxed);
-
-        // Add to load bucket for legacy tests
-        manager.add_to_bucket(uuid, 0.0);
+            .register_shepherd(uuid, max_concurrency, tx)
+            .await
+            .unwrap();
     }
 
     /// Helper function to create a test TX channel for shepherd communication
@@ -2315,13 +1788,13 @@ mod tests {
         let manager = create_test_manager();
         let uuid = Uuid::new_v4();
 
-        // Test that sync methods still work
-        add_test_shepherd(&manager, uuid, 10);
-        manager.update_shepherd_status(uuid, 5, 5);
-        manager.mark_shepherd_alive(uuid);
+        // Test that async methods work
+        add_test_shepherd(&manager, uuid, 10).await;
+        manager.update_shepherd_status(uuid, 5, 5).await.unwrap();
+        manager.mark_shepherd_alive(uuid).await.unwrap();
 
         // Test selection
-        let result = manager.find_available_shepherds(1);
+        let result = manager.find_available_shepherds(1).await;
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], uuid);
     }

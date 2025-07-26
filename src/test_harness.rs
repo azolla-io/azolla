@@ -279,7 +279,7 @@ impl IntegrationTestEnvironment {
 
     pub async fn get_shepherd_count(&self) -> Result<i64> {
         // Get actual shepherd count from ShepherdManager
-        let stats = self.engine().shepherd_manager.get_stats();
+        let stats = self.engine().shepherd_manager.get_stats().await;
         Ok(stats.connected_shepherds as i64)
     }
 
@@ -288,7 +288,8 @@ impl IntegrationTestEnvironment {
         Ok(self
             .engine()
             .shepherd_manager
-            .is_shepherd_registered(shepherd_uuid))
+            .is_shepherd_registered(shepherd_uuid)
+            .await)
     }
 
     /// Wait for a specific shepherd to be registered, with timeout
