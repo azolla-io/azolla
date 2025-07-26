@@ -65,6 +65,19 @@ impl Default for DomainsConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct ShutdownConfig {
+    pub timeout_secs: u64,
+}
+
+impl Default for ShutdownConfig {
+    fn default() -> Self {
+        Self {
+            timeout_secs: 30, // Production default: 30 seconds
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct Settings {
     pub database: Database,
     pub server: Server,
@@ -72,6 +85,8 @@ pub struct Settings {
     pub event_stream: EventStream,
     #[serde(default)]
     pub domains: DomainsConfig,
+    #[serde(default)]
+    pub shutdown: ShutdownConfig,
 }
 
 fn default_pool_size() -> usize {

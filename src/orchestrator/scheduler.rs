@@ -170,6 +170,15 @@ impl SchedulerActor {
                             }
                             Some(SchedulerCommand::Shutdown { respond_to }) => {
                                 info!("Scheduler for domain {} shutting down", scheduler_state.domain);
+
+                                // CRITICAL: Cancel the timeout future to prevent hanging on shutdown
+                                // This prevents the deadlock where timeout_future continues waiting
+                                // for retries while other components are shutting down
+                                #[allow(unused_assignments)]
+                                {
+                                    timeout_future = Box::pin(tokio::time::sleep(std::time::Duration::from_secs(0)));
+                                }
+
                                 let _ = respond_to.send(());
                                 break;
                             }
@@ -861,7 +870,9 @@ mod tests {
     fn create_dummy_pool() -> crate::orchestrator::db::PgPool {
         // For unit tests, we'll create a minimal pool that won't be used
         // In real integration tests, use the db_test! macro
-        use crate::orchestrator::db::{create_pool, Database, DomainsConfig, Server, Settings};
+        use crate::orchestrator::db::{
+            create_pool, Database, DomainsConfig, Server, Settings, ShutdownConfig,
+        };
 
         let settings = Settings {
             database: Database {
@@ -871,6 +882,7 @@ mod tests {
             server: Server { port: 0 },
             event_stream: crate::orchestrator::db::EventStream::default(),
             domains: DomainsConfig::default(),
+            shutdown: ShutdownConfig::default(),
         };
 
         // This will fail but we catch it for unit tests

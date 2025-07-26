@@ -78,6 +78,9 @@ pub enum ShepherdManagerMessage {
     },
     DispatchTick,
     HealthCheckTick,
+    Shutdown {
+        response_tx: oneshot::Sender<Result<()>>,
+    },
 }
 
 /// Type alias for shepherd communication channel
@@ -553,6 +556,20 @@ impl ShepherdManager {
             .await
             .map_err(|_| anyhow::anyhow!("ShepherdManager actor channel closed"))
     }
+
+    /// Shutdown the ShepherdManager actor
+    pub async fn shutdown(&self) -> Result<()> {
+        let (response_tx, response_rx) = oneshot::channel();
+
+        self.command_tx
+            .send(ShepherdManagerMessage::Shutdown { response_tx })
+            .await
+            .map_err(|_| anyhow::anyhow!("ShepherdManager actor channel closed"))?;
+
+        response_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("ShepherdManager actor disconnected"))?
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -617,7 +634,12 @@ impl ActorShepherdManager {
                     }
 
                     if let Err(e) = self.handle_command(message).await {
-                        error!("Error handling ShepherdManager command: {e}");
+                        if e.to_string().contains("Shutdown requested") {
+                            info!("ShepherdManager main loop shutting down gracefully");
+                            break;
+                        } else {
+                            error!("Error handling ShepherdManager command: {e}");
+                        }
                     }
                 }
 
@@ -753,6 +775,13 @@ impl ActorShepherdManager {
                 if let Err(e) = self.handle_health_check_tick().await {
                     error!("Error in manual health check tick: {e}");
                 }
+            }
+
+            ShepherdManagerMessage::Shutdown { response_tx } => {
+                info!("ShepherdManager actor shutting down");
+                let _ = response_tx.send(Ok(()));
+                // Return error to exit the main loop
+                return Err(anyhow::anyhow!("Shutdown requested"));
             }
         }
         Ok(())
@@ -1309,6 +1338,7 @@ mod tests {
             server: Server { port: 0 },
             event_stream: crate::orchestrator::db::EventStream::default(),
             domains: crate::orchestrator::db::DomainsConfig::default(),
+            shutdown: crate::orchestrator::db::ShutdownConfig::default(),
         };
 
         // Create a dummy pool that gracefully handles connection failures

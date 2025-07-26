@@ -102,20 +102,52 @@ impl Engine {
         Ok(())
     }
 
-    /// Shutdown the engine and all its components
+    /// Shutdown the engine and all its components with default timeout
     pub async fn shutdown(&self) -> Result<()> {
-        log::info!("Shutting down orchestration engine...");
+        // Use default 30 second timeout for backward compatibility
+        self.shutdown_with_timeout(30).await
+    }
 
-        // Shutdown schedulers first
-        if let Err(e) = self.scheduler_registry.shutdown_all().await {
-            log::error!("Failed to shutdown scheduler registry: {e}");
+    /// Shutdown the engine and all its components with configurable timeout
+    pub async fn shutdown_with_timeout(&self, timeout_secs: u64) -> Result<()> {
+        log::info!("Shutting down orchestration engine with {timeout_secs}s timeout...");
+
+        let shutdown_future = async {
+            // Phase 1: Shutdown schedulers first (with fixed timeout_future cancellation)
+            log::info!("Shutting down scheduler registry...");
+            if let Err(e) = self.scheduler_registry.shutdown_all().await {
+                log::error!("Failed to shutdown scheduler registry: {e}");
+            }
+
+            // Phase 2: Shutdown shepherd manager
+            log::info!("Shutting down shepherd manager...");
+            if let Err(e) = self.shepherd_manager.shutdown().await {
+                log::error!("Failed to shutdown shepherd manager: {e}");
+            }
+
+            // Phase 3: Shutdown event stream
+            log::info!("Shutting down event stream...");
+            if let Err(e) = self.event_stream.shutdown().await {
+                log::error!("Failed to shutdown event stream: {e}");
+            }
+
+            log::info!("Orchestration engine shutdown complete");
+            Ok(())
+        };
+
+        // Apply timeout to the entire shutdown sequence
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(timeout_secs),
+            shutdown_future,
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => {
+                log::error!("Engine shutdown timed out after {timeout_secs}s, some components may not have shut down cleanly");
+                Ok(()) // Don't fail the shutdown, just log the timeout
+            }
         }
-
-        // Then shutdown event stream
-        self.event_stream.shutdown().await?;
-
-        log::info!("Orchestration engine shutdown complete");
-        Ok(())
     }
 
     /// Merge events from the events table to task_instance and task_attempts tables
