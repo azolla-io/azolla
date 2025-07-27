@@ -76,7 +76,7 @@ jobs:
       timeout-minutes: 10
     
     - name: Run tests with coverage
-      run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --output-dir ./coverage --jobs 8 --engine llvm --fail-under 59
+      run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --output-dir ./coverage --jobs 8 --engine llvm --fail-under 64
       timeout-minutes: 15
     
     - name: Upload current coverage report
