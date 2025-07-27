@@ -198,11 +198,11 @@ impl StreamHandler {
                     match result {
                         Some(task_result) => {
                             let task_id = task_result.task_id;
-                            info!("🔄 SHEPHERD: Processing task result for task: {task_id}");
+                            debug!("Processing task result for task: {task_id}");
                             if let Err(e) = self.send_task_result(&tx, task_result).await {
-                                error!("❌ SHEPHERD: Failed to send task result: {e}");
+                                error!("Failed to send task result: {e}");
                             } else {
-                                info!("✅ SHEPHERD: Successfully sent task result for task: {task_id}");
+                                debug!("Successfully sent task result for task: {task_id}");
                             }
                         }
                         None => {
@@ -266,8 +266,8 @@ impl StreamHandler {
         tx: &mpsc::Sender<ClientMsg>,
         task_result: TaskResultMessage,
     ) -> Result<()> {
-        info!(
-            "📤 SHEPHERD: Sending task result for task: {} to orchestrator",
+        debug!(
+            "Sending task result for task: {} to orchestrator",
             task_result.task_id
         );
 

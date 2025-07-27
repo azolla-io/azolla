@@ -1,5 +1,5 @@
 use anyhow::Result;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use tokio::sync::mpsc;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
@@ -35,10 +35,7 @@ impl Worker for WorkerService {
     ) -> Result<Response<ReportResultResponse>, Status> {
         let req = request.into_inner();
 
-        info!(
-            "📨 SHEPHERD: Received result report for task: {}",
-            req.task_id
-        );
+        debug!("Received result report for task: {}", req.task_id);
 
         let task_id = Uuid::parse_str(&req.task_id)
             .map_err(|e| Status::invalid_argument(format!("Invalid task ID: {e}")))?;
@@ -78,11 +75,11 @@ impl Worker for WorkerService {
         let message = TaskResultMessage { task_id, result };
 
         if let Err(e) = self.result_sender.send(message) {
-            error!("❌ SHEPHERD: Failed to forward task result to stream handler: {e}");
+            error!("Failed to forward task result to stream handler: {e}");
             return Err(Status::internal("Failed to process task result"));
         }
 
-        info!("✅ SHEPHERD: Successfully forwarded result for task {task_id} to stream handler");
+        debug!("Successfully forwarded result for task {task_id} to stream handler");
 
         Ok(Response::new(ReportResultResponse {
             success: true,

@@ -370,26 +370,21 @@ async fn test_retry_scheduling_race_condition() {
     const MAX_WAIT_ATTEMPTS: u32 = 10; // Increased from 5 to 10
     const WAIT_INTERVAL_MS: u64 = 200; // Reduced from 500ms to 200ms for faster polling
 
-    log::info!("🔍 TEST: Waiting for TaskB to reach FAILED status...");
+    // Wait for TaskB to reach FAILED status
     while task_b_status_check != Some(azolla::TASK_STATUS_FAILED)
         && wait_attempts < MAX_WAIT_ATTEMPTS
     {
-        log::info!(
-            "📊 TEST: TaskB status check {}/{}: {:?} (expecting FAILED=6)",
-            wait_attempts + 1,
-            MAX_WAIT_ATTEMPTS,
-            task_b_status_check
-        );
+        // Checking TaskB status...
         tokio::time::sleep(std::time::Duration::from_millis(WAIT_INTERVAL_MS)).await;
         task_b_status_check = harness.get_task_status(&task_b_id).await.unwrap();
         wait_attempts += 1;
     }
 
     if task_b_status_check == Some(azolla::TASK_STATUS_FAILED) {
-        log::info!("✅ TEST: TaskB reached FAILED status after {wait_attempts} attempts");
+        // TaskB reached FAILED status
     } else {
-        log::error!(
-            "❌ TEST: TaskB did not reach FAILED status after {wait_attempts} attempts, final status: {task_b_status_check:?}"
+        panic!(
+            "TaskB did not reach FAILED status after {wait_attempts} attempts, final status: {task_b_status_check:?}"
         );
     }
 

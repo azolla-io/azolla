@@ -250,8 +250,8 @@ impl SchedulerActor {
         task_id: Uuid,
         result: TaskResult,
     ) -> Result<(), SchedulerError> {
-        info!(
-            "📨 SCHEDULER: handle_task_result called for task {} in domain {}",
+        debug!(
+            "handle_task_result called for task {} in domain {}",
             task_id, self.domain
         );
         let (tx, rx) = oneshot::channel();
@@ -451,8 +451,8 @@ impl SchedulerState {
         task_id: Uuid,
         result: TaskResult,
     ) -> Option<TaskResultData> {
-        info!(
-            "🔄 SCHEDULER: decide_handle_task_result for task {} in domain {}",
+        debug!(
+            "decide_handle_task_result for task {} in domain {}",
             task_id, self.domain
         );
 
