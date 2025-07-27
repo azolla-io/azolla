@@ -197,8 +197,12 @@ impl StreamHandler {
                 result = self.result_receiver.recv() => {
                     match result {
                         Some(task_result) => {
+                            let task_id = task_result.task_id;
+                            debug!("Processing task result for task: {task_id}");
                             if let Err(e) = self.send_task_result(&tx, task_result).await {
                                 error!("Failed to send task result: {e}");
+                            } else {
+                                debug!("Successfully sent task result for task: {task_id}");
                             }
                         }
                         None => {
@@ -262,7 +266,10 @@ impl StreamHandler {
         tx: &mpsc::Sender<ClientMsg>,
         task_result: TaskResultMessage,
     ) -> Result<()> {
-        debug!("Sending task result for task: {}", task_result.task_id);
+        debug!(
+            "Sending task result for task: {} to orchestrator",
+            task_result.task_id
+        );
 
         let client_msg = ClientMsg {
             kind: Some(client_msg::Kind::TaskResult(task_result.result)),

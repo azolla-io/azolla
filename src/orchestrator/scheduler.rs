@@ -1,12 +1,17 @@
-use crate::orchestrator::event_stream::{EventRecord, EventStream};
+use crate::orchestrator::event_stream::EventStream;
 use crate::orchestrator::retry_policy::RetryPolicy;
 use crate::orchestrator::shepherd_manager::ShepherdManager;
 use crate::orchestrator::taskset::{Task, TaskSet};
 use crate::{
-    EVENT_TASK_ATTEMPT_ENDED, EVENT_TASK_ATTEMPT_STARTED,
     TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT, TASK_STATUS_ATTEMPT_STARTED,
     TASK_STATUS_CREATED, TASK_STATUS_FAILED, TASK_STATUS_SUCCEEDED,
 };
+
+#[cfg(test)]
+use crate::EVENT_TASK_ATTEMPT_ENDED;
+
+#[cfg(test)]
+use crate::EVENT_TASK_ATTEMPT_STARTED;
 use anyhow::Result;
 use chrono::Utc;
 use dashmap::DashMap;
@@ -64,7 +69,7 @@ impl SchedulerConfig {
 pub enum SchedulerCommand {
     StartTask {
         task_id: Uuid,
-        task: Option<Task>,
+        task: Option<Task>, // StartTask can be used for starting a new Task, or an existing Task (none)
         respond_to: oneshot::Sender<Result<()>>,
     },
     HandleTaskResult {
@@ -108,10 +113,11 @@ impl SchedulerActor {
         let domain_clone = domain.clone();
 
         tokio::spawn(async move {
+            let shepherd_manager_clone = (*shepherd_manager).clone();
             let mut scheduler_state = SchedulerState {
                 domain: domain_clone,
                 task_set,
-                shepherd_manager,
+                shepherd_manager: shepherd_manager_clone,
                 event_stream,
                 config,
                 retry_schedule_changed: false,
@@ -125,7 +131,7 @@ impl SchedulerActor {
                 tokio::select! {
                     command = receiver.recv() => {
                         match command {
-                            Some(SchedulerCommand::StartTask { task_id, task, respond_to }) => {
+                            Some(SchedulerCommand::StartTask { task_id, task, respond_to: _ }) => {
                                 info!("Scheduler received StartTask command for task {} in domain {}", task_id, scheduler_state.domain);
 
                                 // If task is provided, upsert it first
@@ -133,26 +139,8 @@ impl SchedulerActor {
                                     scheduler_state.task_set.upsert_task(task);
                                 }
 
-                                match scheduler_state.decide_start_task(task_id) {
-                                    Some(task_start_data) => {
-                                        let domain = scheduler_state.domain.clone();
-                                        let shepherd_manager = scheduler_state.shepherd_manager.clone();
-                                        let event_stream = scheduler_state.event_stream.clone();
-
-                                        tokio::spawn(async move {
-                                            let result = SchedulerState::execute_start_task(
-                                                task_id,
-                                                task_start_data,
-                                                domain,
-                                                shepherd_manager,
-                                                event_stream,
-                                            ).await;
-                                            let _ = respond_to.send(result);
-                                        });
-                                    },
-                                    None => {
-                                        let _ = respond_to.send(Ok(()));
-                                    }
+                                if let Err(e) = scheduler_state.schedule_task_once(task_id).await {
+                                    error!("Failed to schedule task {task_id}: {e}");
                                 }
                             }
                             Some(SchedulerCommand::HandleTaskResult { task_id, result, respond_to }) => {
@@ -160,6 +148,7 @@ impl SchedulerActor {
                                     Some(task_result_data) => {
                                         let domain = scheduler_state.domain.clone();
                                         let event_stream = scheduler_state.event_stream.clone();
+                                        let shepherd_manager = scheduler_state.shepherd_manager.clone();
 
                                         tokio::spawn(async move {
                                             let result = SchedulerState::execute_handle_task_result(
@@ -167,6 +156,7 @@ impl SchedulerActor {
                                                 task_result_data,
                                                 domain,
                                                 event_stream,
+                                                shepherd_manager,
                                             ).await;
                                             let _ = respond_to.send(result);
                                         });
@@ -182,6 +172,15 @@ impl SchedulerActor {
                             }
                             Some(SchedulerCommand::Shutdown { respond_to }) => {
                                 info!("Scheduler for domain {} shutting down", scheduler_state.domain);
+
+                                // CRITICAL: Cancel the timeout future to prevent hanging on shutdown
+                                // This prevents the deadlock where timeout_future continues waiting
+                                // for retries while other components are shutting down
+                                #[allow(unused_assignments)]
+                                {
+                                    timeout_future = Box::pin(tokio::time::sleep(std::time::Duration::from_secs(0)));
+                                }
+
                                 let _ = respond_to.send(());
                                 break;
                             }
@@ -226,16 +225,12 @@ impl SchedulerActor {
         &self.domain
     }
 
-    pub async fn start_task(&self, task_id: Uuid) -> Result<(), SchedulerError> {
-        self.start_task_with_creation(task_id, None).await
-    }
-
-    pub async fn start_task_with_creation(
+    pub async fn start_task_async(
         &self,
         task_id: Uuid,
         task: Option<Task>,
     ) -> Result<(), SchedulerError> {
-        let (tx, rx) = oneshot::channel();
+        let (tx, _rx) = oneshot::channel();
         let cmd = SchedulerCommand::StartTask {
             task_id,
             task,
@@ -247,33 +242,6 @@ impl SchedulerActor {
             .await
             .map_err(|_| SchedulerError::ChannelClosed)?;
 
-        match rx.await.map_err(|_| SchedulerError::ResponseLost)? {
-            Ok(_) => Ok(()),
-            Err(_) => Err(SchedulerError::ResponseLost),
-        }
-    }
-
-    pub async fn start_task_async(&self, task_id: Uuid) -> Result<(), SchedulerError> {
-        info!(
-            "SchedulerActor::start_task_async called for task {} in domain {}",
-            task_id, self.domain
-        );
-        let (tx, _rx) = oneshot::channel();
-        let cmd = SchedulerCommand::StartTask {
-            task_id,
-            task: None,
-            respond_to: tx,
-        };
-
-        self.sender
-            .send(cmd)
-            .await
-            .map_err(|_| SchedulerError::ChannelClosed)?;
-
-        info!(
-            "SchedulerActor::start_task_async sent command for task {} in domain {}",
-            task_id, self.domain
-        );
         Ok(())
     }
 
@@ -282,6 +250,10 @@ impl SchedulerActor {
         task_id: Uuid,
         result: TaskResult,
     ) -> Result<(), SchedulerError> {
+        debug!(
+            "handle_task_result called for task {} in domain {}",
+            task_id, self.domain
+        );
         let (tx, rx) = oneshot::channel();
         let cmd = SchedulerCommand::HandleTaskResult {
             task_id,
@@ -351,14 +323,6 @@ impl SchedulerActor {
 }
 
 // TaskSet uses exclusive ownership (not Arc) to avoid locking overhead per domain
-struct TaskStartData {
-    task_name: String,
-    task_args: Vec<String>,
-    task_kwargs: serde_json::Value,
-    flow_instance_id: Option<Uuid>,
-    attempt_number: i32,
-    shepherd_id: Uuid,
-}
 
 struct TaskResultData {
     flow_instance_id: Option<Uuid>,
@@ -369,7 +333,7 @@ struct TaskResultData {
 struct SchedulerState {
     domain: String,
     task_set: TaskSet,
-    shepherd_manager: Arc<ShepherdManager>,
+    shepherd_manager: crate::orchestrator::shepherd_manager::ShepherdManager,
     event_stream: Arc<EventStream>,
     config: SchedulerConfig,
     retry_schedule_changed: bool,
@@ -386,12 +350,10 @@ impl SchedulerState {
         }
     }
 
-    /// Fast synchronous phase: Make scheduling decisions and update TaskSet
-    fn decide_start_task(&mut self, task_id: Uuid) -> Option<TaskStartData> {
-        info!(
-            "Deciding start for task {} in domain {}",
-            task_id, self.domain
-        );
+    /// Schedule a task for execution: make scheduling decisions, update TaskSet, and enqueue to virtual queue
+    /// The attempt started event will be written by ShepherdManager when dispatch actually happens
+    async fn schedule_task_once(&mut self, task_id: Uuid) -> Result<()> {
+        info!("Scheduling task {} in domain {}", task_id, self.domain);
 
         let task = match self.task_set.get_task_mut(task_id) {
             Some(task) => {
@@ -403,7 +365,7 @@ impl SchedulerState {
             }
             None => {
                 warn!("Task {} not found in domain {}", task_id, self.domain);
-                return None;
+                return Ok(()); // Not an error, task might have been processed elsewhere
             }
         };
 
@@ -414,25 +376,10 @@ impl SchedulerState {
                 "Task {} in domain {} is not in schedulable state (status: {})",
                 task_id, self.domain, task.status
             );
-            return None;
+            return Ok(()); // Not an error, task is in different state
         }
 
-        let shepherd_id = match self.shepherd_manager.find_best_shepherd() {
-            Some(id) => {
-                info!(
-                    "Found shepherd {} for task {} in domain {}",
-                    id, task_id, self.domain
-                );
-                id
-            }
-            None => {
-                info!(
-                    "No shepherds available for task {} in domain {}",
-                    task_id, self.domain
-                );
-                return None;
-            }
-        };
+        // Shepherd selection is now handled by the ShepherdManager's virtual queue system
 
         let attempt_number = task.attempts.len() as i32;
 
@@ -451,77 +398,49 @@ impl SchedulerState {
         task.attempts.push(new_attempt);
 
         info!(
-            "Scheduled task {} attempt {} to shepherd {} in domain {}",
-            task_id, attempt_number, shepherd_id, self.domain
+            "Prepared task {} attempt {} for dispatch in domain {}",
+            task_id, attempt_number, self.domain
         );
 
-        Some(TaskStartData {
-            task_name: task.name.clone(),
-            task_args: task.args.clone(),
-            task_kwargs: task.kwargs.clone(),
-            flow_instance_id: task.flow_instance_id,
-            attempt_number,
-            shepherd_id,
-        })
-    }
-
-    /// Slow asynchronous phase: Execute I/O operations (EventStream writes and task dispatch)
-    async fn execute_start_task(
-        task_id: Uuid,
-        task_start_data: TaskStartData,
-        domain: String,
-        shepherd_manager: Arc<ShepherdManager>,
-        event_stream: Arc<EventStream>,
-    ) -> Result<()> {
-        debug!("Executing I/O for task {task_id} in domain {domain}");
-
-        SchedulerState::write_attempt_started_event(
-            task_id,
-            task_start_data.flow_instance_id,
-            task_start_data.attempt_number,
-            task_start_data.shepherd_id,
-            &domain,
-            &event_stream,
-        )
-        .await?;
-
-        // TODO: handle server crash before task is actually dispatched. Options:
-        // (1) Peridically checking status of dispatched tasks;
-        // (2) wait until task timeout, then fail it from server side.
-        info!(
-            "Dispatching task {task_id} to shepherd {}",
-            task_start_data.shepherd_id
-        );
-
+        // Create task dispatch data
         let task_dispatch = crate::orchestrator::shepherd_manager::TaskDispatch {
             task_id,
-            task_name: task_start_data.task_name,
-            args: task_start_data.task_args,
-            kwargs: task_start_data.task_kwargs.to_string(),
+            task_name: task.name.clone(),
+            args: task.args.clone(),
+            kwargs: task.kwargs.to_string(),
             memory_limit: None,
             cpu_limit: None,
+            flow_instance_id: task.flow_instance_id,
+            attempt_number,
         };
 
-        match shepherd_manager
-            .dispatch_task_to_shepherd(task_start_data.shepherd_id, task_dispatch)
+        debug!(
+            "Enqueuing task {task_id} to domain {} virtual queue",
+            self.domain
+        );
+
+        // Enqueue task to virtual queue instead of direct dispatch
+        match self
+            .shepherd_manager
+            .enqueue_task(self.domain.clone(), task_dispatch)
             .await
         {
-            Ok(_) => Ok(()),
+            Ok(_) => {
+                info!(
+                    "Successfully scheduled task {task_id} in domain '{}' virtual queue",
+                    self.domain
+                );
+                Ok(())
+            }
             Err(e) => {
                 warn!(
-                    "Failed to dispatch task {task_id} to shepherd {}: {e}",
-                    task_start_data.shepherd_id
+                    "Failed to enqueue task {task_id} to domain '{}' virtual queue: {e}",
+                    self.domain
                 );
-
-                SchedulerState::write_attempt_failure_event(
-                    task_id,
-                    task_start_data.flow_instance_id,
-                    task_start_data.attempt_number,
-                    &domain,
-                    &event_stream,
-                )
-                .await?;
-                Ok(())
+                Err(anyhow::anyhow!(
+                    "Failed to enqueue task {task_id} to domain '{}' virtual queue: {e}",
+                    self.domain
+                ))
             }
         }
     }
@@ -533,9 +452,11 @@ impl SchedulerState {
         result: TaskResult,
     ) -> Option<TaskResultData> {
         debug!(
-            "Deciding handle task result for {} in domain {}",
+            "decide_handle_task_result for task {} in domain {}",
             task_id, self.domain
         );
+
+        // Note: in-flight counter will be decremented in execute_handle_task_result
 
         let task = match self.task_set.get_task_mut(task_id) {
             Some(task) => task,
@@ -615,14 +536,23 @@ impl SchedulerState {
             // Check max_attempts
             if let Some(max_attempts) = retry_policy.stop.max_attempts {
                 // attempt_number is 0-based, so +1 to get total attempts made
-                if (attempt_number + 1) >= max_attempts as i32 {
-                    info!("Max attempts ({max_attempts}) reached for task {task_id}");
+                let total_attempts = attempt_number + 1;
+                info!(
+                    "🔢 SCHEDULER: Task {task_id} attempt check - total_attempts: {total_attempts}, max_attempts: {max_attempts}"
+                );
+
+                if total_attempts >= max_attempts as i32 {
+                    info!("🚫 SCHEDULER: Max attempts ({max_attempts}) reached for task {task_id} - setting status to FAILED");
                     task.status = TASK_STATUS_FAILED;
                     return Some(TaskResultData {
                         flow_instance_id,
                         attempt_number,
                         is_final_failure: true,
                     });
+                } else {
+                    info!(
+                        "⏭️ SCHEDULER: Task {task_id} still has attempts left ({total_attempts}/{max_attempts}) - scheduling retry"
+                    );
                 }
             }
 
@@ -669,8 +599,20 @@ impl SchedulerState {
         task_result_data: TaskResultData,
         domain: String,
         event_stream: Arc<EventStream>,
+        shepherd_manager: crate::orchestrator::shepherd_manager::ShepherdManager,
     ) -> Result<()> {
         debug!("Executing I/O for task result {task_id} in domain {domain}");
+
+        // CRITICAL: Decrement VirtualQueue in-flight counter when task completes
+        // This was the missing piece causing TaskB to get stuck in ATTEMPT_STARTED
+        if let Err(e) = shepherd_manager
+            .decrement_in_flight_task(domain.clone())
+            .await
+        {
+            error!("Failed to decrement in-flight task count for domain {domain}: {e}");
+        } else {
+            debug!("Successfully decremented in-flight task count for domain {domain}");
+        }
 
         // Write attempt ended event
         let event_metadata = serde_json::json!({
@@ -748,6 +690,7 @@ impl SchedulerState {
                         task_result_data,
                         self.domain.clone(),
                         self.event_stream.clone(),
+                        self.shepherd_manager.clone(),
                     )
                     .await?;
                 }
@@ -778,69 +721,6 @@ impl SchedulerState {
         Ok(true)
     }
 
-    /// Write attempt started event (static version for spawned contexts)
-    async fn write_attempt_started_event(
-        task_id: Uuid,
-        flow_instance_id: Option<Uuid>,
-        attempt_number: i32,
-        shepherd_id: Uuid,
-        domain: &str,
-        event_stream: &EventStream,
-    ) -> Result<()> {
-        let event_metadata = serde_json::json!({
-            "task_id": task_id,
-            "attempt_number": attempt_number,
-            "shepherd_id": shepherd_id,
-            "scheduled_at": Utc::now()
-        });
-
-        let event_record = EventRecord {
-            domain: domain.to_string(),
-            task_instance_id: Some(task_id),
-            flow_instance_id,
-            event_type: EVENT_TASK_ATTEMPT_STARTED,
-            created_at: Utc::now(),
-            metadata: event_metadata,
-        };
-
-        event_stream.write_event(event_record).await?;
-
-        info!(
-            "Successfully started task {task_id} attempt {attempt_number} on shepherd {shepherd_id}"
-        );
-        Ok(())
-    }
-
-    /// Write attempt failure event (static version for spawned contexts)
-    async fn write_attempt_failure_event(
-        task_id: Uuid,
-        flow_instance_id: Option<Uuid>,
-        attempt_number: i32,
-        domain: &str,
-        event_stream: &EventStream,
-    ) -> Result<()> {
-        let event_metadata = serde_json::json!({
-            "task_id": task_id,
-            "attempt_number": attempt_number,
-            "result": "error",
-            "error_details": "Task dispatch failed",
-            "ended_at": Utc::now(),
-            "attempt_status": crate::ATTEMPT_STATUS_FAILED
-        });
-
-        let event_record = EventRecord {
-            domain: domain.to_string(),
-            task_instance_id: Some(task_id),
-            flow_instance_id,
-            event_type: EVENT_TASK_ATTEMPT_ENDED,
-            created_at: Utc::now(),
-            metadata: event_metadata,
-        };
-
-        event_stream.write_event(event_record).await?;
-        Ok(())
-    }
-
     async fn process_due_retries(&mut self) {
         let now = std::time::Instant::now();
         let due_task_ids = self.task_set.pop_due_retries(now);
@@ -853,27 +733,9 @@ impl SchedulerState {
                         task_id, self.domain
                     );
 
-                    // Use the existing decide_start_task logic for retry
-                    if let Some(task_start_data) = self.decide_start_task(task_id) {
-                        let domain = self.domain.clone();
-                        let shepherd_manager = self.shepherd_manager.clone();
-                        let event_stream = self.event_stream.clone();
-
-                        // Execute the retry in the background
-                        tokio::spawn(async move {
-                            let result = SchedulerState::execute_start_task(
-                                task_id,
-                                task_start_data,
-                                domain,
-                                shepherd_manager,
-                                event_stream,
-                            )
-                            .await;
-
-                            if let Err(e) = result {
-                                log::error!("Failed to execute retry for task {task_id}: {e}");
-                            }
-                        });
+                    // Use the consolidated schedule_task_once logic for retry
+                    if let Err(e) = self.schedule_task_once(task_id).await {
+                        error!("Failed to schedule retry task {task_id}: {e}");
                     }
                 }
             }
@@ -1018,7 +880,10 @@ mod tests {
             create_dummy_pool(),
             EventStreamConfig::default(),
         ));
+        use crate::orchestrator::db::DomainsConfig;
+        let domains_config = Arc::new(DomainsConfig::default());
         let shepherd_manager = Arc::new(ShepherdManager::new(
+            domains_config,
             task_registry.clone(),
             event_stream.clone(),
         ));
@@ -1033,7 +898,9 @@ mod tests {
     fn create_dummy_pool() -> crate::orchestrator::db::PgPool {
         // For unit tests, we'll create a minimal pool that won't be used
         // In real integration tests, use the db_test! macro
-        use crate::orchestrator::db::{create_pool, Database, Server, Settings};
+        use crate::orchestrator::db::{
+            create_pool, Database, DomainsConfig, Server, Settings, ShutdownConfig,
+        };
 
         let settings = Settings {
             database: Database {
@@ -1042,6 +909,8 @@ mod tests {
             },
             server: Server { port: 0 },
             event_stream: crate::orchestrator::db::EventStream::default(),
+            domains: DomainsConfig::default(),
+            shutdown: ShutdownConfig::default(),
         };
 
         // This will fail but we catch it for unit tests
@@ -1178,18 +1047,29 @@ mod tests {
             }),
         );
         let task_id = task.id;
+        let scheduler = scheduler_registry.get_or_create_scheduler("test_domain");
 
+        // Test 1: start_task_async with task creation (Some(task))
+        let start_time = std::time::Instant::now();
+        let result = scheduler
+            .start_task_async(task_id, Some(task.clone()))
+            .await;
+        let elapsed = start_time.elapsed();
+
+        assert!(
+            elapsed.as_millis() < 1,
+            "start_task_async should return immediately"
+        );
+        assert!(result.is_ok(), "start_task_async should succeed");
+
+        // Verify the task was created in the task set
         let domain_actor = task_registry.get_or_create_domain("test_domain");
-        domain_actor.upsert_task(task).await.unwrap();
-
-        // Verify the task is in the correct state before scheduler creation
         let stored_task = domain_actor.get_task(task_id).await.unwrap().unwrap();
         assert_eq!(stored_task.status, TASK_STATUS_CREATED);
 
-        let scheduler = scheduler_registry.get_or_create_scheduler("test_domain");
-
+        // Test 2: start_task_async without task creation (None) for existing task
         let start_time = std::time::Instant::now();
-        let result = scheduler.start_task_async(task_id).await;
+        let result = scheduler.start_task_async(task_id, None).await;
         let elapsed = start_time.elapsed();
 
         assert!(
@@ -1258,12 +1138,17 @@ mod tests {
     db_test!(
         test_scheduler_handle_task_failure_with_retries,
         (|pool: crate::orchestrator::db::PgPool| async move {
+            use crate::orchestrator::db::DomainsConfig;
             use crate::orchestrator::engine::Engine;
             use crate::orchestrator::event_stream::EventStreamConfig;
             use crate::proto::common::ErrorResult;
 
             // Create Engine with database
-            let engine = Engine::new(pool.clone(), EventStreamConfig::default());
+            let engine = Engine::new(
+                pool.clone(),
+                EventStreamConfig::default(),
+                DomainsConfig::default(),
+            );
             engine.initialize().await.unwrap();
 
             // Create and add a task in ATTEMPT_STARTED state with multiple attempts allowed
@@ -1321,12 +1206,17 @@ mod tests {
     db_test!(
         test_scheduler_handle_task_failure_no_retries,
         (|pool: crate::orchestrator::db::PgPool| async move {
+            use crate::orchestrator::db::DomainsConfig;
             use crate::orchestrator::engine::Engine;
             use crate::orchestrator::event_stream::EventStreamConfig;
             use crate::proto::common::ErrorResult;
 
             // Create Engine with database
-            let engine = Engine::new(pool.clone(), EventStreamConfig::default());
+            let engine = Engine::new(
+                pool.clone(),
+                EventStreamConfig::default(),
+                DomainsConfig::default(),
+            );
             engine.initialize().await.unwrap();
 
             // Create and add a task in ATTEMPT_STARTED state with max attempts reached
@@ -1572,14 +1462,19 @@ mod tests {
         db_test!(
             test_multi_domain_scheduler_isolation,
             (|pool: crate::orchestrator::db::PgPool| async move {
+                use crate::orchestrator::db::DomainsConfig;
                 use crate::orchestrator::engine::Engine;
                 use crate::orchestrator::event_stream::EventStreamConfig;
                 use crate::orchestrator::taskset::Task;
                 use crate::EVENT_TASK_CREATED;
                 use std::collections::HashMap;
-                use tokio::time::{sleep, Duration};
+                use tokio::time::Duration;
 
-                let engine = Engine::new(pool.clone(), EventStreamConfig::default());
+                let engine = Engine::new(
+                    pool.clone(),
+                    EventStreamConfig::default(),
+                    DomainsConfig::default(),
+                );
                 engine.initialize().await.unwrap();
 
                 // Register multiple shepherds for realistic testing
@@ -1593,7 +1488,7 @@ mod tests {
                     tokio::spawn(async move { while let Some(_cmd) = rx.recv().await {} });
                     engine
                         .shepherd_manager
-                        .register_shepherd_with_tx(shepherd_id, 5, tx)
+                        .register_shepherd(shepherd_id, 5, tx)
                         .await
                         .unwrap();
                 }
@@ -1648,12 +1543,19 @@ mod tests {
                 for (domain, task_ids) in &all_task_ids {
                     let scheduler = engine.scheduler_registry.get_or_create_scheduler(domain);
                     for &task_id in task_ids {
-                        scheduler.start_task(task_id).await.unwrap();
+                        scheduler.start_task_async(task_id, None).await.unwrap();
                     }
                 }
 
+                // Give scheduler actors time to process StartTask commands
+                tokio::time::sleep(Duration::from_millis(100)).await;
+
                 // Wait for all scheduling to complete
-                sleep(Duration::from_millis(200)).await;
+                // Manually trigger dispatch multiple times instead of relying on timer to avoid CI timing issues
+                for _ in 0..5 {
+                    engine.shepherd_manager.dispatch_tick().await.unwrap();
+                    tokio::time::sleep(Duration::from_millis(30)).await;
+                }
 
                 // Verify domain isolation in scheduler registry
                 assert_eq!(engine.scheduler_registry.len(), 3);
@@ -1719,12 +1621,17 @@ mod tests {
         db_test!(
             test_retry_logic_integration,
             (|pool: crate::orchestrator::db::PgPool| async move {
+                use crate::orchestrator::db::DomainsConfig;
                 use crate::orchestrator::engine::Engine;
                 use crate::orchestrator::event_stream::EventStreamConfig;
                 use crate::orchestrator::taskset::Task;
 
                 // Create Engine with database
-                let engine = Engine::new(pool.clone(), EventStreamConfig::default());
+                let engine = Engine::new(
+                    pool.clone(),
+                    EventStreamConfig::default(),
+                    DomainsConfig::default(),
+                );
                 engine.initialize().await.unwrap();
 
                 // Register a shepherd for testing
@@ -1732,7 +1639,7 @@ mod tests {
                 let (tx, _rx) = create_test_shepherd_tx();
                 engine
                     .shepherd_manager
-                    .register_shepherd_with_tx(shepherd_id, 10, tx)
+                    .register_shepherd(shepherd_id, 10, tx)
                     .await
                     .unwrap();
 
@@ -1787,7 +1694,7 @@ mod tests {
 
                 // Test final failure - simulate the retry process by starting the task again
                 // This will trigger the retry logic in the scheduler
-                scheduler.start_task(task_id).await.unwrap();
+                scheduler.start_task_async(task_id, None).await.unwrap();
 
                 let final_error = TaskResult {
                     task_id: task_id.to_string(),
@@ -1816,7 +1723,7 @@ mod tests {
                 );
 
                 // Simulate third and final attempt
-                scheduler.start_task(task_id).await.unwrap();
+                scheduler.start_task_async(task_id, None).await.unwrap();
 
                 scheduler
                     .handle_task_result(task_id, final_error)
@@ -1833,15 +1740,20 @@ mod tests {
     db_test!(
         test_scheduler_end_to_end_with_db,
         (|pool: crate::orchestrator::db::PgPool| async move {
+            use crate::orchestrator::db::DomainsConfig;
             use crate::orchestrator::engine::Engine;
             use crate::orchestrator::event_stream::EventStreamConfig;
             use crate::orchestrator::taskset::Task;
             use crate::proto::common::{SuccessResult, TaskResult};
             use crate::EVENT_TASK_CREATED;
-            use tokio::time::{sleep, Duration};
+            use tokio::time::Duration;
 
             // Create Engine with database
-            let engine = Engine::new(pool.clone(), EventStreamConfig::default());
+            let engine = Engine::new(
+                pool.clone(),
+                EventStreamConfig::default(),
+                DomainsConfig::default(),
+            );
             engine.initialize().await.unwrap();
 
             // Register a test shepherd with tx channel
@@ -1849,7 +1761,7 @@ mod tests {
             let (tx, _rx) = create_test_shepherd_tx();
             engine
                 .shepherd_manager
-                .register_shepherd_with_tx(shepherd_id, 10, tx)
+                .register_shepherd(shepherd_id, 10, tx)
                 .await
                 .unwrap();
 
@@ -1905,22 +1817,49 @@ mod tests {
 
             // Start task through scheduler
             let scheduler = engine.scheduler_registry.get_or_create_scheduler(domain);
-            scheduler.start_task(task_id).await.unwrap();
+            scheduler.start_task_async(task_id, None).await.unwrap();
 
-            // Wait for scheduling to complete
-            sleep(Duration::from_millis(100)).await;
+            // Give the scheduler actor a moment to process the StartTask command
+            tokio::time::sleep(Duration::from_millis(50)).await;
 
-            // Verify task was scheduled and status updated
-            let updated_task = scheduler.get_task_for_test(task_id).await.unwrap().unwrap();
-            assert_eq!(updated_task.status, TASK_STATUS_ATTEMPT_STARTED);
+            // Wait for the virtual queue dispatcher to pick up and dispatch the task
+            // Manually trigger dispatch instead of relying on timer to avoid CI timing issues
+            let mut attempts = 0;
+            let max_attempts = 30; // Try more times with shorter waits
 
-            // Verify TASK_ATTEMPT_STARTED event was written to database
-            let started_events = client.query(
-            "SELECT event_id, event_type FROM events WHERE task_instance_id = $1 AND event_type = $2",
-            &[&task_id, &EVENT_TASK_ATTEMPT_STARTED]
-        ).await.unwrap();
+            loop {
+                // Manually trigger dispatch multiple times to ensure it processes
+                for _ in 0..3 {
+                    engine.shepherd_manager.dispatch_tick().await.unwrap();
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
 
-            assert_eq!(started_events.len(), 1);
+                // Check if the task has been dispatched by looking for the attempt started event
+                let started_events = client.query(
+                    "SELECT event_id, event_type FROM events WHERE task_instance_id = $1 AND event_type = $2",
+                    &[&task_id, &EVENT_TASK_ATTEMPT_STARTED]
+                ).await.unwrap();
+
+                if !started_events.is_empty() {
+                    // Task has been dispatched, verify status
+                    let updated_task = scheduler.get_task_for_test(task_id).await.unwrap().unwrap();
+                    assert_eq!(updated_task.status, TASK_STATUS_ATTEMPT_STARTED);
+                    assert_eq!(started_events.len(), 1);
+                    break;
+                }
+
+                attempts += 1;
+                if attempts >= max_attempts {
+                    // Debug information
+                    eprintln!("DEBUG: Task was not dispatched after {attempts} attempts");
+                    let task_status = scheduler.get_task_for_test(task_id).await.unwrap();
+                    eprintln!("DEBUG: Task status: {:?}", task_status.map(|t| t.status));
+
+                    panic!("Task was not dispatched within expected time. Virtual queue dispatcher may not be running.");
+                }
+
+                tokio::time::sleep(Duration::from_millis(80)).await;
+            }
 
             // Simulate successful task completion
             let task_result = TaskResult {
@@ -1973,14 +1912,19 @@ mod tests {
     db_test!(
         test_scheduler_multi_domain_with_db,
         (|pool: crate::orchestrator::db::PgPool| async move {
+            use crate::orchestrator::db::DomainsConfig;
             use crate::orchestrator::engine::Engine;
             use crate::orchestrator::event_stream::EventStreamConfig;
             use crate::orchestrator::taskset::Task;
             use crate::EVENT_TASK_CREATED;
             use std::collections::HashMap;
-            use tokio::time::{sleep, Duration};
+            use tokio::time::Duration;
 
-            let engine = Engine::new(pool.clone(), EventStreamConfig::default());
+            let engine = Engine::new(
+                pool.clone(),
+                EventStreamConfig::default(),
+                DomainsConfig::default(),
+            );
             engine.initialize().await.unwrap();
 
             // Register multiple shepherds
@@ -1994,7 +1938,7 @@ mod tests {
                 tokio::spawn(async move { while let Some(_cmd) = rx.recv().await {} });
                 engine
                     .shepherd_manager
-                    .register_shepherd_with_tx(shepherd_id, 5, tx)
+                    .register_shepherd(shepherd_id, 5, tx)
                     .await
                     .unwrap();
             }
@@ -2044,12 +1988,19 @@ mod tests {
             for (domain, task_ids) in &all_task_ids {
                 let scheduler = engine.scheduler_registry.get_or_create_scheduler(domain);
                 for &task_id in task_ids {
-                    scheduler.start_task(task_id).await.unwrap();
+                    scheduler.start_task_async(task_id, None).await.unwrap();
                 }
             }
 
+            // Give scheduler actors time to process StartTask commands
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
             // Wait for all scheduling to complete
-            sleep(Duration::from_millis(200)).await;
+            // Manually trigger dispatch multiple times instead of relying on timer to avoid CI timing issues
+            for _ in 0..8 {
+                engine.shepherd_manager.dispatch_tick().await.unwrap();
+                tokio::time::sleep(Duration::from_millis(30)).await;
+            }
 
             // Verify domain isolation in scheduler registry
             assert_eq!(engine.scheduler_registry.len(), 3);
@@ -2111,13 +2062,18 @@ mod tests {
     db_test!(
         test_scheduler_retry_policy_with_db,
         (|pool: crate::orchestrator::db::PgPool| async move {
+            use crate::orchestrator::db::DomainsConfig;
             use crate::orchestrator::engine::Engine;
             use crate::orchestrator::event_stream::EventStreamConfig;
             use crate::orchestrator::taskset::{Task, TaskAttempt};
             use crate::proto::common::{ErrorResult, TaskResult};
             use crate::EVENT_TASK_CREATED;
 
-            let engine = Engine::new(pool.clone(), EventStreamConfig::default());
+            let engine = Engine::new(
+                pool.clone(),
+                EventStreamConfig::default(),
+                DomainsConfig::default(),
+            );
             engine.initialize().await.unwrap();
 
             // Register shepherd
@@ -2125,7 +2081,7 @@ mod tests {
             let (tx, _rx) = create_test_shepherd_tx();
             engine
                 .shepherd_manager
-                .register_shepherd_with_tx(shepherd_id, 10, tx)
+                .register_shepherd(shepherd_id, 10, tx)
                 .await
                 .unwrap();
 
@@ -2205,7 +2161,7 @@ mod tests {
             );
 
             // Start the second attempt
-            scheduler.start_task(task_id).await.unwrap();
+            scheduler.start_task_async(task_id, None).await.unwrap();
 
             // Simulate second failure
             let error_result2 = TaskResult {
@@ -2235,7 +2191,7 @@ mod tests {
             );
 
             // Start the third attempt
-            scheduler.start_task(task_id).await.unwrap();
+            scheduler.start_task_async(task_id, None).await.unwrap();
 
             // Simulate third failure (should exhaust retries)
             let error_result3 = TaskResult {
@@ -2322,13 +2278,18 @@ mod tests {
     db_test!(
         test_scheduler_shepherd_failure_with_db,
         (|pool: crate::orchestrator::db::PgPool| async move {
+            use crate::orchestrator::db::DomainsConfig;
             use crate::orchestrator::engine::Engine;
             use crate::orchestrator::event_stream::EventStreamConfig;
             use crate::orchestrator::taskset::Task;
             use crate::EVENT_TASK_CREATED;
-            use tokio::time::{sleep, Duration};
+            use tokio::time::Duration;
 
-            let engine = Engine::new(pool.clone(), EventStreamConfig::default());
+            let engine = Engine::new(
+                pool.clone(),
+                EventStreamConfig::default(),
+                DomainsConfig::default(),
+            );
             engine.initialize().await.unwrap();
 
             // Register a shepherd
@@ -2336,7 +2297,7 @@ mod tests {
             let (tx, _rx) = create_test_shepherd_tx();
             engine
                 .shepherd_manager
-                .register_shepherd_with_tx(shepherd_id, 10, tx)
+                .register_shepherd(shepherd_id, 10, tx)
                 .await
                 .unwrap();
 
@@ -2381,35 +2342,67 @@ mod tests {
                 .scheduler_registry
                 .get_or_create_scheduler("test_domain");
             for &task_id in &task_ids {
-                scheduler.start_task(task_id).await.unwrap();
+                scheduler.start_task_async(task_id, None).await.unwrap();
             }
 
-            // Wait for scheduling
-            sleep(Duration::from_millis(100)).await;
+            // Give scheduler actors time to process StartTask commands
+            tokio::time::sleep(Duration::from_millis(100)).await;
 
-            // Verify tasks are started
-            for &task_id in &task_ids {
-                let task = scheduler.get_task_for_test(task_id).await.unwrap().unwrap();
-                assert_eq!(task.status, TASK_STATUS_ATTEMPT_STARTED);
-            }
-
-            // Verify TASK_ATTEMPT_STARTED events in database
+            // Wait for the virtual queue dispatcher to pick up and dispatch all tasks
             let client = pool.get().await.unwrap();
-            let started_events_count = client
-                .query_one(
-                    "SELECT COUNT(*) as count FROM events WHERE event_type = $1 AND domain = $2",
-                    &[&EVENT_TASK_ATTEMPT_STARTED, &"test_domain"],
-                )
-                .await
-                .unwrap();
+            let mut attempts = 0;
+            let max_attempts = 25; // More attempts with shorter waits
 
-            let started_count: i64 = started_events_count.get("count");
-            assert_eq!(started_count, 3);
+            loop {
+                // Manually trigger dispatch multiple times to ensure it processes
+                for _ in 0..3 {
+                    engine.shepherd_manager.dispatch_tick().await.unwrap();
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                tokio::time::sleep(Duration::from_millis(80)).await;
+
+                // Check how many tasks have been dispatched
+                let started_events_count = client
+                    .query_one(
+                        "SELECT COUNT(*) as count FROM events WHERE event_type = $1 AND domain = $2",
+                        &[&EVENT_TASK_ATTEMPT_STARTED, &"test_domain"],
+                    )
+                    .await
+                    .unwrap();
+
+                let started_count: i64 = started_events_count.get("count");
+
+                if started_count >= 3 {
+                    // All tasks have been dispatched, verify their status
+                    for &task_id in &task_ids {
+                        let task = scheduler.get_task_for_test(task_id).await.unwrap().unwrap();
+                        assert_eq!(task.status, TASK_STATUS_ATTEMPT_STARTED);
+                    }
+                    assert_eq!(started_count, 3);
+                    break;
+                }
+
+                attempts += 1;
+                if attempts >= max_attempts {
+                    eprintln!("DEBUG: Only {started_count} out of 3 tasks were dispatched after {attempts} attempts");
+                    for &task_id in &task_ids {
+                        let task_status = scheduler.get_task_for_test(task_id).await.unwrap();
+                        eprintln!(
+                            "DEBUG: Task {} status: {:?}",
+                            task_id,
+                            task_status.map(|t| t.status)
+                        );
+                    }
+                    panic!("Only {started_count} out of 3 tasks were dispatched within expected time. Virtual queue dispatcher may not be running properly.");
+                }
+            }
 
             // Simulate shepherd death
             engine
                 .shepherd_manager
-                .mark_shepherd_disconnected(shepherd_id);
+                .mark_shepherd_disconnected(shepherd_id)
+                .await
+                .unwrap();
 
             // Handle shepherd death through scheduler
             scheduler

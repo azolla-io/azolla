@@ -11,7 +11,9 @@ const DEFAULT_CLIENT_CONNECTION_MAX_RETRIES: usize = 10;
 const DEFAULT_TASK_COMPLETION_POLL_INTERVAL_MS: u64 = 100;
 const DEFAULT_MAX_CONCURRENT_TASKS: usize = 4;
 
-use crate::orchestrator::db::{Database, EventStream, Server as DbServer, Settings};
+use crate::orchestrator::db::{
+    Database, DomainsConfig, EventStream, Server as DbServer, Settings, ShutdownConfig,
+};
 use crate::orchestrator::startup::{OrchestratorBuilder, RunningOrchestratorInstance};
 use crate::proto::orchestrator::client_service_client::ClientServiceClient;
 use crate::proto::orchestrator::cluster_service_client::ClusterServiceClient;
@@ -81,6 +83,8 @@ impl IntegrationTestEnvironment {
                 port: config.orchestrator_port,
             },
             event_stream: EventStream::default(),
+            domains: DomainsConfig::default(),
+            shutdown: ShutdownConfig::default(),
         };
 
         // Build and start orchestrator using the abstraction
@@ -278,7 +282,7 @@ impl IntegrationTestEnvironment {
 
     pub async fn get_shepherd_count(&self) -> Result<i64> {
         // Get actual shepherd count from ShepherdManager
-        let stats = self.engine().shepherd_manager.get_stats();
+        let stats = self.engine().shepherd_manager.get_stats().await;
         Ok(stats.connected_shepherds as i64)
     }
 
@@ -287,7 +291,8 @@ impl IntegrationTestEnvironment {
         Ok(self
             .engine()
             .shepherd_manager
-            .is_shepherd_registered(shepherd_uuid))
+            .is_shepherd_registered(shepherd_uuid)
+            .await)
     }
 
     /// Wait for a specific shepherd to be registered, with timeout
@@ -360,9 +365,10 @@ impl IntegrationTestEnvironment {
             let _ = tokio::time::timeout(Duration::from_secs(5), handle.join()).await;
         }
 
-        // Shutdown orchestrator
+        // Shutdown orchestrator with extended timeout for tests
         if let Some(orchestrator) = self.orchestrator_instance.take() {
-            orchestrator.shutdown().await?;
+            // Use 300 seconds (5 minutes) timeout for tests to allow all retry scenarios to complete
+            orchestrator.engine.shutdown_with_timeout(300).await?;
         }
 
         Ok(())

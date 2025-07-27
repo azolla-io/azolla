@@ -74,6 +74,8 @@ macro_rules! db_test {
                 },
                 server: Server { port: 0 }, // dummy
                 event_stream: $crate::orchestrator::db::EventStream::default(),
+                domains: $crate::orchestrator::db::DomainsConfig::default(),
+                shutdown: $crate::orchestrator::db::ShutdownConfig::default(),
             };
             let pool = create_pool(&settings).unwrap();
 

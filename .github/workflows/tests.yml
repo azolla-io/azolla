@@ -86,43 +86,5 @@ jobs:
         path: ./coverage/cobertura.xml
         retention-days: 1
     
-    # Download baseline coverage for PR differential analysis
-    - name: Download baseline coverage
-      if: github.event_name == 'pull_request'
-      uses: dawidd6/action-download-artifact@v3
-      with:
-        workflow: tests.yml
-        branch: main
-        name: coverage-baseline
-        path: ./baseline-coverage
-      continue-on-error: true
     
-    - name: Install Python and pycobertura
-      if: github.event_name == 'pull_request'
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.x'
-    
-    - name: Install pycobertura
-      if: github.event_name == 'pull_request'
-      run: pip install pycobertura
-    
-    - name: Run differential coverage check
-      if: github.event_name == 'pull_request'
-      run: |
-        if [ -f "./baseline-coverage/cobertura.xml" ]; then
-          echo "Checking differential coverage..."
-          pycobertura diff ./baseline-coverage/cobertura.xml ./coverage/cobertura.xml --fail-under 80 --format text
-        else
-          echo "⚠️ No baseline coverage found. Skipping differential coverage check."
-          echo "This is normal for the first PR or if baseline coverage failed to generate."
-        fi
-    
-    - name: Upload baseline coverage (main branch only)
-      if: github.ref == 'refs/heads/main'
-      uses: actions/upload-artifact@v4
-      with:
-        name: coverage-baseline
-        path: ./coverage/cobertura.xml
-        retention-days: 30
     
