@@ -173,41 +173,23 @@ async fn test_task_retry_handling() {
 /// 3. Creates TaskB with shorter retry delay (1 second) - retry scheduled for T=4
 /// 4. Verifies TaskB's retry executes before TaskA's retry (T=4 < T=6)
 ///
-/// **Expected Timeline and Behavior:**
+/// **Retry Policy Analysis:**
+/// - **TaskA**: 5-second delay, max_attempts=3
+/// - **TaskB**: 1-second delay, max_attempts=3
 ///
-/// **T=0**: Test starts
-///   - TaskA created with 5-second retry delay
+/// **TaskA Timeline (5s retry delay):**
+/// - T=0-1: First attempt fails, retry scheduled for T=6 (1+5s)
+/// - T=6-7: Second attempt fails, retry scheduled for T=12 (7+5s)
+/// - T=12-13: Third attempt fails, status becomes FAILED (max attempts reached)
 ///
-/// **T=1**: TaskA first attempt
-///   - TaskA executes and fails
-///   - TaskA status → ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT
-///   - TaskA retry scheduled for T=6 (1+5 seconds)
+/// **TaskB Timeline (1s retry delay):**
+/// - T=2-3: First attempt fails, retry scheduled for T=4 (3+1s)
+/// - T=4-5: Second attempt fails, retry scheduled for T=6 (5+1s)
+/// - T=6-7: Third attempt fails, status becomes FAILED (max attempts reached)
 ///
-/// **T=2**: Test waits 2 seconds, then creates TaskB
-///   - TaskA status should be ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT
-///   - TaskB created with 1-second retry delay
-///
-/// **T=3**: TaskB first attempt  
-///   - TaskB executes and fails
-///   - TaskB status → ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT
-///   - TaskB retry scheduled for T=4 (3+1 seconds)
-///
-/// **T=4**: Test waits 2 more seconds, TaskB retry executes
-///   - TaskB retry executes and fails again
-///   - TaskB status → ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT
-///   - TaskB next retry scheduled for T=5 (4+1 seconds)
-///
-/// **T=5**: TaskB second retry executes
-///   - TaskB retry executes and fails (3rd attempt)
-///   - TaskB status → FAILED (max attempts reached)
-///
-/// **T=6**: TaskA retry executes (5 seconds after first failure)
-///   - TaskA retry should execute and fail
-///   - TaskA status → ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT or FAILED
-///
-/// **T=8**: Test checks final status (after 2 second wait - optimized)
-///   - TaskA retry may still be executing or completed (timing variance expected)
-///   - TaskB likely in final failed state (faster retry cycle due to 1s delays)
+/// **Test Verification Points:**
+/// - T=8: Race condition check (TaskB=FAILED, TaskA=still has attempts left)
+/// - T=15: Final status check (both TaskA=FAILED and TaskB=FAILED)
 ///
 /// **Expected Behavior:**
 /// - Scheduler properly reschedules to handle TaskB's earlier due time
@@ -240,8 +222,8 @@ async fn test_retry_scheduling_race_condition() {
     let task_a_response = harness.client.create_task(task_a_request).await.unwrap();
     let task_a_id = task_a_response.into_inner().task_id;
 
-    // === T=1: WAIT FOR TASK A FIRST ATTEMPT ===
-    // Expected: TaskA executes at ~T=1, fails, schedules retry for T=6 (1+5 seconds)
+    // === T=0-2: WAIT FOR TASK A FIRST ATTEMPT ===
+    // Expected: TaskA executes at ~T=0-1, fails, schedules retry for T=6 (1+5 seconds)
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     // === T=2: VERIFY TASK A IS IN RETRY STATE ===
@@ -255,7 +237,7 @@ async fn test_retry_scheduling_race_condition() {
 
     // === T=2: CREATE TASK B (RACE CONDITION SETUP) ===
     // TaskB has 1-second retry delay vs TaskA's 5-second delay
-    // Expected: TaskB will fail at ~T=3, retry at ~T=4 (BEFORE TaskA retry at T=6)
+    // Expected: TaskB will fail at ~T=2-3, retry at ~T=4-5, retry at ~T=6-7 (overlapping with TaskA's retry)
     // This tests if scheduler properly handles task with earlier due time
     let task_b_request = RetryTestData::failing_task_with_short_retry_delay();
     let task_b_response = harness.client.create_task(task_b_request).await.unwrap();
@@ -275,8 +257,8 @@ async fn test_retry_scheduling_race_condition() {
         "TaskB should be created and available"
     );
 
-    // === T=3: WAIT FOR TASK B FIRST ATTEMPT ===
-    // Expected: TaskB executes at ~T=3, fails, schedules retry for T=4 (3+1 seconds)
+    // === T=2-4: WAIT FOR TASK B FIRST ATTEMPT ===
+    // Expected: TaskB executes at ~T=2-3, fails, schedules retry for T=4 (3+1 seconds)
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     // === T=4: VERIFY TASK B IS IN RETRY STATE ===
@@ -293,9 +275,9 @@ async fn test_retry_scheduling_race_condition() {
         "TaskB should be scheduled for retry after first failure"
     );
 
-    // === T=4-T=5: WAIT FOR TASK B RETRY EXECUTION ===
-    // Expected: TaskB retry executes at ~T=4 (1 second after T=3 failure)
-    // This is the KEY RACE CONDITION TEST: TaskB retry (T=4) before TaskA retry (T=6)
+    // === T=4-6: WAIT FOR TASK B RETRY EXECUTION ===
+    // Expected: TaskB retry executes at ~T=4-5 (1 second after T=3 failure)
+    // This is the KEY RACE CONDITION TEST: TaskB retry (T=4-5) overlaps with TaskA retry (T=6)
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     // === T=6: VERIFY TASK B RETRY EXECUTED (RACE CONDITION SUCCESS) ===
@@ -329,10 +311,11 @@ async fn test_retry_scheduling_race_condition() {
         "TaskB retry should execute approximately 1 second after first failure (actual delay: {retry_delay:.2}s)"
     );
 
-    // === T=6-T=8: WAIT FOR TASK A RETRY EXECUTION ===
-    // Expected: TaskA retry executes at ~T=6 (5 seconds after T=1 failure)
-    // Aggressive optimization - TaskA retry should complete within 1 second
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    // === T=6-8: WAIT FOR TASK B COMPLETION AND TASK A RETRY ===
+    // Expected: TaskA retry executes at ~T=6-7 (5 seconds after T=1 failure)
+    // TaskB should complete all 3 attempts by T=7-8 due to 1s retry delays + execution time
+    // Wait to ensure TaskB's final attempt completes and TaskA's retry starts
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
     // === T=8: VERIFY BOTH TASKS HAVE RETRY ATTEMPTS ===
     let task_a_final_attempts = harness.get_task_attempts(&task_a_id).await.unwrap();
@@ -350,59 +333,103 @@ async fn test_retry_scheduling_race_condition() {
         task_b_final_attempts.len()
     );
 
-    // === T=8: VERIFY FINAL TASK STATES ===
+    // === T=8: VERIFY FINAL TASK STATES (RACE CONDITION VERIFICATION) ===
     let final_a_status = harness.get_task_status(&task_a_id).await.unwrap();
     let final_b_status = harness.get_task_status(&task_b_id).await.unwrap();
 
-    // TaskA: Allow any valid retry state (timing variance is expected)
-    // - ATTEMPT_STARTED: Currently executing a retry attempt
-    // - ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT: Failed attempt, waiting for next retry
-    // - FAILED: All retry attempts exhausted
+    // DEBUG: Log current task states and attempt counts for investigation
+    log::info!(
+        "DEBUG T=8: TaskA status: {final_a_status:?}, attempts: {}",
+        task_a_final_attempts.len()
+    );
+    log::info!(
+        "DEBUG T=8: TaskB status: {final_b_status:?}, attempts: {}",
+        task_b_final_attempts.len()
+    );
+
+    // DEBUG: Log attempt details for TaskB to understand what's happening
+    for (i, attempt) in task_b_final_attempts.iter().enumerate() {
+        log::info!(
+            "DEBUG TaskB attempt {}: started={:?}, ended={:?}, status={:?}, error={:?}",
+            i,
+            attempt.started_at,
+            attempt.ended_at,
+            attempt.status,
+            attempt.error_message
+        );
+    }
+
+    // === CRITICAL RACE CONDITION ASSERTION ===
+    // TaskB should be FAILED by T=8 because:
+    // - TaskB: 1s retry delays → completes 3 attempts by T=7-8 (T=2-3, T=4-5, T=6-7)
+    // - TaskA: 5s retry delay → should have completed 2nd attempt by T=7, but still have 1 attempt left
+
+    // Wait for TaskB to reach FAILED status (allow for database update timing)
+    let mut task_b_status_check = final_b_status;
+    let mut wait_attempts = 0;
+    const MAX_WAIT_ATTEMPTS: u32 = 10; // Increased from 5 to 10
+    const WAIT_INTERVAL_MS: u64 = 200; // Reduced from 500ms to 200ms for faster polling
+
+    log::info!("🔍 TEST: Waiting for TaskB to reach FAILED status...");
+    while task_b_status_check != Some(azolla::TASK_STATUS_FAILED)
+        && wait_attempts < MAX_WAIT_ATTEMPTS
+    {
+        log::info!(
+            "📊 TEST: TaskB status check {}/{}: {:?} (expecting FAILED=6)",
+            wait_attempts + 1,
+            MAX_WAIT_ATTEMPTS,
+            task_b_status_check
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(WAIT_INTERVAL_MS)).await;
+        task_b_status_check = harness.get_task_status(&task_b_id).await.unwrap();
+        wait_attempts += 1;
+    }
+
+    if task_b_status_check == Some(azolla::TASK_STATUS_FAILED) {
+        log::info!("✅ TEST: TaskB reached FAILED status after {wait_attempts} attempts");
+    } else {
+        log::error!(
+            "❌ TEST: TaskB did not reach FAILED status after {wait_attempts} attempts, final status: {task_b_status_check:?}"
+        );
+    }
+
+    assert_eq!(
+        task_b_status_check,
+        Some(azolla::TASK_STATUS_FAILED),
+        "TaskB should be FAILED (max attempts reached) due to faster 1s retry cycle. \
+         This verifies the race condition works: TaskB retried faster than TaskA. (actual: {task_b_status_check:?} after {wait_attempts} wait attempts)"
+    );
+
+    // TaskA should still have attempts left (completed fewer retries due to 5s delays)
+    // Allow ATTEMPT_STARTED in case TaskA's retry is still executing at T=9
     assert!(
         matches!(
             final_a_status,
-            Some(
-                azolla::TASK_STATUS_ATTEMPT_STARTED
-                    | azolla::TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT
-                    | azolla::TASK_STATUS_FAILED
-            )
+            Some(azolla::TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT | azolla::TASK_STATUS_ATTEMPT_STARTED)
         ),
-        "TaskA should be executing, in retry state, or failed (actual: {final_a_status:?})"
+        "TaskA should have attempts left or be executing (slower 5s retry cycle) by T=8. (actual: {final_a_status:?})"
     );
 
-    // TaskB: Allow any valid retry state (timing variance is expected)
-    // - ATTEMPT_STARTED: Currently executing a retry attempt
-    // - ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT: Failed attempt, waiting for next retry
-    // - FAILED: All retry attempts exhausted (more likely due to shorter retry delays)
-    assert!(
-        matches!(
-            final_b_status,
-            Some(
-                azolla::TASK_STATUS_ATTEMPT_STARTED
-                    | azolla::TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT
-                    | azolla::TASK_STATUS_FAILED
-            )
-        ),
-        "TaskB should be executing, in retry state, or failed (actual: {final_b_status:?})"
-    );
+    // === T=8-T=15: WAIT FOR TASK A FINAL ATTEMPT ===
+    // TaskA's 3rd attempt: starts at T=12-13, needs time to complete execution
+    // Wait 7 more seconds to ensure TaskA finishes completely
+    tokio::time::sleep(std::time::Duration::from_secs(7)).await;
 
-    // === T=8-T=11: WAIT FOR TASK A FINAL ATTEMPT TO AVOID SHUTDOWN HANG ===
-    // TaskA has a retry scheduled for T=11, we need to wait for it to complete
-    // to avoid shutdown hanging on the pending timeout_future
-    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
-
-    // Verify TaskA final status (allow timing variance)
+    // === T=15: VERIFY BOTH TASKS FINAL FAILED STATUS ===
     let final_a_status = harness.get_task_status(&task_a_id).await.unwrap();
-    assert!(
-        matches!(
-            final_a_status,
-            Some(
-                azolla::TASK_STATUS_ATTEMPT_STARTED
-                    | azolla::TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT
-                    | azolla::TASK_STATUS_FAILED
-            )
-        ),
-        "TaskA should be in a valid final state (actual: {final_a_status:?})"
+    let final_b_status = harness.get_task_status(&task_b_id).await.unwrap();
+
+    // Both tasks should be FAILED after exhausting all 3 attempts
+    assert_eq!(
+        final_a_status,
+        Some(azolla::TASK_STATUS_FAILED),
+        "TaskA should be FAILED after 3 attempts (T=0-1, T=6-7, T=12-13) by T=15. (actual: {final_a_status:?})"
+    );
+
+    assert_eq!(
+        final_b_status,
+        Some(azolla::TASK_STATUS_FAILED),
+        "TaskB should be FAILED after 3 attempts (T=2-3, T=4-5, T=6-7) by T=15. (actual: {final_b_status:?})"
     );
 
     // === TEST CLEANUP ===

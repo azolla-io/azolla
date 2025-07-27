@@ -148,6 +148,7 @@ impl SchedulerActor {
                                     Some(task_result_data) => {
                                         let domain = scheduler_state.domain.clone();
                                         let event_stream = scheduler_state.event_stream.clone();
+                                        let shepherd_manager = scheduler_state.shepherd_manager.clone();
 
                                         tokio::spawn(async move {
                                             let result = SchedulerState::execute_handle_task_result(
@@ -155,6 +156,7 @@ impl SchedulerActor {
                                                 task_result_data,
                                                 domain,
                                                 event_stream,
+                                                shepherd_manager,
                                             ).await;
                                             let _ = respond_to.send(result);
                                         });
@@ -248,6 +250,10 @@ impl SchedulerActor {
         task_id: Uuid,
         result: TaskResult,
     ) -> Result<(), SchedulerError> {
+        info!(
+            "📨 SCHEDULER: handle_task_result called for task {} in domain {}",
+            task_id, self.domain
+        );
         let (tx, rx) = oneshot::channel();
         let cmd = SchedulerCommand::HandleTaskResult {
             task_id,
@@ -445,8 +451,8 @@ impl SchedulerState {
         task_id: Uuid,
         result: TaskResult,
     ) -> Option<TaskResultData> {
-        debug!(
-            "Deciding handle task result for {} in domain {}",
+        info!(
+            "🔄 SCHEDULER: decide_handle_task_result for task {} in domain {}",
             task_id, self.domain
         );
 
@@ -530,14 +536,23 @@ impl SchedulerState {
             // Check max_attempts
             if let Some(max_attempts) = retry_policy.stop.max_attempts {
                 // attempt_number is 0-based, so +1 to get total attempts made
-                if (attempt_number + 1) >= max_attempts as i32 {
-                    info!("Max attempts ({max_attempts}) reached for task {task_id}");
+                let total_attempts = attempt_number + 1;
+                info!(
+                    "🔢 SCHEDULER: Task {task_id} attempt check - total_attempts: {total_attempts}, max_attempts: {max_attempts}"
+                );
+
+                if total_attempts >= max_attempts as i32 {
+                    info!("🚫 SCHEDULER: Max attempts ({max_attempts}) reached for task {task_id} - setting status to FAILED");
                     task.status = TASK_STATUS_FAILED;
                     return Some(TaskResultData {
                         flow_instance_id,
                         attempt_number,
                         is_final_failure: true,
                     });
+                } else {
+                    info!(
+                        "⏭️ SCHEDULER: Task {task_id} still has attempts left ({total_attempts}/{max_attempts}) - scheduling retry"
+                    );
                 }
             }
 
@@ -584,8 +599,20 @@ impl SchedulerState {
         task_result_data: TaskResultData,
         domain: String,
         event_stream: Arc<EventStream>,
+        shepherd_manager: crate::orchestrator::shepherd_manager::ShepherdManager,
     ) -> Result<()> {
         debug!("Executing I/O for task result {task_id} in domain {domain}");
+
+        // CRITICAL: Decrement VirtualQueue in-flight counter when task completes
+        // This was the missing piece causing TaskB to get stuck in ATTEMPT_STARTED
+        if let Err(e) = shepherd_manager
+            .decrement_in_flight_task(domain.clone())
+            .await
+        {
+            error!("Failed to decrement in-flight task count for domain {domain}: {e}");
+        } else {
+            debug!("Successfully decremented in-flight task count for domain {domain}");
+        }
 
         // Write attempt ended event
         let event_metadata = serde_json::json!({
@@ -663,6 +690,7 @@ impl SchedulerState {
                         task_result_data,
                         self.domain.clone(),
                         self.event_stream.clone(),
+                        self.shepherd_manager.clone(),
                     )
                     .await?;
                 }

@@ -138,28 +138,55 @@ impl VirtualQueue {
 
     /// Enqueue a task for dispatch
     pub fn enqueue(&mut self, task: TaskDispatch) -> Result<()> {
+        let task_id = task.task_id;
+        info!(
+            "📥 VirtualQueue::enqueue - Adding task {} to queue (current queue_len: {})",
+            task_id,
+            self.queue.len()
+        );
         self.queue.push_back(task);
+        info!(
+            "📥 VirtualQueue::enqueue - Task {} added, new queue_len: {}",
+            task_id,
+            self.queue.len()
+        );
         Ok(())
     }
 
     /// Dequeue a task for dispatch (if any available)
     pub fn dequeue(&mut self) -> Option<TaskDispatch> {
+        info!("📤 VirtualQueue::dequeue - can_dispatch: {}, queue_empty: {}, queue_len: {}, in_flight: {}", 
+            self.can_dispatch(), self.queue.is_empty(), self.queue.len(), self.in_flight_count());
         if self.can_dispatch() && !self.queue.is_empty() {
             let task = self.queue.pop_front();
-            if task.is_some() {
+            if let Some(ref task) = task {
                 self.in_flight_count.fetch_add(1, AtomicOrdering::Relaxed);
+                info!(
+                    "✅ VirtualQueue::dequeue - Successfully dequeued task {}, new in_flight: {}",
+                    task.task_id,
+                    self.in_flight_count()
+                );
             }
             task
         } else {
+            info!("❌ VirtualQueue::dequeue - Cannot dispatch or queue empty");
             None
         }
     }
 
     /// Decrement in-flight counter when task completes
     pub fn decrement_in_flight(&self) {
-        // TODO: Add underflow protection - this should never underflow, and it's a bug if it does
-        // Consider adding debug_assert or logging when count is already 0
-        self.in_flight_count.fetch_sub(1, AtomicOrdering::Relaxed);
+        let previous = self.in_flight_count.fetch_sub(1, AtomicOrdering::Relaxed);
+        info!(
+            "🔻 VirtualQueue::decrement_in_flight - in_flight count: {} -> {}",
+            previous,
+            previous.saturating_sub(1)
+        );
+
+        // Add underflow protection
+        if previous == 0 {
+            error!("🚨 VirtualQueue::decrement_in_flight - UNDERFLOW DETECTED! in_flight count was already 0");
+        }
     }
 
     /// Get current queue length
@@ -184,6 +211,8 @@ pub enum ShepherdConnectionStatus {
 pub struct ShepherdStatus {
     pub uuid: Uuid,
     pub max_concurrency: u32,
+    // Note: Shepherd load is managed via heartbeat updates from the shepherd itself
+    // other than the heartbeat mechanism, we should not modify current_load
     pub current_load: u32,
     pub last_seen: DateTime<Utc>,
     pub connected_at: DateTime<Utc>,
@@ -630,6 +659,7 @@ impl ActorShepherdManager {
                 Some(message) = command_rx.recv() => {
                     // Check if this message should trigger immediate dispatch
                     if matches!(message, ShepherdManagerMessage::EnqueueTask { .. }) {
+                        info!("🚀 DISPATCH: EnqueueTask detected - requesting immediate dispatch");
                         immediate_dispatch_requested = true;
                     }
 
@@ -646,6 +676,7 @@ impl ActorShepherdManager {
                 // Immediate dispatch when requested
                 _ = async {}, if immediate_dispatch_requested => {
                     immediate_dispatch_requested = false;
+                    info!("⚡ DISPATCH: Executing immediate dispatch tick");
                     if let Err(e) = self.handle_dispatch_tick().await {
                         error!("Error in immediate dispatch tick: {e}");
                     }
@@ -791,6 +822,11 @@ impl ActorShepherdManager {
     async fn handle_dispatch_tick(&mut self) -> Result<()> {
         // Process each domain's virtual queue
         let domains: Vec<String> = self.virtual_queues.keys().cloned().collect();
+        info!(
+            "🔄 DISPATCH: handle_dispatch_tick called - processing {} domains: {:?}",
+            domains.len(),
+            domains
+        );
 
         #[cfg(test)]
         {
@@ -802,20 +838,11 @@ impl ActorShepherdManager {
         }
 
         for domain in domains {
-            #[cfg(test)]
-            {
-                eprintln!("DEBUG: About to process domain: {domain}");
-            }
-            #[cfg(test)]
-            {
-                eprintln!("DEBUG: Calling process_domain_queue for domain: {domain}");
-            }
+            info!("🔍 DISPATCH: Processing domain '{domain}' queue");
             if let Err(e) = self.process_domain_queue(&domain).await {
                 error!("Error processing domain queue for {domain}: {e}");
-            }
-            #[cfg(test)]
-            {
-                eprintln!("DEBUG: Finished process_domain_queue for domain: {domain}");
+            } else {
+                info!("✅ DISPATCH: Finished processing domain '{domain}' queue");
             }
         }
 
@@ -849,7 +876,18 @@ impl ActorShepherdManager {
     pub fn find_available_shepherds_round_robin(&mut self, batch: u32) -> Vec<Uuid> {
         let mut result = Vec::new();
 
+        info!("🔍 SHEPHERD_SELECTION: Starting round-robin selection for {batch} tasks");
+        info!(
+            "🔍 SHEPHERD_SELECTION: Total registered shepherds: {}",
+            self.shepherd_keys.len()
+        );
+
         if batch == 0 || self.shepherd_keys.is_empty() {
+            info!(
+                "🔍 SHEPHERD_SELECTION: Early return - batch={}, shepherd_keys_len={}",
+                batch,
+                self.shepherd_keys.len()
+            );
             return result;
         }
 
@@ -868,7 +906,10 @@ impl ActorShepherdManager {
                 }
 
                 if let Some(uuid) = self.shepherd_keys.pop_front() {
+                    info!("🔍 SHEPHERD_SELECTION: Checking shepherd {uuid}");
                     if let Some(shepherd_status) = self.shepherds.get(&uuid) {
+                        info!("🔍 SHEPHERD_SELECTION: Shepherd {} - status: {:?}, available_capacity: {}", 
+                            uuid, shepherd_status.status, shepherd_status.available_capacity());
                         // Shepherd exists - check if available and has capacity
                         if matches!(shepherd_status.status, ShepherdConnectionStatus::Connected)
                             && shepherd_status.available_capacity() > 0
@@ -876,15 +917,25 @@ impl ActorShepherdManager {
                             // Check if this shepherd still has capacity for more assignments
                             let current_assignments =
                                 result.iter().filter(|&&id| id == uuid).count() as u32;
+                            info!("🔍 SHEPHERD_SELECTION: Shepherd {} - current_assignments in batch: {}, available_capacity: {}", 
+                                uuid, current_assignments, shepherd_status.available_capacity());
                             if current_assignments < shepherd_status.available_capacity() {
+                                info!("✅ SHEPHERD_SELECTION: Selected shepherd {uuid} for task assignment");
                                 result.push(uuid);
                                 tasks_assigned += 1;
                                 assignments_this_round += 1;
+                            } else {
+                                info!("⏭️ SHEPHERD_SELECTION: Shepherd {uuid} already at capacity for this batch");
                             }
+                        } else {
+                            info!("❌ SHEPHERD_SELECTION: Shepherd {} not available - status: {:?}, capacity: {}", 
+                                uuid, shepherd_status.status, shepherd_status.available_capacity());
                         }
 
                         // Put shepherd back at end of queue for round-robin
                         self.shepherd_keys.push_back(uuid);
+                    } else {
+                        info!("🗑️ SHEPHERD_SELECTION: Shepherd {uuid} no longer exists - removing from rotation");
                     }
                     // Dead shepherds are automatically cleaned up by not being re-added
                 } else {
@@ -901,6 +952,11 @@ impl ActorShepherdManager {
             }
         }
 
+        info!(
+            "🔍 SHEPHERD_SELECTION: Final result - selected {} shepherds: {:?}",
+            result.len(),
+            result
+        );
         result
     }
 
@@ -1133,26 +1189,34 @@ impl ActorShepherdManager {
             let queue = match self.virtual_queues.get(domain) {
                 Some(q) => q,
                 None => {
-                    #[cfg(test)]
-                    eprintln!("DEBUG: No queue found for domain {domain}");
+                    info!("📭 DISPATCH: No queue found for domain {domain}");
                     return Ok(());
                 }
             };
 
+            info!("📊 DISPATCH: Domain '{}' - queue_len: {}, in_flight: {}, concurrency_limit: {}, can_dispatch: {}", 
+                domain, queue.queue_len(), queue.in_flight_count(), queue.concurrency_limit, queue.can_dispatch());
+
             if !queue.can_dispatch() {
-                #[cfg(test)]
-                eprintln!("DEBUG: Queue for domain {domain} cannot dispatch");
+                info!("🚫 DISPATCH: Domain '{domain}' queue cannot dispatch (likely at capacity)");
                 return Ok(());
             }
 
             let count = queue.available_dispatch_count();
-            #[cfg(test)]
-            eprintln!("DEBUG: Queue for domain {domain} has {count} tasks available to dispatch");
+            info!("🎯 DISPATCH: Domain '{domain}' has {count} tasks available to dispatch");
             count
         };
 
         // Find available shepherds
         let shepherds = self.find_available_shepherds_round_robin(available_dispatches);
+        info!(
+            "🔍 DISPATCH: Looking for shepherds to handle {available_dispatches} dispatches for domain '{domain}'"
+        );
+        info!(
+            "🧑‍🌾 DISPATCH: Found {} available shepherds: {:?}",
+            shepherds.len(),
+            shepherds
+        );
         #[cfg(test)]
         eprintln!(
             "DEBUG: Found {} shepherds for domain {domain}: {:?}",
@@ -1161,34 +1225,73 @@ impl ActorShepherdManager {
         );
 
         if shepherds.is_empty() {
+            info!("❌ DISPATCH: No shepherds available for domain '{domain}' - skipping dispatch");
             return Ok(()); // No shepherds available
         }
 
         // Dispatch tasks to available shepherds
-        for shepherd_id in shepherds {
+        info!(
+            "🚀 DISPATCH: Starting task dispatch loop for {} shepherds in domain '{}'",
+            shepherds.len(),
+            domain
+        );
+        for (i, shepherd_id) in shepherds.iter().enumerate() {
+            info!(
+                "🔄 DISPATCH: Processing shepherd {} ({}/{}): {}",
+                shepherd_id,
+                i + 1,
+                shepherds.len(),
+                shepherd_id
+            );
+
             let task = {
                 let queue = self.virtual_queues.get_mut(domain).unwrap();
+                info!(
+                    "📤 DISPATCH: Attempting to dequeue task from domain '{}' (queue_len: {})",
+                    domain,
+                    queue.queue_len()
+                );
                 match queue.dequeue() {
-                    Some(task) => task,
-                    None => break, // No more tasks in queue
+                    Some(task) => {
+                        info!(
+                            "📋 DISPATCH: Successfully dequeued task {} for shepherd {}",
+                            task.task_id, shepherd_id
+                        );
+                        task
+                    }
+                    None => {
+                        info!("📭 DISPATCH: No more tasks available in domain '{domain}' queue - stopping dispatch loop");
+                        break; // No more tasks in queue
+                    }
                 }
             };
 
+            info!("➡️ DISPATCH: Calling dispatch_task_to_shepherd_internal for task {} to shepherd {}", task.task_id, shepherd_id);
+
             if let Err(e) = self
-                .dispatch_task_to_shepherd_internal(&task, shepherd_id, domain)
+                .dispatch_task_to_shepherd_internal(&task, *shepherd_id, domain)
                 .await
             {
                 error!(
-                    "Failed to dispatch task {} to shepherd {shepherd_id}: {e}",
+                    "❌ DISPATCH: Failed to dispatch task {} to shepherd {shepherd_id}: {e}",
                     task.task_id
                 );
                 // Re-enqueue the task on failure
+                let task_id = task.task_id;
                 let queue = self.virtual_queues.get_mut(domain).unwrap();
                 if let Err(enqueue_err) = queue.enqueue(task) {
-                    error!("Failed to re-enqueue task after dispatch failure: {enqueue_err}");
+                    error!("❌ DISPATCH: Failed to re-enqueue task after dispatch failure: {enqueue_err}");
+                } else {
+                    info!("🔄 DISPATCH: Re-enqueued task {task_id} after dispatch failure");
                 }
+            } else {
+                info!(
+                    "✅ DISPATCH: Successfully dispatched task {} to shepherd {}",
+                    task.task_id, shepherd_id
+                );
             }
         }
+        info!("🏁 DISPATCH: Finished dispatch loop for domain '{domain}'");
 
         Ok(())
     }
@@ -1240,8 +1343,7 @@ impl ActorShepherdManager {
             )
             .await?;
 
-        // Update shepherd's current load to reflect the dispatched task
-        shepherd.current_load += 1;
+        // Shepherd load tracking removed - managed via heartbeat updates only
 
         info!(
             "Successfully started task {} attempt {} on shepherd {}",

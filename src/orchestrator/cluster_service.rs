@@ -266,7 +266,7 @@ async fn handle_task_result_message(
             .map_err(|e| anyhow::anyhow!("Invalid task ID in result: {}", e))?;
 
         // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
-        info!("Received result for task {task_id} from shepherd {uuid}");
+        info!("📨 ORCHESTRATOR: Received result for task {task_id} from shepherd {uuid}");
 
         // TODO: Need to determine the domain for this task
         // For now, we'll iterate through all domains to find the task
@@ -277,6 +277,7 @@ async fn handle_task_result_message(
         let mut task_found = false;
 
         for domain in domains {
+            info!("🔍 ORCHESTRATOR: Trying to find task {task_id} in domain {domain}");
             if let Some(scheduler) = scheduler_registry.get_scheduler(&domain) {
                 // Try to handle the result - the scheduler will ignore if task not in this domain
                 if let Err(e) = scheduler
@@ -284,9 +285,10 @@ async fn handle_task_result_message(
                     .await
                 {
                     warn!(
-                        "Failed to handle task result for task {task_id} in domain {domain}: {e:?}"
+                        "❌ ORCHESTRATOR: Failed to handle task result for task {task_id} in domain {domain}: {e:?}"
                     );
                 } else {
+                    info!("✅ ORCHESTRATOR: Successfully processed task result for task {task_id} in domain {domain}");
                     task_found = true;
                     break;
                 }
