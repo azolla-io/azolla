@@ -2,11 +2,23 @@
 
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org) [![PostgreSQL](https://img.shields.io/badge/postgresql-12%2B-blue.svg)](https://www.postgresql.org) [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
+<div align="center">
+
+**🚀 Ready to supercharge your async tasks?**
+
+[**⭐ Star this repo**](https://github.com/azolla-io/azolla) | [**🍴 Fork & contribute**](https://github.com/azolla-io/azolla/fork) | [**📖 Read the docs**](docs/)
+
+*Built with ❤️ in Rust | Powered by PostgreSQL | Simple • Reliable • Fast*
+
+</div>
+
 > **The reliable, high-performance, yet simple async task platform**
 
 **Azolla** delivers enterprise-grade task orchestration with breakthrough simplicity. Built in Rust, it achieves **sub-millisecond latency** and **10K+ tasks/sec** throughput while running on just PostgreSQL—no complex infrastructure required.
 
 **Stop fighting brittle task queues. Start building with Azolla.**
+
+> ⚠️ **Development Status**: Azolla is under active development and ready for testing. Production readiness is expected in the coming months.
 
 ---
 
@@ -161,14 +173,3 @@ docker-compose up --build
 
 Apache License 2.0 - see [LICENSE](LICENSE) file for details.
 
----
-
-<div align="center">
-
-**🚀 Ready to supercharge your async tasks?**
-
-[**⭐ Star this repo**](https://github.com/azolla-io/azolla) | [**🍴 Fork & contribute**](https://github.com/azolla-io/azolla/fork) | [**📖 Read the docs**](docs/)
-
-*Built with ❤️ in Rust | Powered by PostgreSQL | Designed for Scale*
-
-</div>
