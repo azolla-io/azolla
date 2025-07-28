@@ -5,7 +5,7 @@ macro_rules! db_test {
         async fn $test_name() {
             use azolla::orchestrator::db::{
                 create_pool, run_migrations, Database, DomainsConfig, EventStream, Server,
-                Settings, ShutdownConfig,
+                Settings, ShepherdConfig, ShutdownConfig,
             };
             use testcontainers::{
                 core::{IntoContainerPort, WaitFor},
@@ -46,6 +46,7 @@ macro_rules! db_test {
                 server: Server { port: 0 }, // dummy
                 event_stream: EventStream::default(),
                 domains: DomainsConfig::default(),
+                shepherd: ShepherdConfig::default(),
                 shutdown: ShutdownConfig::default(),
             };
             let pool = create_pool(&settings).unwrap();

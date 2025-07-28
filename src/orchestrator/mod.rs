@@ -9,6 +9,9 @@ pub mod shepherd_manager;
 pub mod startup;
 pub mod taskset;
 
+#[cfg(test)]
+pub mod tests;
+
 // Re-export commonly used items
 pub use client_service::ClientServiceImpl;
 pub use cluster_service::ClusterServiceImpl;

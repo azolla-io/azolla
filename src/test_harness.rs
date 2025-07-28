@@ -12,7 +12,8 @@ const DEFAULT_TASK_COMPLETION_POLL_INTERVAL_MS: u64 = 100;
 const DEFAULT_MAX_CONCURRENT_TASKS: usize = 4;
 
 use crate::orchestrator::db::{
-    Database, DomainsConfig, EventStream, Server as DbServer, Settings, ShutdownConfig,
+    Database, DomainsConfig, EventStream, Server as DbServer, Settings,
+    ShepherdConfig as OrchestratorShepherdConfig, ShutdownConfig,
 };
 use crate::orchestrator::startup::{OrchestratorBuilder, RunningOrchestratorInstance};
 use crate::proto::orchestrator::client_service_client::ClientServiceClient;
@@ -74,6 +75,7 @@ impl IntegrationTestEnvironment {
         let db_url =
             format!("postgres://postgres:postgres@127.0.0.1:{db_port}/postgres?sslmode=disable");
 
+        let shepherd_config = config.shepherd_config.clone().unwrap_or_default();
         let settings = Settings {
             database: Database {
                 url: db_url,
@@ -84,6 +86,7 @@ impl IntegrationTestEnvironment {
             },
             event_stream: EventStream::default(),
             domains: DomainsConfig::default(),
+            shepherd: shepherd_config,
             shutdown: ShutdownConfig::default(),
         };
 
@@ -394,6 +397,7 @@ pub struct IntegrationTestConfig {
     pub client_connection_retry_interval_ms: u64,
     pub client_connection_max_retries: usize,
     pub task_completion_poll_interval_ms: u64,
+    pub shepherd_config: Option<OrchestratorShepherdConfig>,
 }
 
 impl Default for IntegrationTestConfig {
@@ -407,6 +411,7 @@ impl Default for IntegrationTestConfig {
             client_connection_retry_interval_ms: DEFAULT_CLIENT_CONNECTION_RETRY_INTERVAL_MS,
             client_connection_max_retries: DEFAULT_CLIENT_CONNECTION_MAX_RETRIES,
             task_completion_poll_interval_ms: DEFAULT_TASK_COMPLETION_POLL_INTERVAL_MS,
+            shepherd_config: None,
         }
     }
 }

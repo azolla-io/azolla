@@ -16,10 +16,9 @@ use crate::orchestrator::taskset::TaskSetRegistry;
 use crate::proto::{common, orchestrator::ServerMsg};
 use crate::EVENT_TASK_ATTEMPT_STARTED;
 
-const SHEPHERD_TIMEOUT_SECS: u64 = 300; // 5 minutes
+// Shepherd timeout constants moved to configuration (ShepherdConfig)
 
 /// Messages for actor-based ShepherdManager communication
-#[derive(Debug)]
 pub enum ShepherdManagerMessage {
     RegisterShepherd {
         uuid: Uuid,
@@ -78,6 +77,9 @@ pub enum ShepherdManagerMessage {
     },
     DispatchTick,
     HealthCheckTick,
+    SetSchedulerRegistry {
+        scheduler_registry: Arc<crate::orchestrator::scheduler::SchedulerRegistry>,
+    },
     Shutdown {
         response_tx: oneshot::Sender<Result<()>>,
     },
@@ -332,11 +334,13 @@ impl ShepherdManager {
         domains_config: Arc<DomainsConfig>,
         task_registry: Arc<TaskSetRegistry>,
         event_stream: Arc<EventStream>,
+        shepherd_config: crate::orchestrator::db::ShepherdConfig,
     ) -> Self {
         let (command_tx, command_rx) = mpsc::channel(1000);
 
         // Create actor instance
-        let mut actor = ActorShepherdManager::new(domains_config, task_registry, event_stream);
+        let mut actor =
+            ActorShepherdManager::new(domains_config, task_registry, event_stream, shepherd_config);
 
         // Spawn actor task
         tokio::spawn(async move {
@@ -344,6 +348,17 @@ impl ShepherdManager {
         });
 
         Self { command_tx }
+    }
+
+    /// Set the scheduler registry after creation (to break circular dependency)
+    pub fn set_scheduler_registry(
+        &self,
+        scheduler_registry: Arc<crate::orchestrator::scheduler::SchedulerRegistry>,
+    ) {
+        // Send message to actor to set scheduler registry (fire and forget)
+        let _ = self
+            .command_tx
+            .try_send(ShepherdManagerMessage::SetSchedulerRegistry { scheduler_registry });
     }
 
     /// Register a shepherd with communication channel
@@ -620,6 +635,8 @@ pub struct ActorShepherdManager {
     #[allow(dead_code)]
     task_registry: Arc<TaskSetRegistry>, // Reserved for future task-related operations
     event_stream: Arc<EventStream>,
+    scheduler_registry: Option<Arc<crate::orchestrator::scheduler::SchedulerRegistry>>,
+    shepherd_config: crate::orchestrator::db::ShepherdConfig,
 
     // Round-robin state for perfect scheduling
     shepherd_keys: VecDeque<Uuid>,
@@ -634,6 +651,7 @@ impl ActorShepherdManager {
         domains_config: Arc<DomainsConfig>,
         task_registry: Arc<TaskSetRegistry>,
         event_stream: Arc<EventStream>,
+        shepherd_config: crate::orchestrator::db::ShepherdConfig,
     ) -> Self {
         Self {
             shepherds: HashMap::new(),
@@ -641,6 +659,8 @@ impl ActorShepherdManager {
             domains_config,
             task_registry,
             event_stream,
+            scheduler_registry: None,
+            shepherd_config,
             shepherd_keys: VecDeque::new(),
             total_max_concurrency: 0,
             total_current_load: 0,
@@ -808,6 +828,11 @@ impl ActorShepherdManager {
                 }
             }
 
+            ShepherdManagerMessage::SetSchedulerRegistry { scheduler_registry } => {
+                debug!("Setting scheduler registry in ShepherdManager actor");
+                self.scheduler_registry = Some(scheduler_registry);
+            }
+
             ShepherdManagerMessage::Shutdown { response_tx } => {
                 info!("ShepherdManager actor shutting down");
                 let _ = response_tx.send(Ok(()));
@@ -852,8 +877,12 @@ impl ActorShepherdManager {
     /// Handle periodic health checks  
     async fn handle_health_check_tick(&mut self) -> Result<()> {
         let now = Utc::now();
-        let timeout_threshold = now - ChronoDuration::seconds(SHEPHERD_TIMEOUT_SECS as i64);
+        let timeout_threshold =
+            now - ChronoDuration::seconds(self.shepherd_config.timeout_secs as i64);
+        let death_threshold =
+            now - ChronoDuration::seconds(self.shepherd_config.dead_threshold_secs as i64);
 
+        // Phase 1: Handle timeouts (Connected → Disconnected)
         let shepherds_to_disconnect: Vec<Uuid> = self
             .shepherds
             .iter()
@@ -869,7 +898,100 @@ impl ActorShepherdManager {
             let _ = self.mark_shepherd_disconnected_internal(uuid);
         }
 
+        // Phase 2: Handle permanent death (Disconnected → Dead)
+        let permanently_dead_shepherds: Vec<Uuid> = self
+            .shepherds
+            .iter()
+            .filter(|(_, status)| {
+                matches!(status.status, ShepherdConnectionStatus::Disconnected)
+                    && status.last_seen < death_threshold
+            })
+            .map(|(&uuid, _)| uuid)
+            .collect();
+
+        if !permanently_dead_shepherds.is_empty() {
+            info!(
+                "Found {} permanently dead shepherds",
+                permanently_dead_shepherds.len()
+            );
+            self.handle_permanently_dead_shepherds(permanently_dead_shepherds)
+                .await?;
+        }
+
         Ok(())
+    }
+
+    /// Handle permanently dead shepherds by failing their tasks and removing them
+    async fn handle_permanently_dead_shepherds(&mut self, dead_shepherds: Vec<Uuid>) -> Result<()> {
+        for shepherd_uuid in dead_shepherds {
+            warn!(
+                "Shepherd {shepherd_uuid} permanently dead, failing in-flight tasks and removing"
+            );
+
+            // Get affected tasks (fast operation)
+            let task_ids = self.task_registry.get_shepherd_tasks(shepherd_uuid);
+
+            if !task_ids.is_empty() {
+                info!(
+                    "Failing {} tasks from permanently dead shepherd {shepherd_uuid}",
+                    task_ids.len()
+                );
+
+                // Group tasks by domain for scheduler processing
+                let tasks_by_domain = self.group_tasks_by_domain(&task_ids).await;
+
+                // Process failures through scheduler (background processing to avoid blocking)
+                if let Some(scheduler_registry) = &self.scheduler_registry {
+                    let scheduler_registry_clone = scheduler_registry.clone();
+                    tokio::spawn(async move {
+                        for (domain, domain_task_ids) in tasks_by_domain {
+                            if let Some(scheduler) = scheduler_registry_clone.get_scheduler(&domain)
+                            {
+                                let task_count = domain_task_ids.len();
+                                if let Err(e) =
+                                    scheduler.handle_shepherd_death(domain_task_ids).await
+                                {
+                                    error!(
+                                        "Failed to handle shepherd death for domain {domain}: {e:?}"
+                                    );
+                                } else {
+                                    info!("Successfully handled shepherd death for {task_count} tasks in domain {domain}");
+                                }
+                            } else {
+                                warn!("No scheduler found for domain {domain}");
+                            }
+                        }
+                    });
+                } else {
+                    warn!("No scheduler registry available - cannot fail tasks properly");
+                }
+            }
+
+            // Remove from tracking (fast operation)
+            if let Err(e) = self.remove_shepherd_internal(shepherd_uuid) {
+                error!("Failed to remove permanently dead shepherd {shepherd_uuid}: {e}");
+            } else {
+                info!("Successfully removed permanently dead shepherd {shepherd_uuid}");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Group tasks by domain for scheduler processing
+    async fn group_tasks_by_domain(&self, task_ids: &[Uuid]) -> HashMap<String, Vec<Uuid>> {
+        let mut tasks_by_domain = HashMap::new();
+
+        for &task_id in task_ids {
+            if let Some(domain) = self.task_registry.get_domain_for_task(task_id) {
+                tasks_by_domain
+                    .entry(domain)
+                    .or_insert_with(Vec::new)
+                    .push(task_id);
+            }
+        }
+
+        tasks_by_domain
     }
 
     /// Perfect round-robin algorithm with VecDeque and lazy cleanup
@@ -1442,6 +1564,7 @@ mod tests {
             server: Server { port: 0 },
             event_stream: crate::orchestrator::db::EventStream::default(),
             domains: crate::orchestrator::db::DomainsConfig::default(),
+            shepherd: crate::orchestrator::db::ShepherdConfig::default(),
             shutdown: crate::orchestrator::db::ShutdownConfig::default(),
         };
 
@@ -1456,7 +1579,12 @@ mod tests {
         let event_stream_config = EventStreamConfig::default();
         let event_stream = Arc::new(EventStream::new(pool, event_stream_config));
         let domains_config = Arc::new(crate::orchestrator::db::DomainsConfig::default());
-        ShepherdManager::new(domains_config, task_registry, event_stream)
+        ShepherdManager::new(
+            domains_config,
+            task_registry,
+            event_stream,
+            crate::orchestrator::db::ShepherdConfig::default(),
+        )
     }
 
     /// Creates a ShepherdManager for actor model testing
