@@ -4,19 +4,17 @@
 
 <div align="center">
 
-**🚀 Ready to supercharge your async tasks?**
+**🚀 Stop fighting brittle task queues. Start building with Azolla.**
 
 [**⭐ Star this repo**](https://github.com/azolla-io/azolla) | [**🍴 Fork & contribute**](https://github.com/azolla-io/azolla/fork) | [**📖 Read the docs**](docs/)
 
-*Built with ❤️ in Rust | Powered by PostgreSQL | Simple • Reliable • Fast*
+*Built with ❤️ in Rust | Ridiculously simple, yet high-performance and reliable*
 
 </div>
 
 > **The reliable, high-performance, yet simple async task platform**
 
 **Azolla** delivers enterprise-grade task orchestration with breakthrough simplicity. Built in Rust, it achieves **sub-millisecond latency** and **10K+ tasks/sec** throughput while running on just PostgreSQL—no complex infrastructure required.
-
-**Stop fighting brittle task queues. Start building with Azolla.**
 
 > ⚠️ **Development Status**: Azolla is under active development and ready for testing. Production readiness is expected in the coming months.
 
@@ -41,7 +39,7 @@ Inspired by ReadySet, TaskSet incrementally synchronizes in-memory state with du
 Workers receive tasks instantly through optimized push delivery, eliminating polling overhead. Tasks are dispatched in sub-millisecond timeframes.
 
 ### **Polyglot gRPC Interface** — True Multi-Language Support
-Write tasks in any language through our high-performance gRPC API. **Python and Rust officially supported**, with easy extension to other languages.
+Write tasks in any language through our high-performance gRPC API. **Python and Rust officially supported**, with easy extension to other languages. Seamlessly integrates with your existing microservice architecture—no rewrites, no vendor lock-in, just drop-in orchestration for your current services.
 
 ---
 
@@ -147,17 +145,6 @@ docker-compose up --build
 - **🐍 Python**: `pip install azolla-client` 
 - **🦀 Rust**: `cargo add azolla-client`
 - **🌐 Any Language**: Use gRPC directly
-
----
-
-## 📊 Production Ready
-
-✅ **Comprehensive Testing**: 95%+ test coverage with integration tests  
-✅ **Performance Benchmarks**: Continuous performance validation  
-✅ **Memory Safety**: Built in Rust with zero-copy optimizations  
-✅ **Transactional Guarantees**: ACID compliance through PostgreSQL  
-
-**Status**: Beta - Core functionality complete, approaching 1.0 release
 
 ---
 
