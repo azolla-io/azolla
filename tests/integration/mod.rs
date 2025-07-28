@@ -9,6 +9,7 @@
 //! - **task_execution**: Basic task creation, execution, and result handling
 //! - **retry_mechanism**: Task retry policies, scheduling, and race condition handling  
 //! - **shepherd_management**: Shepherd lifecycle, registration, and cluster coordination
+//! - **shepherd_death_test**: Shepherd death detection, task failure handling, and cleanup
 //! - **life_cycle**: Orchestrator startup, shutdown, and graceful termination scenarios
 //!
 //! ## Running Integration Tests
@@ -28,5 +29,6 @@
 
 pub mod life_cycle;
 pub mod retry_mechanism;
+pub mod shepherd_death_test;
 pub mod shepherd_management;
 pub mod task_execution;

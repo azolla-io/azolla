@@ -64,20 +64,45 @@ impl Engine {
         domains_config: DomainsConfig,
         scheduler_config: SchedulerConfig,
     ) -> Self {
+        Self::with_all_configs(
+            pool,
+            event_stream_config,
+            domains_config,
+            scheduler_config,
+            crate::orchestrator::db::ShepherdConfig::default(),
+        )
+    }
+
+    /// Create a new orchestration engine with custom scheduler and shepherd configuration
+    pub fn with_all_configs(
+        pool: PgPool,
+        event_stream_config: EventStreamConfig,
+        domains_config: DomainsConfig,
+        scheduler_config: SchedulerConfig,
+        shepherd_config: crate::orchestrator::db::ShepherdConfig,
+    ) -> Self {
         let event_stream = Arc::new(EventStream::new(pool.clone(), event_stream_config));
         let registry = Arc::new(TaskSetRegistry::new());
         let domains_config_arc = Arc::new(domains_config);
+
+        // Create shepherd manager first (without scheduler registry - will be set later)
         let shepherd_manager = Arc::new(ShepherdManager::new(
             domains_config_arc.clone(),
             registry.clone(),
             event_stream.clone(),
+            shepherd_config,
         ));
+
+        // Create scheduler registry with shepherd manager
         let scheduler_registry = Arc::new(SchedulerRegistry::new(
             registry.clone(),
             shepherd_manager.clone(),
             event_stream.clone(),
             scheduler_config,
         ));
+
+        // Set the scheduler registry in the shepherd manager
+        shepherd_manager.set_scheduler_registry(scheduler_registry.clone());
 
         Self {
             pool,

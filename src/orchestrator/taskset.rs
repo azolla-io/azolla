@@ -501,6 +501,10 @@ impl TaskSetRegistry {
             .unwrap_or_default()
     }
 
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use scheduler.handle_shepherd_death() instead for proper task lifecycle management"
+    )]
     pub async fn generate_shepherd_failure_events(
         &self,
         shepherd_uuid: Uuid,

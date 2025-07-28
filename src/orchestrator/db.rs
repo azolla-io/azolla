@@ -65,6 +65,31 @@ impl Default for DomainsConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct ShepherdConfig {
+    #[serde(default = "default_shepherd_timeout_secs")]
+    pub timeout_secs: u64, // Connected → Disconnected
+    #[serde(default = "default_shepherd_dead_threshold_secs")]
+    pub dead_threshold_secs: u64, // Disconnected → Permanently Dead
+}
+
+impl Default for ShepherdConfig {
+    fn default() -> Self {
+        Self {
+            timeout_secs: 300,        // 5 minutes
+            dead_threshold_secs: 600, // 10 minutes
+        }
+    }
+}
+
+fn default_shepherd_timeout_secs() -> u64 {
+    300
+}
+
+fn default_shepherd_dead_threshold_secs() -> u64 {
+    600
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct ShutdownConfig {
     pub timeout_secs: u64,
 }
@@ -85,6 +110,8 @@ pub struct Settings {
     pub event_stream: EventStream,
     #[serde(default)]
     pub domains: DomainsConfig,
+    #[serde(default)]
+    pub shepherd: ShepherdConfig,
     #[serde(default)]
     pub shutdown: ShutdownConfig,
 }
