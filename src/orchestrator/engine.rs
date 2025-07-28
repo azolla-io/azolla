@@ -64,20 +64,45 @@ impl Engine {
         domains_config: DomainsConfig,
         scheduler_config: SchedulerConfig,
     ) -> Self {
+        Self::with_all_configs(
+            pool,
+            event_stream_config,
+            domains_config,
+            scheduler_config,
+            crate::orchestrator::db::ShepherdConfig::default(),
+        )
+    }
+
+    /// Create a new orchestration engine with custom scheduler and shepherd configuration
+    pub fn with_all_configs(
+        pool: PgPool,
+        event_stream_config: EventStreamConfig,
+        domains_config: DomainsConfig,
+        scheduler_config: SchedulerConfig,
+        shepherd_config: crate::orchestrator::db::ShepherdConfig,
+    ) -> Self {
         let event_stream = Arc::new(EventStream::new(pool.clone(), event_stream_config));
         let registry = Arc::new(TaskSetRegistry::new());
         let domains_config_arc = Arc::new(domains_config);
+
+        // Create shepherd manager first (without scheduler registry - will be set later)
         let shepherd_manager = Arc::new(ShepherdManager::new(
             domains_config_arc.clone(),
             registry.clone(),
             event_stream.clone(),
+            shepherd_config,
         ));
+
+        // Create scheduler registry with shepherd manager
         let scheduler_registry = Arc::new(SchedulerRegistry::new(
             registry.clone(),
             shepherd_manager.clone(),
             event_stream.clone(),
             scheduler_config,
         ));
+
+        // Note: We defer setting the scheduler registry to the initialize() method
+        // to avoid blocking operations in the constructor
 
         Self {
             pool,
@@ -92,6 +117,17 @@ impl Engine {
     pub async fn initialize(&self) -> Result<()> {
         // Load existing tasks from database into the registry
         self.registry.load_from_db(&self.pool).await?;
+
+        // Set the scheduler registry in the shepherd manager (deferred from constructor)
+        self.shepherd_manager
+            .set_scheduler_registry(self.scheduler_registry.clone())
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to set scheduler registry in shepherd manager: {}",
+                    e
+                )
+            })?;
 
         // The actor-based shepherd manager is already started (includes dispatcher and health checker)
 

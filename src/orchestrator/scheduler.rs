@@ -886,6 +886,7 @@ mod tests {
             domains_config,
             task_registry.clone(),
             event_stream.clone(),
+            crate::orchestrator::db::ShepherdConfig::default(),
         ));
         let config = SchedulerConfig {
             default_task_attempt_creation_timeout_secs: 5,
@@ -910,6 +911,7 @@ mod tests {
             server: Server { port: 0 },
             event_stream: crate::orchestrator::db::EventStream::default(),
             domains: DomainsConfig::default(),
+            shepherd: crate::orchestrator::db::ShepherdConfig::default(),
             shutdown: ShutdownConfig::default(),
         };
 
