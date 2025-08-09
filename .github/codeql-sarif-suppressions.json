@@ -26,6 +26,118 @@
             "suppressionType": "falsePositive",
             "reason": "UUIDs, task_ids, shepherd_ids and similar identifiers are public identifiers, not credentials or PII. This applies globally across all files."
           }
+        },
+        {
+          "kind": "inSource", 
+          "status": "accepted",
+          "justification": "Shepherd UUID logging is for operational debugging and monitoring",
+          "location": {
+            "physicalLocation": {
+              "artifactLocation": {
+                "uri": "src/orchestrator/shepherd_manager.rs"
+              },
+              "region": {
+                "startLine": 929
+              }
+            }
+          },
+          "ruleId": "rust/cleartext-logging-of-sensitive-information"
+        },
+        {
+          "kind": "inSource", 
+          "status": "accepted",
+          "justification": "Shepherd UUID logging is for operational debugging and monitoring",
+          "location": {
+            "physicalLocation": {
+              "artifactLocation": {
+                "uri": "src/orchestrator/shepherd_manager.rs"
+              },
+              "region": {
+                "startLine": 938
+              }
+            }
+          },
+          "ruleId": "rust/cleartext-logging-of-sensitive-information"
+        },
+        {
+          "kind": "inSource", 
+          "status": "accepted",
+          "justification": "Shepherd UUID logging is for operational debugging and monitoring",
+          "location": {
+            "physicalLocation": {
+              "artifactLocation": {
+                "uri": "src/orchestrator/shepherd_manager.rs"
+              },
+              "region": {
+                "startLine": 951
+              }
+            }
+          },
+          "ruleId": "rust/cleartext-logging-of-sensitive-information"
+        },
+        {
+          "kind": "inSource", 
+          "status": "accepted",
+          "justification": "Shepherd UUID logging is for operational debugging and monitoring",
+          "location": {
+            "physicalLocation": {
+              "artifactLocation": {
+                "uri": "src/orchestrator/shepherd_manager.rs"
+              },
+              "region": {
+                "startLine": 953
+              }
+            }
+          },
+          "ruleId": "rust/cleartext-logging-of-sensitive-information"
+        },
+        {
+          "kind": "inSource", 
+          "status": "accepted",
+          "justification": "Shepherd UUID logging is for operational debugging and monitoring",
+          "location": {
+            "physicalLocation": {
+              "artifactLocation": {
+                "uri": "src/orchestrator/shepherd_manager.rs"
+              },
+              "region": {
+                "startLine": 985
+              }
+            }
+          },
+          "ruleId": "rust/cleartext-logging-of-sensitive-information"
+        },
+        {
+          "kind": "inSource", 
+          "status": "accepted",
+          "justification": "Shepherd UUID logging is for operational debugging and monitoring",
+          "location": {
+            "physicalLocation": {
+              "artifactLocation": {
+                "uri": "src/orchestrator/shepherd_manager.rs"
+              },
+              "region": {
+                "startLine": 987
+              }
+            }
+          },
+          "ruleId": "rust/cleartext-logging-of-sensitive-information"
+        },
+        {
+          "kind": "inSource", 
+          "status": "accepted",
+          "justification": "Test UUID logging is for debugging test execution",
+          "location": {
+            "physicalLocation": {
+              "artifactLocation": {
+                "uri": "tests/integration/shepherd_death_test.rs"
+              },
+              "region": {
+                "startLine": 268
+              }
+            }
+          },
+          "ruleId": "rust/cleartext-logging-of-sensitive-information"
         }
       ]
     }
