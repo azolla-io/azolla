@@ -501,6 +501,28 @@ impl TaskSetRegistry {
             .unwrap_or_default()
     }
 
+    /// Get shepherd tasks already grouped by domain - efficient O(domains × tasks) operation
+    /// This eliminates the need for separate get_shepherd_tasks + group_tasks_by_domain calls
+    pub fn get_shepherd_tasks_by_domain(&self, shepherd_uuid: Uuid) -> HashMap<String, Vec<Uuid>> {
+        let task_ids = self.get_shepherd_tasks(shepherd_uuid);
+        let mut tasks_by_domain = HashMap::new();
+        let domains = self.domains.lock().unwrap();
+
+        // Single pass through domains, checking all tasks against each domain
+        for (domain_name, taskset) in domains.iter() {
+            for &task_id in &task_ids {
+                if taskset.get_task(task_id).is_some() {
+                    tasks_by_domain
+                        .entry(domain_name.clone())
+                        .or_insert_with(Vec::new)
+                        .push(task_id);
+                }
+            }
+        }
+
+        tasks_by_domain
+    }
+
     #[deprecated(
         since = "0.2.0",
         note = "Use scheduler.handle_shepherd_death() instead for proper task lifecycle management"

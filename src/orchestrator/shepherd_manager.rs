@@ -928,14 +928,14 @@ impl ActorShepherdManager {
                 "Shepherd {shepherd_uuid} permanently dead, failing in-flight tasks and removing"
             );
 
-            // Get affected tasks (fast operation)
-            let task_ids = self.task_registry.get_shepherd_tasks(shepherd_uuid);
+            // Get affected tasks grouped by domain (fast operation)
+            let tasks_by_domain = self
+                .task_registry
+                .get_shepherd_tasks_by_domain(shepherd_uuid);
+            let total_tasks: usize = tasks_by_domain.values().map(|tasks| tasks.len()).sum();
 
-            if !task_ids.is_empty() {
-                info!(
-                    "Failing {} tasks from permanently dead shepherd {shepherd_uuid}",
-                    task_ids.len()
-                );
+            if total_tasks > 0 {
+                info!("Failing {total_tasks} tasks from permanently dead shepherd {shepherd_uuid}");
 
                 // CRITICAL PATH (synchronous): Write task status to database
                 // This ensures task failure is persisted and not interrupted by shutdown.
@@ -950,7 +950,7 @@ impl ActorShepherdManager {
                         "Failed to mark tasks as failed for dead shepherd {shepherd_uuid}: {e:?}"
                     );
                 } else {
-                    info!("Successfully marked {} tasks as failed in database for dead shepherd {shepherd_uuid}", task_ids.len());
+                    info!("Successfully marked {total_tasks} tasks as failed in database for dead shepherd {shepherd_uuid}");
                 }
 
                 // OPTIONAL PATH (asynchronous): Update scheduler state
@@ -958,7 +958,6 @@ impl ActorShepherdManager {
                 // The newly launched orchestrator can always reconstruct the right state from database.
                 if let Some(scheduler_registry) = &self.scheduler_registry {
                     let scheduler_registry_clone = scheduler_registry.clone();
-                    let tasks_by_domain = self.group_tasks_by_domain(&task_ids);
 
                     tokio::spawn(async move {
                         for (domain, domain_task_ids) in tasks_by_domain {
@@ -989,22 +988,6 @@ impl ActorShepherdManager {
         }
 
         Ok(())
-    }
-
-    /// Group tasks by domain for scheduler processing
-    fn group_tasks_by_domain(&self, task_ids: &[Uuid]) -> HashMap<String, Vec<Uuid>> {
-        let mut tasks_by_domain = HashMap::new();
-
-        for &task_id in task_ids {
-            if let Some(domain) = self.task_registry.get_domain_for_task(task_id) {
-                tasks_by_domain
-                    .entry(domain)
-                    .or_insert_with(Vec::new)
-                    .push(task_id);
-            }
-        }
-
-        tasks_by_domain
     }
 
     /// Perfect round-robin algorithm with VecDeque and lazy cleanup
