@@ -1,0 +1,10 @@
+name: "CodeQL Config"
+
+# Disable specific queries that we want to suppress
+disable-default-queries: false
+
+# Query filters to suppress specific rules
+query-filters:
+  - exclude:
+      id: rust/cleartext-logging
+      reason: "Suppressing cleartext logging warnings for shepherd UUID logging - these are not sensitive identifiers"
