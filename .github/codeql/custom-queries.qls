@@ -1,0 +1,8 @@
+# Custom query suite to suppress false positives globally
+
+# Include all security queries except problematic ones
+- import: codeql-suites/rust-security-extended.qls
+
+# Globally exclude the cleartext logging query that incorrectly flags UUIDs and IDs as sensitive
+- exclude:
+    id: rust/cleartext-logging-of-sensitive-information
