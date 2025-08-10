@@ -1042,24 +1042,45 @@ impl ActorShepherdManager {
             if total_tasks > 0 {
                 info!("Failing {total_tasks} tasks from permanently dead shepherd {shepherd_uuid}");
 
-                // CRITICAL PATH (synchronous): Handle task failure through scheduler
-                // This ensures proper task lifecycle management, event writing, and retry logic.
-                // The scheduler handles complete task failure lifecycle including database persistence.
-                if let Some(scheduler_registry) = &self.scheduler_registry {
-                    for (domain, domain_task_ids) in tasks_by_domain {
-                        if let Some(scheduler) = scheduler_registry.get_scheduler(&domain) {
-                            let task_count = domain_task_ids.len();
-                            if let Err(e) = scheduler.handle_shepherd_death(domain_task_ids).await {
-                                error!("Failed to handle shepherd death for {task_count} tasks in domain {domain}: {e:?}");
-                            } else {
-                                info!("Successfully handled shepherd death for {task_count} tasks in domain {domain}");
-                            }
-                        } else {
-                            warn!("No scheduler found for domain {domain}, cannot handle shepherd death");
-                        }
-                    }
+                // CRITICAL PATH (synchronous): Write task status to database
+                // This ensures task failure is persisted and not interrupted by shutdown.
+                // Without this, failing those tasks would take longer (failed due to timeout
+                // by the newly launched orchestrator).
+                if let Err(e) = self
+                    .task_registry
+                    .fail_shepherd_tasks(shepherd_uuid, &self.event_stream)
+                    .await
+                {
+                    error!(
+                        "Failed to mark tasks as failed for dead shepherd {shepherd_uuid}: {e:?}"
+                    );
                 } else {
-                    error!("No scheduler registry available, cannot handle shepherd death for {total_tasks} tasks");
+                    info!("Successfully marked {total_tasks} tasks as failed in database for dead shepherd {shepherd_uuid}");
+                }
+
+                // OPTIONAL PATH (asynchronous): Update scheduler state
+                // This can be aborted during graceful shutdown, but it is fine.
+                // The newly launched orchestrator can always reconstruct the right state from database.
+                if let Some(scheduler_registry) = &self.scheduler_registry {
+                    let scheduler_registry_clone = scheduler_registry.clone();
+
+                    tokio::spawn(async move {
+                        for (domain, domain_task_ids) in tasks_by_domain {
+                            if let Some(scheduler) = scheduler_registry_clone.get_scheduler(&domain)
+                            {
+                                let task_count = domain_task_ids.len();
+                                if let Err(e) =
+                                    scheduler.handle_shepherd_death(domain_task_ids).await
+                                {
+                                    warn!("Failed to notify scheduler for domain {domain} about shepherd death: {e:?}");
+                                } else {
+                                    info!("Successfully notified scheduler about {task_count} failed tasks in domain {domain}");
+                                }
+                            } else {
+                                warn!("No scheduler found for domain {domain}");
+                            }
+                        }
+                    });
                 }
             }
 
