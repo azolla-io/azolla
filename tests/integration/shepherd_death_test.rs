@@ -486,3 +486,92 @@ async fn test_configurable_death_timeouts() -> Result<()> {
     println!("✅ Configurable timeouts test completed");
     Ok(())
 }
+
+/// Helper function to count specific event types for a task in the database
+async fn count_task_events(
+    harness: &IntegrationTestEnvironment,
+    task_id: &str,
+    event_type: i16,
+) -> Result<i64> {
+    let client = harness.engine().pool.get().await?;
+    let row = client
+        .query_one(
+            "SELECT COUNT(*) as count FROM events WHERE task_instance_id = $1 AND event_type = $2",
+            &[&Uuid::parse_str(task_id)?, &event_type],
+        )
+        .await?;
+    Ok(row.get("count"))
+}
+
+/// Test that verifies no duplicate EVENT_TASK_ATTEMPT_ENDED events are created during shepherd death.
+///
+/// **Purpose**: This test should FAIL initially, proving that the duplicate event bug exists.
+/// After fixing the bug by removing the redundant fail_shepherd_tasks call, this test should PASS.
+///
+/// **Bug**: Both fail_shepherd_tasks() and scheduler.handle_shepherd_death() write
+/// EVENT_TASK_ATTEMPT_ENDED events, causing duplicates in the database.
+///
+/// **Test Flow**:
+/// 1. Start orchestrator and shepherd with fast timeouts
+/// 2. Submit a task that gets dispatched to the shepherd
+/// 3. Kill the shepherd to trigger death detection
+/// 4. Wait for complete cleanup (both timeout and death threshold)
+/// 5. **Assert exactly 1 EVENT_TASK_ATTEMPT_ENDED event per task** (should fail initially)
+///
+/// **Expected Results**:
+/// - **Before Fix**: Test FAILS - finds 2 EVENT_TASK_ATTEMPT_ENDED events per task
+/// - **After Fix**: Test PASSES - finds exactly 1 EVENT_TASK_ATTEMPT_ENDED event per task
+#[tokio::test]
+async fn test_no_duplicate_events_on_shepherd_death() -> Result<()> {
+    println!("🚀 Starting duplicate event detection test");
+
+    let config = short_timeout_config();
+    let mut harness = IntegrationTestEnvironment::with_config(config).await?;
+
+    // Clone client for task submission
+    let mut client = harness.client.clone();
+
+    // Start shepherd
+    let shepherd_handle = harness.start_shepherd().await?;
+    println!("✅ Shepherd started");
+
+    // Give shepherd time to register
+    sleep(Duration::from_millis(500)).await;
+
+    // Submit a test task
+    let task_id = submit_test_task_with_client(&mut client, "duplicate_event_test").await?;
+    println!("✅ Task submitted: {task_id}");
+
+    // Give task time to be dispatched to shepherd
+    sleep(Duration::from_millis(500)).await;
+
+    // Kill shepherd to trigger death detection
+    println!("💀 Killing shepherd to trigger death detection...");
+    shepherd_handle.shutdown().await?;
+
+    // Wait for full death detection cycle to complete
+    // timeout_secs (2s) + dead_threshold_secs (4s) + buffer for processing
+    println!("⏳ Waiting for complete death detection cycle...");
+    sleep(Duration::from_secs(7)).await;
+
+    // Verify task was failed
+    verify_task_failed_due_to_infrastructure(&harness, &task_id).await?;
+    println!("✅ Task properly failed due to shepherd death");
+
+    // **CRITICAL TEST**: Count EVENT_TASK_ATTEMPT_ENDED events for this task
+    let attempt_ended_count =
+        count_task_events(&harness, &task_id, azolla::EVENT_TASK_ATTEMPT_ENDED).await?;
+
+    println!("📊 Found {attempt_ended_count} EVENT_TASK_ATTEMPT_ENDED events for task {task_id}");
+
+    // **This assertion should FAIL initially (proving duplicate bug exists)**
+    // **After fixing the bug, this assertion should PASS**
+    assert_eq!(
+        attempt_ended_count, 1,
+        "Expected exactly 1 EVENT_TASK_ATTEMPT_ENDED event per failed task, but found {attempt_ended_count}. \
+         This indicates duplicate events are being written during shepherd death handling."
+    );
+
+    println!("✅ No duplicate events detected - exactly 1 EVENT_TASK_ATTEMPT_ENDED event per task");
+    Ok(())
+}

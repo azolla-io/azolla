@@ -81,6 +81,28 @@ impl Default for ShepherdConfig {
     }
 }
 
+impl ShepherdConfig {
+    /// Validate the shepherd configuration parameters
+    pub fn validate(&self) -> Result<(), String> {
+        if self.timeout_secs == 0 {
+            return Err("timeout_secs must be greater than 0".to_string());
+        }
+
+        if self.dead_threshold_secs == 0 {
+            return Err("dead_threshold_secs must be greater than 0".to_string());
+        }
+
+        if self.dead_threshold_secs <= self.timeout_secs {
+            return Err(format!(
+                "dead_threshold_secs ({}) must be greater than timeout_secs ({})",
+                self.dead_threshold_secs, self.timeout_secs
+            ));
+        }
+
+        Ok(())
+    }
+}
+
 fn default_shepherd_timeout_secs() -> u64 {
     300
 }
