@@ -501,21 +501,23 @@ impl TaskSetRegistry {
             .unwrap_or_default()
     }
 
-    /// Get shepherd tasks already grouped by domain - efficient O(domains × tasks) operation
+    /// Get shepherd tasks already grouped by domain - efficient O(tasks) operation
     /// This eliminates the need for separate get_shepherd_tasks + group_tasks_by_domain calls
     pub fn get_shepherd_tasks_by_domain(&self, shepherd_uuid: Uuid) -> HashMap<String, Vec<Uuid>> {
         let task_ids = self.get_shepherd_tasks(shepherd_uuid);
         let mut tasks_by_domain = HashMap::new();
         let domains = self.domains.lock().unwrap();
 
-        // Single pass through domains, checking all tasks against each domain
-        for (domain_name, taskset) in domains.iter() {
-            for &task_id in &task_ids {
+        // Single pass through tasks, finding the domain for each task
+        for &task_id in &task_ids {
+            // Find which domain this task belongs to
+            for (domain_name, taskset) in domains.iter() {
                 if taskset.get_task(task_id).is_some() {
                     tasks_by_domain
                         .entry(domain_name.clone())
                         .or_insert_with(Vec::new)
                         .push(task_id);
+                    break; // Found the domain, no need to check other domains for this task
                 }
             }
         }

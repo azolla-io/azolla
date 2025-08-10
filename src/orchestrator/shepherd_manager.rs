@@ -85,6 +85,100 @@ pub enum ShepherdManagerMessage {
     },
 }
 
+impl std::fmt::Debug for ShepherdManagerMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ShepherdManagerMessage::RegisterShepherd {
+                uuid,
+                max_concurrency,
+                ..
+            } => f
+                .debug_struct("RegisterShepherd")
+                .field("uuid", uuid)
+                .field("max_concurrency", max_concurrency)
+                .field("tx", &"<ShepherdTxChannel>")
+                .field("response_tx", &"<oneshot::Sender>")
+                .finish(),
+            ShepherdManagerMessage::UpdateShepherdStatus {
+                uuid,
+                current_load,
+                available_capacity,
+                ..
+            } => f
+                .debug_struct("UpdateShepherdStatus")
+                .field("uuid", uuid)
+                .field("current_load", current_load)
+                .field("available_capacity", available_capacity)
+                .field("response_tx", &"<oneshot::Sender>")
+                .finish(),
+            ShepherdManagerMessage::MarkShepherdAlive { uuid, .. } => f
+                .debug_struct("MarkShepherdAlive")
+                .field("uuid", uuid)
+                .field("response_tx", &"<oneshot::Sender>")
+                .finish(),
+            ShepherdManagerMessage::MarkShepherdDisconnected { uuid, .. } => f
+                .debug_struct("MarkShepherdDisconnected")
+                .field("uuid", uuid)
+                .field("response_tx", &"<oneshot::Sender>")
+                .finish(),
+            ShepherdManagerMessage::FindAvailableShepherds { batch, .. } => f
+                .debug_struct("FindAvailableShepherds")
+                .field("batch", batch)
+                .field("response_tx", &"<oneshot::Sender>")
+                .finish(),
+            ShepherdManagerMessage::EnqueueTask { domain, task, .. } => f
+                .debug_struct("EnqueueTask")
+                .field("domain", domain)
+                .field("task", task)
+                .field("response_tx", &"<oneshot::Sender>")
+                .finish(),
+            ShepherdManagerMessage::DecrementInFlightTask { domain, .. } => f
+                .debug_struct("DecrementInFlightTask")
+                .field("domain", domain)
+                .field("response_tx", &"<oneshot::Sender>")
+                .finish(),
+            ShepherdManagerMessage::GetStats { .. } => f
+                .debug_struct("GetStats")
+                .field("response_tx", &"<oneshot::Sender>")
+                .finish(),
+            ShepherdManagerMessage::IsShepherdRegistered { uuid, .. } => f
+                .debug_struct("IsShepherdRegistered")
+                .field("uuid", uuid)
+                .field("response_tx", &"<oneshot::Sender>")
+                .finish(),
+            ShepherdManagerMessage::GetShepherdStatus { uuid, .. } => f
+                .debug_struct("GetShepherdStatus")
+                .field("uuid", uuid)
+                .field("response_tx", &"<oneshot::Sender>")
+                .finish(),
+            ShepherdManagerMessage::GetActiveDomains { .. } => f
+                .debug_struct("GetActiveDomains")
+                .field("response_tx", &"<oneshot::Sender>")
+                .finish(),
+            ShepherdManagerMessage::GetDomainStats { domain, .. } => f
+                .debug_struct("GetDomainStats")
+                .field("domain", domain)
+                .field("response_tx", &"<oneshot::Sender>")
+                .finish(),
+            ShepherdManagerMessage::RemoveShepherd { uuid, .. } => f
+                .debug_struct("RemoveShepherd")
+                .field("uuid", uuid)
+                .field("response_tx", &"<oneshot::Sender>")
+                .finish(),
+            ShepherdManagerMessage::DispatchTick => f.debug_struct("DispatchTick").finish(),
+            ShepherdManagerMessage::HealthCheckTick => f.debug_struct("HealthCheckTick").finish(),
+            ShepherdManagerMessage::SetSchedulerRegistry { .. } => f
+                .debug_struct("SetSchedulerRegistry")
+                .field("scheduler_registry", &"<SchedulerRegistry>")
+                .finish(),
+            ShepherdManagerMessage::Shutdown { .. } => f
+                .debug_struct("Shutdown")
+                .field("response_tx", &"<oneshot::Sender>")
+                .finish(),
+        }
+    }
+}
+
 /// Type alias for shepherd communication channel
 type ShepherdTxChannel = mpsc::Sender<Result<ServerMsg, Status>>;
 #[allow(dead_code)]
