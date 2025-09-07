@@ -342,7 +342,6 @@ impl IntegrationTestEnvironment {
     /// to build it automatically.
     pub async fn ensure_worker_binary(&self) -> Result<()> {
         let binary_path = &self.shepherd_config.worker_binary_path;
-
         if !std::path::Path::new(binary_path).exists() {
             log::info!("Worker binary not found at {binary_path}, building...");
 

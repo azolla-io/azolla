@@ -22,9 +22,9 @@ async fn test_default_group_routing() {
 
     // Start orchestrator and clients
     let mut harness = IntegrationTestEnvironment::new().await.unwrap();
-
     // Ensure worker binary exists to avoid any shepherd-side startup hiccups
     harness.ensure_worker_binary().await.unwrap();
+
 
     // Configure shepherd in domain with default group "default"
     harness.shepherd_config.domain = DOMAIN.to_string();
@@ -82,9 +82,9 @@ async fn test_designated_group_routing() {
     let _ = env_logger::try_init();
 
     let mut harness = IntegrationTestEnvironment::new().await.unwrap();
-
     // Ensure worker binary exists to avoid any shepherd-side startup hiccups
     harness.ensure_worker_binary().await.unwrap();
+
 
     // Shepherd A in group "blue"
     harness.shepherd_config.domain = DOMAIN.to_string();

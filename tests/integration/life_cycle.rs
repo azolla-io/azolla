@@ -84,9 +84,6 @@ async fn test_shutdown_with_pending_retries() {
     let mut harness = IntegrationTestEnvironment::new().await.unwrap();
     harness.ensure_worker_binary().await.unwrap();
 
-    // Ensure shepherd registers to the same domain as the tasks
-    harness.shepherd_config.domain = "lifecycle_test".to_string();
-
     let shepherd_uuid = harness.shepherd_config.uuid;
     let _shepherd = harness.start_shepherd().await.unwrap();
 
@@ -200,22 +197,17 @@ async fn test_shutdown_with_multiple_domains() {
     let mut harness = IntegrationTestEnvironment::new().await.unwrap();
     harness.ensure_worker_binary().await.unwrap();
 
-    // Start one shepherd per domain to ensure tasks get dispatched and first attempts fail
-    let domains = vec!["domain_a", "domain_b", "domain_c"];
-    for domain in &domains {
-        harness.shepherd_config.domain = domain.to_string();
-        harness.shepherd_config.worker_grpc_port = azolla::test_harness::find_available_port();
-        harness.shepherd_config.uuid = uuid::Uuid::new_v4();
-        let shepherd_uuid = harness.shepherd_config.uuid;
-        let _shepherd = harness.start_shepherd().await.unwrap();
-        let registered = harness
-            .wait_for_shepherd_registration(shepherd_uuid, Duration::from_secs(10))
-            .await
-            .unwrap();
-        assert!(registered, "Shepherd should register within 10 seconds");
-    }
+    let shepherd_uuid = harness.shepherd_config.uuid;
+    let _shepherd = harness.start_shepherd().await.unwrap();
+
+    let registered = harness
+        .wait_for_shepherd_registration(shepherd_uuid, Duration::from_secs(10))
+        .await
+        .unwrap();
+    assert!(registered, "Shepherd should register within 10 seconds");
 
     // Create tasks in multiple domains
+    let domains = vec!["domain_a", "domain_b", "domain_c"];
     let mut all_task_ids = Vec::new();
 
     for domain in &domains {
