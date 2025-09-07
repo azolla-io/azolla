@@ -1,0 +1,19 @@
+# Gemini Code Assist Configuration
+# Disable automatic reviews - only perform when manually triggered
+
+code_review:
+  # Keep code review enabled overall
+  disable: false
+  
+  # Set higher threshold to reduce noise
+  comment_severity_threshold: "HIGH"
+  
+  # Limit number of comments
+  max_review_comments: 10
+  
+  # Disable automatic reviews when PRs are opened
+  pull_request_opened:
+    help: false
+    summary: false
+    code_review: false
+    include_drafts: false
