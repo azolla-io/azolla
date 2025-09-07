@@ -295,12 +295,17 @@ impl IntegrationTestEnvironment {
 
     /// Check if a specific shepherd is registered and connected with the orchestrator
     pub async fn is_shepherd_registered(&self, shepherd_uuid: uuid::Uuid) -> Result<bool> {
-        Ok(self
-            .engine()
-            .shepherd_registry
-            .get_or_create_manager("test")
-            .is_shepherd_registered(shepherd_uuid)
-            .await)
+        // With per-domain ShepherdManagers, we need to check all domains
+        // since we don't know which domain the shepherd is in
+        let managers = self.engine().shepherd_registry.list_managers();
+
+        for manager in managers {
+            if manager.is_shepherd_registered(shepherd_uuid).await {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     /// Wait for a specific shepherd to be registered, with timeout

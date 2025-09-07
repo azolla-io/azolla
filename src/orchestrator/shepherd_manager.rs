@@ -1379,9 +1379,16 @@ impl ActorShepherdManager {
             }
         }
 
+        // Get the shepherd group for event metadata
+        let shepherd_group = self
+            .shepherds
+            .get(&shepherd_id)
+            .map(|s| s.group.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+
         // Write attempt started event
         if let Err(e) = self
-            .write_attempt_started_event(task, shepherd_id, domain)
+            .write_attempt_started_event(task, shepherd_id, domain, &shepherd_group)
             .await
         {
             warn!(
@@ -1430,13 +1437,14 @@ impl ActorShepherdManager {
         task: &TaskDispatch,
         shepherd_id: Uuid,
         domain: &str,
+        shepherd_group: &str,
     ) -> Result<()> {
         let event_metadata = serde_json::json!({
             "task_id": task.task_id,
             "shepherd_uuid": shepherd_id,
             "attempt_number": task.attempt_number,
             "task_name": task.task_name,
-            "shepherd_group": task.shepherd_group,
+            "shepherd_group": shepherd_group,
         });
 
         let event_record = crate::orchestrator::event_stream::EventRecord {
