@@ -88,7 +88,8 @@ async fn handle_shepherd_connection(
 ) -> Result<()> {
     let mut shepherd_uuid: Option<Uuid> = None;
     // Cache the domain-specific manager after Hello for efficient lookups
-    let mut cached_domain_manager: Option<crate::orchestrator::shepherd_manager::ShepherdManager> = None;
+    let mut shepherd_manager: Option<crate::orchestrator::shepherd_manager::ShepherdManager> =
+        None;
     let mut last_message_time = Instant::now();
     let mut ping_check_interval = tokio::time::interval(liveness_probe_threshold / 2);
 
@@ -99,7 +100,7 @@ async fn handle_shepherd_connection(
                     Some(Ok(client_msg)) => {
                         last_message_time = Instant::now();
                         if let (Some(uuid), Some(manager)) =
-                            (shepherd_uuid, cached_domain_manager.clone())
+                            (shepherd_uuid, shepherd_manager.clone())
                         {
                             if let Err(e) = manager.mark_shepherd_alive(uuid).await {
                                 error!("Failed to mark shepherd {uuid} as alive: {e}");
@@ -110,7 +111,7 @@ async fn handle_shepherd_connection(
                             client_msg,
                             &mut shepherd_uuid,
                             &shepherd_registry,
-                            &mut cached_domain_manager,
+                            &mut shepherd_manager,
                             &scheduler_registry,
                             &tx
                         ).await {
@@ -130,7 +131,7 @@ async fn handle_shepherd_connection(
             }
 
             _ = ping_check_interval.tick() => {
-                if let (Some(uuid), Some(_manager)) = (shepherd_uuid, cached_domain_manager.clone()) {
+                if let (Some(uuid), Some(_manager)) = (shepherd_uuid, shepherd_manager.clone()) {
                     let elapsed = last_message_time.elapsed();
                     if elapsed > liveness_probe_threshold {
                         let ping = orchestrator::ServerMsg {
@@ -151,7 +152,7 @@ async fn handle_shepherd_connection(
         }
     }
 
-    if let (Some(uuid), Some(manager)) = (shepherd_uuid, cached_domain_manager) {
+    if let (Some(uuid), Some(manager)) = (shepherd_uuid, shepherd_manager) {
         // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
         info!("Shepherd {uuid} connection dropped, marking as temporarily unavailable");
         if let Err(e) = manager.mark_shepherd_disconnected(uuid).await {
@@ -166,21 +167,21 @@ async fn handle_client_message(
     client_msg: ClientMsg,
     shepherd_uuid: &mut Option<Uuid>,
     shepherd_registry: &ShepherdManagerRegistry,
-    cached_domain_manager: &mut Option<crate::orchestrator::shepherd_manager::ShepherdManager>,
+    shepherd_manager: &mut Option<crate::orchestrator::shepherd_manager::ShepherdManager>,
     scheduler_registry: &Arc<crate::orchestrator::scheduler::SchedulerRegistry>,
     tx: &mpsc::Sender<Result<ServerMsg, tonic::Status>>,
 ) -> Result<()> {
     match client_msg.kind {
         Some(client_msg::Kind::Hello(hello)) => {
             let manager = handle_hello_message(hello, shepherd_uuid, shepherd_registry, tx).await?;
-            *cached_domain_manager = Some(manager);
+            *shepherd_manager = Some(manager);
         }
         Some(client_msg::Kind::Ack(ack)) => {
             handle_ack_message(ack, shepherd_uuid, &None).await?;
         }
         Some(client_msg::Kind::Status(status)) => {
-            handle_status_message(status, shepherd_uuid, cached_domain_manager, shepherd_registry)
-                .await?;
+            handle_status_message(status, shepherd_uuid, shepherd_manager, shepherd_registry)
+            .await?;
         }
         Some(client_msg::Kind::TaskResult(task_result)) => {
             handle_task_result_message(
@@ -246,12 +247,12 @@ async fn handle_ack_message(
 async fn handle_status_message(
     status: orchestrator::Status,
     shepherd_uuid: &mut Option<Uuid>,
-    cached_domain_manager: &Option<crate::orchestrator::shepherd_manager::ShepherdManager>,
+    shepherd_manager: &Option<crate::orchestrator::shepherd_manager::ShepherdManager>,
     shepherd_registry: &ShepherdManagerRegistry,
 ) -> Result<()> {
     if let Some(uuid) = shepherd_uuid {
         // Prefer the cached domain manager if available
-        if let Some(manager) = cached_domain_manager.clone() {
+        if let Some(manager) = shepherd_manager.clone() {
             if let Err(e) = manager
                 .update_shepherd_status(*uuid, status.current_load, status.available_capacity)
                 .await
