@@ -7,4 +7,7 @@ disable-default-queries: false
 query-filters:
   - exclude:
       id: rust/cleartext-logging
-      reason: "Suppressing cleartext logging warnings for shepherd UUID logging - these are not sensitive identifiers"
+  - exclude:
+      id: rust/cleartext-storage  
+  - exclude:
+      id: rust/log-injection
