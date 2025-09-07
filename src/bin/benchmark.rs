@@ -241,6 +241,7 @@ fn generate_random_task_data(
         args,
         kwargs: serde_json::to_string(&kwargs_obj).unwrap_or_default(),
         flow_instance_id: None,
+        shepherd_group: None,
     }
 }
 

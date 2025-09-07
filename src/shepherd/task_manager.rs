@@ -407,6 +407,8 @@ mod tests {
             reconnect_backoff_secs: 5,
             worker_timeout_secs: Some(300),
             log_level: Some("info".to_string()),
+            domain: "test".to_string(),
+            shepherd_group: "default".to_string(),
         }
     }
 

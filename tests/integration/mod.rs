@@ -26,6 +26,7 @@
 //! - Available ports for orchestrator and shepherd services
 //! - Worker binary (`azolla-worker`) built and available
 
+pub mod group_routing;
 pub mod life_cycle;
 pub mod retry_mechanism;
 pub mod shepherd_management;

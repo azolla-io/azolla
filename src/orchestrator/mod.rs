@@ -6,6 +6,7 @@ pub mod event_stream;
 pub mod retry_policy;
 pub mod scheduler;
 pub mod shepherd_manager;
+pub mod shepherd_registry;
 pub mod startup;
 pub mod taskset;
 
@@ -14,4 +15,5 @@ pub use client_service::ClientServiceImpl;
 pub use cluster_service::ClusterServiceImpl;
 pub use engine::Engine;
 pub use scheduler::{SchedulerActor, SchedulerConfig, SchedulerRegistry};
+pub use shepherd_registry::ShepherdManagerRegistry;
 pub use startup::{OrchestratorBuilder, OrchestratorInstance, RunningOrchestratorInstance};

@@ -131,6 +131,8 @@ impl IntegrationTestEnvironment {
             heartbeat_interval_secs: 30,
             reconnect_backoff_secs: 5,
             worker_timeout_secs: Some(300),
+            domain: "test".to_string(),
+            shepherd_group: "default".to_string(),
         };
 
         Ok(Self {
@@ -281,18 +283,29 @@ impl IntegrationTestEnvironment {
     }
 
     pub async fn get_shepherd_count(&self) -> Result<i64> {
-        // Get actual shepherd count from ShepherdManager
-        let stats = self.engine().shepherd_manager.get_stats().await;
+        // Get shepherd count from any domain manager (tests use single domain 'test')
+        let stats = self
+            .engine()
+            .shepherd_registry
+            .get_or_create_manager("test")
+            .get_stats()
+            .await;
         Ok(stats.connected_shepherds as i64)
     }
 
     /// Check if a specific shepherd is registered and connected with the orchestrator
     pub async fn is_shepherd_registered(&self, shepherd_uuid: uuid::Uuid) -> Result<bool> {
-        Ok(self
-            .engine()
-            .shepherd_manager
-            .is_shepherd_registered(shepherd_uuid)
-            .await)
+        // With per-domain ShepherdManagers, we need to check all domains
+        // since we don't know which domain the shepherd is in
+        let managers = self.engine().shepherd_registry.list_managers();
+
+        for manager in managers {
+            if manager.is_shepherd_registered(shepherd_uuid).await {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     /// Wait for a specific shepherd to be registered, with timeout
@@ -334,7 +347,6 @@ impl IntegrationTestEnvironment {
     /// to build it automatically.
     pub async fn ensure_worker_binary(&self) -> Result<()> {
         let binary_path = &self.shepherd_config.worker_binary_path;
-
         if !std::path::Path::new(binary_path).exists() {
             log::info!("Worker binary not found at {binary_path}, building...");
 
@@ -372,6 +384,37 @@ impl IntegrationTestEnvironment {
         }
 
         Ok(())
+    }
+
+    /// Wait for EVENT_TASK_ATTEMPT_STARTED for a task and return its metadata JSON.
+    /// Useful to assert routing fields like shepherd_group and shepherd_uuid.
+    pub async fn wait_for_attempt_started_metadata(
+        &self,
+        task_id: &uuid::Uuid,
+        domain: &str,
+        timeout: Duration,
+    ) -> Result<Option<serde_json::Value>> {
+        let start = std::time::Instant::now();
+        let pool = &self.engine().pool;
+        let client = pool.get().await?;
+
+        while start.elapsed() < timeout {
+            let row = client
+                .query_opt(
+                    "SELECT metadata FROM events WHERE task_instance_id = $1 AND domain = $2 AND event_type = $3 ORDER BY event_id DESC LIMIT 1",
+                    &[task_id, &domain, &crate::EVENT_TASK_ATTEMPT_STARTED],
+                )
+                .await?;
+
+            if let Some(row) = row {
+                let metadata: serde_json::Value = row.get("metadata");
+                return Ok(Some(metadata));
+            }
+
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        Ok(None)
     }
 }
 
@@ -444,6 +487,7 @@ impl TaskTestData {
             })
             .to_string(),
             flow_instance_id: None,
+            shepherd_group: None,
         }
     }
 
@@ -466,6 +510,7 @@ impl TaskTestData {
             })
             .to_string(),
             flow_instance_id: None,
+            shepherd_group: None,
         }
     }
 
@@ -489,6 +534,7 @@ impl TaskTestData {
             })
             .to_string(),
             flow_instance_id: None,
+            shepherd_group: None,
         }
     }
 }

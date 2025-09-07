@@ -42,6 +42,8 @@ message CreateTaskRequest {
   repeated string args = 4;
   string kwargs = 5;
   optional string flow_instance_id = 6;
+  // Optional shepherd group for dispatch scoping. If omitted, domain's default applies.
+  optional string shepherd_group = 7;
 }
 
 message CreateTaskResponse {
@@ -119,6 +121,9 @@ message ServerMsg {
 message Hello {
   string shepherd_uuid = 1;
   uint32 max_concurrency = 2;
+  // Domain and shepherd group this shepherd serves
+  string domain = 3;
+  string shepherd_group = 4;
 }
 
 message Ack {

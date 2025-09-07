@@ -25,6 +25,7 @@ pub enum ShepherdManagerMessage {
         uuid: Uuid,
         max_concurrency: u32,
         tx: ShepherdTxChannel,
+        group: String,
         response_tx: oneshot::Sender<Result<()>>,
     },
     UpdateShepherdStatus {
@@ -99,6 +100,7 @@ pub struct TaskDispatch {
     pub cpu_limit: Option<u32>,
     pub flow_instance_id: Option<Uuid>,
     pub attempt_number: i32,
+    pub shepherd_group: Option<String>,
 }
 
 /// Per-domain virtual queue for task dispatch
@@ -140,31 +142,30 @@ impl VirtualQueue {
     pub fn enqueue(&mut self, task: TaskDispatch) -> Result<()> {
         let task_id = task.task_id;
         debug!(
-            "VirtualQueue::enqueue - Adding task {} to queue (current queue_len: {})",
-            task_id,
-            self.queue.len()
+            "VirtualQueue::enqueue - Adding task {task_id} to queue (current queue_len: {queue_len})",
+            task_id = task_id,
+            queue_len = self.queue.len()
         );
         self.queue.push_back(task);
         debug!(
-            "VirtualQueue::enqueue - Task {} added, new queue_len: {}",
-            task_id,
-            self.queue.len()
+            "VirtualQueue::enqueue - Task {task_id} added, new queue_len: {queue_len}",
+            task_id = task_id,
+            queue_len = self.queue.len()
         );
         Ok(())
     }
 
     /// Dequeue a task for dispatch (if any available)
     pub fn dequeue(&mut self) -> Option<TaskDispatch> {
-        debug!("VirtualQueue::dequeue - can_dispatch: {}, queue_empty: {}, queue_len: {}, in_flight: {}", 
-            self.can_dispatch(), self.queue.is_empty(), self.queue.len(), self.in_flight_count());
+        debug!("VirtualQueue::dequeue - can_dispatch: {can_dispatch}, queue_empty: {queue_empty}, queue_len: {queue_len}, in_flight: {in_flight}", 
+            can_dispatch = self.can_dispatch(), queue_empty = self.queue.is_empty(), queue_len = self.queue.len(), in_flight = self.in_flight_count());
         if self.can_dispatch() && !self.queue.is_empty() {
             let task = self.queue.pop_front();
             if let Some(ref task) = task {
-                self.in_flight_count.fetch_add(1, AtomicOrdering::Relaxed);
                 debug!(
-                    "VirtualQueue::dequeue - Successfully dequeued task {}, new in_flight: {}",
-                    task.task_id,
-                    self.in_flight_count()
+                    "VirtualQueue::dequeue - Dequeued task {task_id} (in_flight unchanged: {in_flight})",
+                    task_id = task.task_id,
+                    in_flight = self.in_flight_count()
                 );
             }
             task
@@ -178,9 +179,9 @@ impl VirtualQueue {
     pub fn decrement_in_flight(&self) {
         let previous = self.in_flight_count.fetch_sub(1, AtomicOrdering::Relaxed);
         info!(
-            "🔻 VirtualQueue::decrement_in_flight - in_flight count: {} -> {}",
-            previous,
-            previous.saturating_sub(1)
+            "🔻 VirtualQueue::decrement_in_flight - in_flight count: {previous} -> {new_count}",
+            previous = previous,
+            new_count = previous.saturating_sub(1)
         );
 
         // Add underflow protection
@@ -197,6 +198,16 @@ impl VirtualQueue {
     /// Get current in-flight count
     pub fn in_flight_count(&self) -> u32 {
         self.in_flight_count.load(AtomicOrdering::Relaxed)
+    }
+
+    /// Increment in-flight counter when a task is successfully dispatched
+    pub fn increment_in_flight(&self) {
+        let previous = self.in_flight_count.fetch_add(1, AtomicOrdering::Relaxed);
+        debug!(
+            "🔺 VirtualQueue::increment_in_flight - in_flight count: {previous} -> {new_count}",
+            previous = previous,
+            new_count = previous.saturating_add(1)
+        );
     }
 }
 
@@ -218,10 +229,11 @@ pub struct ShepherdStatus {
     pub connected_at: DateTime<Utc>,
     pub status: ShepherdConnectionStatus,
     pub tx: Option<ShepherdTxChannel>,
+    pub group: String,
 }
 
 impl ShepherdStatus {
-    pub fn new(uuid: Uuid, max_concurrency: u32) -> Self {
+    pub fn new(uuid: Uuid, max_concurrency: u32, group: String) -> Self {
         let now = Utc::now();
         Self {
             uuid,
@@ -231,10 +243,11 @@ impl ShepherdStatus {
             connected_at: now,
             status: ShepherdConnectionStatus::Connected,
             tx: None,
+            group,
         }
     }
 
-    pub fn with_tx(uuid: Uuid, max_concurrency: u32, tx: ShepherdTxChannel) -> Self {
+    pub fn with_tx(uuid: Uuid, max_concurrency: u32, group: String, tx: ShepherdTxChannel) -> Self {
         let now = Utc::now();
         Self {
             uuid,
@@ -244,6 +257,7 @@ impl ShepherdStatus {
             connected_at: now,
             status: ShepherdConnectionStatus::Connected,
             tx: Some(tx),
+            group,
         }
     }
 
@@ -278,8 +292,8 @@ impl ShepherdStatus {
         // Validate that current_load + available_capacity == max_concurrency
         if current_load + available_capacity != self.max_concurrency {
             warn!(
-                "Shepherd {} reported inconsistent capacity: current={}, available={}, max={}",
-                self.uuid, current_load, available_capacity, self.max_concurrency
+                "Shepherd {uuid} reported inconsistent capacity: current={current_load}, available={available_capacity}, max={max_concurrency}",
+                uuid = self.uuid, current_load = current_load, available_capacity = available_capacity, max_concurrency = self.max_concurrency
             );
         }
     }
@@ -294,7 +308,10 @@ impl ShepherdStatus {
         cpu_limit: Option<u32>,
     ) -> Result<()> {
         let tx = self.tx.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("Shepherd {} is not connected (no tx channel)", self.uuid)
+            anyhow::anyhow!(
+                "Shepherd {uuid} is not connected (no tx channel)",
+                uuid = self.uuid
+            )
         })?;
 
         let task = common::Task {
@@ -310,12 +327,20 @@ impl ShepherdStatus {
             kind: Some(crate::proto::orchestrator::server_msg::Kind::Task(task)),
         };
 
-        tx.send(Ok(server_msg))
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to send task to shepherd {}: {}", self.uuid, e))?;
+        tx.send(Ok(server_msg)).await.map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to send task to shepherd {uuid}: {error}",
+                uuid = self.uuid,
+                error = e
+            )
+        })?;
 
         // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
-        info!("Dispatched task {} to shepherd {}", task_id, self.uuid);
+        info!(
+            "Dispatched task {task_id} to shepherd {shepherd_uuid}",
+            task_id = task_id,
+            shepherd_uuid = self.uuid
+        );
         Ok(())
     }
 }
@@ -351,6 +376,7 @@ impl ShepherdManager {
         &self,
         uuid: Uuid,
         max_concurrency: u32,
+        group: String,
         tx: ShepherdTxChannel,
     ) -> Result<()> {
         let (response_tx, response_rx) = oneshot::channel();
@@ -360,6 +386,7 @@ impl ShepherdManager {
                 uuid,
                 max_concurrency,
                 tx,
+                group,
                 response_tx,
             })
             .await
@@ -712,10 +739,11 @@ impl ActorShepherdManager {
                 uuid,
                 max_concurrency,
                 tx,
+                group,
                 response_tx,
             } => {
                 let result = self
-                    .register_shepherd_internal(uuid, max_concurrency, tx)
+                    .register_shepherd_internal(uuid, max_concurrency, group, tx)
                     .await;
                 let _ = response_tx.send(result);
             }
@@ -823,9 +851,9 @@ impl ActorShepherdManager {
         // Process each domain's virtual queue
         let domains: Vec<String> = self.virtual_queues.keys().cloned().collect();
         debug!(
-            "DISPATCH: handle_dispatch_tick called - processing {} domains: {:?}",
-            domains.len(),
-            domains
+            "DISPATCH: handle_dispatch_tick called - processing {count} domains: {domains:?}",
+            count = domains.len(),
+            domains = domains
         );
 
         #[cfg(test)]
@@ -878,15 +906,15 @@ impl ActorShepherdManager {
 
         debug!("SHEPHERD_SELECTION: Starting round-robin selection for {batch} tasks");
         debug!(
-            "SHEPHERD_SELECTION: Total registered shepherds: {}",
-            self.shepherd_keys.len()
+            "SHEPHERD_SELECTION: Total registered shepherds: {count}",
+            count = self.shepherd_keys.len()
         );
 
         if batch == 0 || self.shepherd_keys.is_empty() {
             debug!(
-                "SHEPHERD_SELECTION: Early return - batch={}, shepherd_keys_len={}",
-                batch,
-                self.shepherd_keys.len()
+                "SHEPHERD_SELECTION: Early return - batch={batch}, shepherd_keys_len={shepherd_count}",
+                batch = batch,
+                shepherd_count = self.shepherd_keys.len()
             );
             return result;
         }
@@ -908,8 +936,8 @@ impl ActorShepherdManager {
                 if let Some(uuid) = self.shepherd_keys.pop_front() {
                     debug!("SHEPHERD_SELECTION: Checking shepherd {uuid}");
                     if let Some(shepherd_status) = self.shepherds.get(&uuid) {
-                        debug!("SHEPHERD_SELECTION: Shepherd {} - status: {:?}, available_capacity: {}", 
-                            uuid, shepherd_status.status, shepherd_status.available_capacity());
+                        debug!("SHEPHERD_SELECTION: Shepherd {uuid} - status: {status:?}, available_capacity: {capacity}", 
+                            uuid = uuid, status = shepherd_status.status, capacity = shepherd_status.available_capacity());
                         // Shepherd exists - check if available and has capacity
                         if matches!(shepherd_status.status, ShepherdConnectionStatus::Connected)
                             && shepherd_status.available_capacity() > 0
@@ -917,8 +945,8 @@ impl ActorShepherdManager {
                             // Check if this shepherd still has capacity for more assignments
                             let current_assignments =
                                 result.iter().filter(|&&id| id == uuid).count() as u32;
-                            debug!("SHEPHERD_SELECTION: Shepherd {} - current_assignments in batch: {}, available_capacity: {}", 
-                                uuid, current_assignments, shepherd_status.available_capacity());
+                            debug!("SHEPHERD_SELECTION: Shepherd {uuid} - current_assignments in batch: {current_assignments}, available_capacity: {capacity}", 
+                                uuid = uuid, current_assignments = current_assignments, capacity = shepherd_status.available_capacity());
                             if current_assignments < shepherd_status.available_capacity() {
                                 debug!("SHEPHERD_SELECTION: Selected shepherd {uuid} for task assignment");
                                 result.push(uuid);
@@ -928,8 +956,8 @@ impl ActorShepherdManager {
                                 debug!("SHEPHERD_SELECTION: Shepherd {uuid} already at capacity for this batch");
                             }
                         } else {
-                            debug!("SHEPHERD_SELECTION: Shepherd {} not available - status: {:?}, capacity: {}", 
-                                uuid, shepherd_status.status, shepherd_status.available_capacity());
+                            debug!("SHEPHERD_SELECTION: Shepherd {uuid} not available - status: {status:?}, capacity: {capacity}", 
+                                uuid = uuid, status = shepherd_status.status, capacity = shepherd_status.available_capacity());
                         }
 
                         // Put shepherd back at end of queue for round-robin
@@ -953,9 +981,9 @@ impl ActorShepherdManager {
         }
 
         debug!(
-            "SHEPHERD_SELECTION: Final result - selected {} shepherds: {:?}",
-            result.len(),
-            result
+            "SHEPHERD_SELECTION: Final result - selected {count} shepherds: {shepherds:?}",
+            count = result.len(),
+            shepherds = result
         );
         result
     }
@@ -965,6 +993,7 @@ impl ActorShepherdManager {
         &mut self,
         uuid: Uuid,
         max_concurrency: u32,
+        group: String,
         tx: ShepherdTxChannel,
     ) -> Result<()> {
         // Register shepherd first - do the basic registration logic inline
@@ -984,8 +1013,8 @@ impl ActorShepherdManager {
         }
 
         // New shepherd registration
-        let mut shepherd_status = ShepherdStatus::new(uuid, max_concurrency);
-        info!("Registering new shepherd {uuid} with max_concurrency={max_concurrency}");
+        let mut shepherd_status = ShepherdStatus::new(uuid, max_concurrency, group.clone());
+        info!("Registering new shepherd {uuid} with max_concurrency={max_concurrency} in group {group}");
 
         // Write registration event
         let event_metadata = serde_json::json!({
@@ -1048,7 +1077,7 @@ impl ActorShepherdManager {
 
             Ok(())
         } else {
-            Err(anyhow::anyhow!("Shepherd {} not found", uuid))
+            Err(anyhow::anyhow!("Shepherd {uuid} not found", uuid = uuid))
         }
     }
 
@@ -1058,7 +1087,7 @@ impl ActorShepherdManager {
             shepherd.update_last_seen();
             Ok(())
         } else {
-            Err(anyhow::anyhow!("Shepherd {} not found", uuid))
+            Err(anyhow::anyhow!("Shepherd {uuid} not found", uuid = uuid))
         }
     }
 
@@ -1069,7 +1098,7 @@ impl ActorShepherdManager {
             shepherd.clear_tx();
             Ok(())
         } else {
-            Err(anyhow::anyhow!("Shepherd {} not found", uuid))
+            Err(anyhow::anyhow!("Shepherd {uuid} not found", uuid = uuid))
         }
     }
 
@@ -1098,7 +1127,10 @@ impl ActorShepherdManager {
             queue.decrement_in_flight();
             Ok(())
         } else {
-            Err(anyhow::anyhow!("Domain {} not found", domain))
+            Err(anyhow::anyhow!(
+                "Domain {domain} not found",
+                domain = domain
+            ))
         }
     }
 
@@ -1172,7 +1204,7 @@ impl ActorShepherdManager {
             info!("Removed shepherd {uuid}");
             Ok(())
         } else {
-            Err(anyhow::anyhow!("Shepherd {} not found", uuid))
+            Err(anyhow::anyhow!("Shepherd {uuid} not found", uuid = uuid))
         }
     }
 
@@ -1194,8 +1226,8 @@ impl ActorShepherdManager {
                 }
             };
 
-            debug!("DISPATCH: Domain '{}' - queue_len: {}, in_flight: {}, concurrency_limit: {}, can_dispatch: {}", 
-                domain, queue.queue_len(), queue.in_flight_count(), queue.concurrency_limit, queue.can_dispatch());
+            debug!("DISPATCH: Domain '{domain}' - queue_len: {queue_len}, in_flight: {in_flight}, concurrency_limit: {concurrency_limit}, can_dispatch: {can_dispatch}", 
+                domain = domain, queue_len = queue.queue_len(), in_flight = queue.in_flight_count(), concurrency_limit = queue.concurrency_limit, can_dispatch = queue.can_dispatch());
 
             if !queue.can_dispatch() {
                 debug!("DISPATCH: Domain '{domain}' queue cannot dispatch (likely at capacity)");
@@ -1207,95 +1239,120 @@ impl ActorShepherdManager {
             count
         };
 
-        // Find available shepherds
-        let shepherds = self.find_available_shepherds_round_robin(available_dispatches);
-        debug!(
-            "DISPATCH: Looking for shepherds to handle {available_dispatches} dispatches for domain '{domain}'"
-        );
-        debug!(
-            "DISPATCH: Found {} available shepherds: {:?}",
-            shepherds.len(),
-            shepherds
-        );
-        #[cfg(test)]
-        eprintln!(
-            "DEBUG: Found {} shepherds for domain {domain}: {:?}",
-            shepherds.len(),
-            shepherds
-        );
-
-        if shepherds.is_empty() {
-            debug!("DISPATCH: No shepherds available for domain '{domain}' - skipping dispatch");
-            return Ok(()); // No shepherds available
-        }
-
-        // Dispatch tasks to available shepherds
-        debug!(
-            "DISPATCH: Starting task dispatch loop for {} shepherds in domain '{}'",
-            shepherds.len(),
-            domain
-        );
-        for (i, shepherd_id) in shepherds.iter().enumerate() {
-            debug!(
-                "DISPATCH: Processing shepherd {} ({}/{}): {}",
-                shepherd_id,
-                i + 1,
-                shepherds.len(),
-                shepherd_id
-            );
-
+        // Dispatch tasks to shepherds matching each task's group
+        debug!("DISPATCH: Starting task dispatch loop for domain '{domain}' with up to {available_dispatches} tasks");
+        let mut assignments_this_tick: std::collections::HashMap<Uuid, u32> =
+            std::collections::HashMap::new();
+        let mut dispatched = 0u32;
+        for _ in 0..available_dispatches {
             let task = {
                 let queue = self.virtual_queues.get_mut(domain).unwrap();
                 debug!(
-                    "DISPATCH: Attempting to dequeue task from domain '{}' (queue_len: {})",
-                    domain,
-                    queue.queue_len()
+                    "DISPATCH: Attempting to dequeue task from domain '{domain}' (queue_len: {queue_len})",
+                    domain = domain,
+                    queue_len = queue.queue_len()
                 );
                 match queue.dequeue() {
-                    Some(task) => {
-                        info!(
-                            "📋 DISPATCH: Successfully dequeued task {} for shepherd {}",
-                            task.task_id, shepherd_id
-                        );
-                        task
-                    }
+                    Some(task) => task,
                     None => {
                         info!("📭 DISPATCH: No more tasks available in domain '{domain}' queue - stopping dispatch loop");
-                        break; // No more tasks in queue
+                        break;
                     }
                 }
             };
 
-            info!("➡️ DISPATCH: Calling dispatch_task_to_shepherd_internal for task {} to shepherd {}", task.task_id, shepherd_id);
+            let effective_group = task
+                .shepherd_group
+                .clone()
+                .or_else(|| {
+                    self.domains_config
+                        .specific
+                        .get(domain)
+                        .map(|c| c.default_shepherd_group.clone())
+                })
+                .unwrap_or_else(|| "default".to_string());
 
-            if let Err(e) = self
-                .dispatch_task_to_shepherd_internal(&task, *shepherd_id, domain)
-                .await
-            {
-                error!(
-                    "DISPATCH: Failed to dispatch task {} to shepherd {shepherd_id}: {e}",
-                    task.task_id
-                );
-                // Re-enqueue the task on failure
-                let task_id = task.task_id;
-                let queue = self.virtual_queues.get_mut(domain).unwrap();
-                if let Err(enqueue_err) = queue.enqueue(task) {
-                    error!(
-                        "DISPATCH: Failed to re-enqueue task after dispatch failure: {enqueue_err}"
-                    );
-                } else {
-                    debug!("DISPATCH: Re-enqueued task {task_id} after dispatch failure");
+            debug!("DISPATCH: Selecting shepherd for group '{effective_group}'");
+            let maybe_shepherd =
+                self.find_shepherd_for_group(&effective_group, &mut assignments_this_tick);
+            match maybe_shepherd {
+                Some(shepherd_id) => {
+                    info!("➡️ DISPATCH: Dispatching task {task_id} to shepherd {shepherd_id} in group {group}", task_id = task.task_id, shepherd_id = shepherd_id, group = effective_group);
+                    if let Err(e) = self
+                        .dispatch_task_to_shepherd_internal(&task, shepherd_id, domain)
+                        .await
+                    {
+                        error!(
+                            "DISPATCH: Failed to dispatch task {task_id} to shepherd {shepherd_id}: {error}",
+                            task_id = task.task_id, error = e
+                        );
+                        // Re-enqueue the task on failure
+                        let task_id = task.task_id;
+                        let queue = self.virtual_queues.get_mut(domain).unwrap();
+                        if let Err(enqueue_err) = queue.enqueue(task) {
+                            error!("DISPATCH: Failed to re-enqueue task after dispatch failure: {enqueue_err}");
+                        } else {
+                            debug!("DISPATCH: Re-enqueued task {task_id} after dispatch failure");
+                        }
+                    } else {
+                        // Track per-tick assignment for capacity control
+                        *assignments_this_tick.entry(shepherd_id).or_insert(0) += 1;
+                        dispatched += 1;
+                    }
                 }
-            } else {
-                debug!(
-                    "DISPATCH: Successfully dispatched task {} to shepherd {}",
-                    task.task_id, shepherd_id
-                );
+                None => {
+                    // No shepherd currently available for this group; re-enqueue and stop
+                    info!("🚫 DISPATCH: No shepherd available for group '{effective_group}', re-enqueueing head task and pausing");
+                    let task_id = task.task_id;
+                    let queue = self.virtual_queues.get_mut(domain).unwrap();
+                    if let Err(e) = queue.enqueue(task) {
+                        error!("DISPATCH: Failed to re-enqueue task {task_id}: {e}");
+                    }
+                    break;
+                }
             }
         }
-        info!("🏁 DISPATCH: Finished dispatch loop for domain '{domain}'");
+        info!("🏁 DISPATCH: Finished dispatch loop for domain '{domain}', dispatched {dispatched} tasks");
 
         Ok(())
+    }
+
+    /// Find a single available shepherd in the specified group using round-robin,
+    /// respecting current capacity and per-tick assignment limits.
+    fn find_shepherd_for_group(
+        &mut self,
+        group: &str,
+        assignments_this_tick: &mut std::collections::HashMap<Uuid, u32>,
+    ) -> Option<Uuid> {
+        if self.shepherd_keys.is_empty() {
+            return None;
+        }
+
+        for _ in 0..self.shepherd_keys.len() {
+            if let Some(uuid) = self.shepherd_keys.pop_front() {
+                let readd = uuid;
+                let mut ok = false;
+                if let Some(status) = self.shepherds.get(&uuid) {
+                    if matches!(status.status, ShepherdConnectionStatus::Connected)
+                        && status.group == group
+                    {
+                        let already = *assignments_this_tick.get(&uuid).unwrap_or(&0);
+                        if already < status.available_capacity() {
+                            ok = true;
+                        }
+                    }
+                }
+
+                // Rotate key regardless
+                self.shepherd_keys.push_back(readd);
+                if ok {
+                    return Some(uuid);
+                }
+            } else {
+                break;
+            }
+        }
+        None
     }
 
     /// Dispatch a task to a specific shepherd
@@ -1307,19 +1364,31 @@ impl ActorShepherdManager {
     ) -> Result<()> {
         // Check shepherd exists and is connected
         {
-            let shepherd = self
-                .shepherds
-                .get(&shepherd_id)
-                .ok_or_else(|| anyhow::anyhow!("Shepherd {} not found", shepherd_id))?;
+            let shepherd = self.shepherds.get(&shepherd_id).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Shepherd {shepherd_id} not found",
+                    shepherd_id = shepherd_id
+                )
+            })?;
 
             if !matches!(shepherd.status, ShepherdConnectionStatus::Connected) {
-                return Err(anyhow::anyhow!("Shepherd {} is not connected", shepherd_id));
+                return Err(anyhow::anyhow!(
+                    "Shepherd {shepherd_id} is not connected",
+                    shepherd_id = shepherd_id
+                ));
             }
         }
 
+        // Get the shepherd group for event metadata
+        let shepherd_group = self
+            .shepherds
+            .get(&shepherd_id)
+            .map(|s| s.group.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+
         // Write attempt started event
         if let Err(e) = self
-            .write_attempt_started_event(task, shepherd_id, domain)
+            .write_attempt_started_event(task, shepherd_id, domain, &shepherd_group)
             .await
         {
             warn!(
@@ -1347,9 +1416,16 @@ impl ActorShepherdManager {
 
         // Shepherd load tracking removed - managed via heartbeat updates only
 
+        // Mark domain in-flight increment now that dispatch succeeded
+        if let Some(queue) = self.virtual_queues.get_mut(domain) {
+            queue.increment_in_flight();
+        }
+
         info!(
-            "Successfully started task {} attempt {} on shepherd {}",
-            task.task_id, task.attempt_number, shepherd_id
+            "Successfully started task {task_id} attempt {attempt} on shepherd {shepherd_id}",
+            task_id = task.task_id,
+            attempt = task.attempt_number,
+            shepherd_id = shepherd_id
         );
 
         Ok(())
@@ -1361,12 +1437,14 @@ impl ActorShepherdManager {
         task: &TaskDispatch,
         shepherd_id: Uuid,
         domain: &str,
+        shepherd_group: &str,
     ) -> Result<()> {
         let event_metadata = serde_json::json!({
             "task_id": task.task_id,
             "shepherd_uuid": shepherd_id,
             "attempt_number": task.attempt_number,
             "task_name": task.task_name,
+            "shepherd_group": shepherd_group,
         });
 
         let event_record = crate::orchestrator::event_stream::EventRecord {
@@ -1475,6 +1553,7 @@ mod tests {
             cpu_limit: Some(2),
             attempt_number: 1,
             flow_instance_id: Some(Uuid::new_v4()),
+            shepherd_group: None,
         }
     }
 
@@ -1486,9 +1565,11 @@ mod tests {
     /// Helper function to manually add shepherds for testing
     async fn add_test_shepherd(manager: &ShepherdManager, uuid: Uuid, max_concurrency: u32) {
         // Use the async API to register shepherd
-        let (tx, _rx) = create_local_test_shepherd_tx();
+        let (tx, mut rx) = create_local_test_shepherd_tx();
+        // Drain channel to keep TX alive and simulate a connected shepherd
+        tokio::spawn(async move { while let Some(_msg) = rx.recv().await {} });
         manager
-            .register_shepherd(uuid, max_concurrency, tx)
+            .register_shepherd(uuid, max_concurrency, "default".to_string(), tx)
             .await
             .unwrap();
     }
@@ -1504,8 +1585,11 @@ mod tests {
         uuid: Uuid,
         max_concurrency: u32,
     ) -> Result<()> {
-        let (tx, _rx) = create_test_tx();
-        handle.register_shepherd(uuid, max_concurrency, tx).await
+        let (tx, mut rx) = create_test_tx();
+        tokio::spawn(async move { while let Some(_msg) = rx.recv().await {} });
+        handle
+            .register_shepherd(uuid, max_concurrency, "default".to_string(), tx)
+            .await
     }
 
     // ============================================================================

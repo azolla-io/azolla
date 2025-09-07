@@ -412,6 +412,7 @@ impl SchedulerState {
             cpu_limit: None,
             flow_instance_id: task.flow_instance_id,
             attempt_number,
+            shepherd_group: task.shepherd_group.clone(),
         };
 
         debug!(
@@ -746,7 +747,7 @@ impl SchedulerState {
 pub struct SchedulerRegistry {
     schedulers: DashMap<String, Arc<SchedulerActor>>,
     task_set_registry: Arc<crate::orchestrator::taskset::TaskSetRegistry>,
-    shepherd_manager: Arc<ShepherdManager>,
+    shepherd_registry: Arc<crate::orchestrator::shepherd_registry::ShepherdManagerRegistry>,
     event_stream: Arc<EventStream>,
     config: SchedulerConfig,
 }
@@ -754,14 +755,14 @@ pub struct SchedulerRegistry {
 impl SchedulerRegistry {
     pub fn new(
         task_set_registry: Arc<crate::orchestrator::taskset::TaskSetRegistry>,
-        shepherd_manager: Arc<ShepherdManager>,
+        shepherd_registry: Arc<crate::orchestrator::shepherd_registry::ShepherdManagerRegistry>,
         event_stream: Arc<EventStream>,
         config: SchedulerConfig,
     ) -> Self {
         Self {
             schedulers: DashMap::new(),
             task_set_registry,
-            shepherd_manager,
+            shepherd_registry,
             event_stream,
             config,
         }
@@ -779,7 +780,7 @@ impl SchedulerRegistry {
             let scheduler = Arc::new(SchedulerActor::new(
                 domain.to_string(),
                 task_set,
-                self.shepherd_manager.clone(),
+                self.shepherd_registry.get_or_create_manager(domain),
                 self.event_stream.clone(),
                 self.config.clone(),
             ));
@@ -844,7 +845,6 @@ mod tests {
     use super::*;
     use crate::db_test;
     use crate::orchestrator::event_stream::{EventStream, EventStreamConfig};
-    use crate::orchestrator::shepherd_manager::ShepherdManager;
     use crate::orchestrator::taskset::{Task, TaskSetRegistry};
     use crate::proto::common::{ErrorResult, SuccessResult, TaskResult};
     use crate::{
@@ -865,12 +865,13 @@ mod tests {
             kwargs: json!({"key": "value"}),
             status: TASK_STATUS_CREATED,
             attempts: Vec::new(),
+            shepherd_group: None,
         }
     }
 
     fn create_test_components() -> (
         Arc<TaskSetRegistry>,
-        Arc<ShepherdManager>,
+        Arc<crate::orchestrator::shepherd_registry::ShepherdManagerRegistry>,
         Arc<EventStream>,
         SchedulerConfig,
     ) {
@@ -882,17 +883,19 @@ mod tests {
         ));
         use crate::orchestrator::db::DomainsConfig;
         let domains_config = Arc::new(DomainsConfig::default());
-        let shepherd_manager = Arc::new(ShepherdManager::new(
-            domains_config,
-            task_registry.clone(),
-            event_stream.clone(),
-        ));
+        let shepherd_registry = Arc::new(
+            crate::orchestrator::shepherd_registry::ShepherdManagerRegistry::new(
+                domains_config,
+                task_registry.clone(),
+                event_stream.clone(),
+            ),
+        );
         let config = SchedulerConfig {
             default_task_attempt_creation_timeout_secs: 5,
             default_task_timeout_secs: 10,
         };
 
-        (task_registry, shepherd_manager, event_stream, config)
+        (task_registry, shepherd_registry, event_stream, config)
     }
 
     fn create_dummy_pool() -> crate::orchestrator::db::PgPool {
@@ -939,10 +942,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_scheduler_registry_creation() {
-        let (task_registry, shepherd_manager, event_stream, config) = create_test_components();
+        let (task_registry, shepherd_registry, event_stream, config) = create_test_components();
 
         let scheduler_registry =
-            SchedulerRegistry::new(task_registry, shepherd_manager, event_stream, config);
+            SchedulerRegistry::new(task_registry, shepherd_registry, event_stream, config);
 
         assert_eq!(scheduler_registry.len(), 0);
         assert!(scheduler_registry.is_empty());
@@ -950,11 +953,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_scheduler_creation_per_domain() {
-        let (task_registry, shepherd_manager, event_stream, config) = create_test_components();
+        let (task_registry, shepherd_registry, event_stream, config) = create_test_components();
 
         let scheduler_registry = Arc::new(SchedulerRegistry::new(
             task_registry,
-            shepherd_manager,
+            shepherd_registry,
             event_stream,
             config,
         ));
@@ -991,11 +994,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_scheduler_start_task_basic() {
-        let (task_registry, shepherd_manager, event_stream, config) = create_test_components();
+        let (task_registry, shepherd_registry, event_stream, config) = create_test_components();
 
         let scheduler_registry = Arc::new(SchedulerRegistry::new(
             task_registry.clone(),
-            shepherd_manager,
+            shepherd_registry,
             event_stream,
             config,
         ));
@@ -1477,24 +1480,23 @@ mod tests {
                 );
                 engine.initialize().await.unwrap();
 
-                // Register multiple shepherds for realistic testing
-                for _i in 0..3 {
+                // Domains under test
+                let domains = vec!["domain1", "domain2", "domain3"];
+
+                // Register one shepherd per domain
+                for domain in &domains {
                     let shepherd_id = Uuid::new_v4();
-                    // The shepherd TX channel is used for health checks (pings).
-                    // If the RX end is dropped, the channel closes, and pings will fail,
-                    // causing the ShepherdManager to mark the shepherd as disconnected.
-                    // We spawn a dummy task to keep the RX end alive.
                     let (tx, mut rx) = create_test_shepherd_tx();
                     tokio::spawn(async move { while let Some(_cmd) = rx.recv().await {} });
                     engine
-                        .shepherd_manager
-                        .register_shepherd(shepherd_id, 5, tx)
+                        .shepherd_registry
+                        .get_or_create_manager(domain)
+                        .register_shepherd(shepherd_id, 5, "default".to_string(), tx)
                         .await
                         .unwrap();
                 }
 
                 // Create tasks across multiple domains
-                let domains = vec!["domain1", "domain2", "domain3"];
                 let mut all_task_ids = HashMap::new();
 
                 for domain in &domains {
@@ -1553,7 +1555,14 @@ mod tests {
                 // Wait for all scheduling to complete
                 // Manually trigger dispatch multiple times instead of relying on timer to avoid CI timing issues
                 for _ in 0..5 {
-                    engine.shepherd_manager.dispatch_tick().await.unwrap();
+                    for domain in &domains {
+                        engine
+                            .shepherd_registry
+                            .get_or_create_manager(domain)
+                            .dispatch_tick()
+                            .await
+                            .unwrap();
+                    }
                     tokio::time::sleep(Duration::from_millis(30)).await;
                 }
 
@@ -1638,8 +1647,9 @@ mod tests {
                 let shepherd_id = Uuid::new_v4();
                 let (tx, _rx) = create_test_shepherd_tx();
                 engine
-                    .shepherd_manager
-                    .register_shepherd(shepherd_id, 10, tx)
+                    .shepherd_registry
+                    .get_or_create_manager("test_domain")
+                    .register_shepherd(shepherd_id, 10, "default".to_string(), tx)
                     .await
                     .unwrap();
 
@@ -1756,18 +1766,18 @@ mod tests {
             );
             engine.initialize().await.unwrap();
 
-            // Register a test shepherd with tx channel
-            let shepherd_id = Uuid::new_v4();
-            let (tx, _rx) = create_test_shepherd_tx();
-            engine
-                .shepherd_manager
-                .register_shepherd(shepherd_id, 10, tx)
-                .await
-                .unwrap();
-
             // Create a task manually and persist to database
             let task_name = "db_integration_test_task";
             let domain = "test_domain";
+            // Register a test shepherd with tx channel for this domain
+            let shepherd_id = Uuid::new_v4();
+            let (tx, _rx) = create_test_shepherd_tx();
+            engine
+                .shepherd_registry
+                .get_or_create_manager(domain)
+                .register_shepherd(shepherd_id, 10, "default".to_string(), tx)
+                .await
+                .unwrap();
             let retry_policy = json!({
                 "version": 1,
                 "stop": {"max_attempts": 3},
@@ -1830,7 +1840,12 @@ mod tests {
             loop {
                 // Manually trigger dispatch multiple times to ensure it processes
                 for _ in 0..3 {
-                    engine.shepherd_manager.dispatch_tick().await.unwrap();
+                    engine
+                        .shepherd_registry
+                        .get_or_create_manager(domain)
+                        .dispatch_tick()
+                        .await
+                        .unwrap();
                     tokio::time::sleep(Duration::from_millis(20)).await;
                 }
 
@@ -1927,25 +1942,22 @@ mod tests {
             );
             engine.initialize().await.unwrap();
 
-            // Register multiple shepherds
-            for _i in 0..3 {
-                let shepherd_id = Uuid::new_v4();
-                // The shepherd TX channel is used for health checks (pings).
-                // If the RX end is dropped, the channel closes, and pings will fail,
-                // causing the ShepherdManager to mark the shepherd as disconnected.
-                // We spawn a dummy task to keep the RX end alive.
-                let (tx, mut rx) = create_test_shepherd_tx();
-                tokio::spawn(async move { while let Some(_cmd) = rx.recv().await {} });
-                engine
-                    .shepherd_manager
-                    .register_shepherd(shepherd_id, 5, tx)
-                    .await
-                    .unwrap();
-            }
-
             // Create tasks across multiple domains
             let domains = vec!["domain1", "domain2", "domain3"];
             let mut all_task_ids = HashMap::new();
+
+            // Register one shepherd per domain
+            for domain in &domains {
+                let shepherd_id = Uuid::new_v4();
+                let (tx, mut rx) = create_test_shepherd_tx();
+                tokio::spawn(async move { while let Some(_cmd) = rx.recv().await {} });
+                engine
+                    .shepherd_registry
+                    .get_or_create_manager(domain)
+                    .register_shepherd(shepherd_id, 5, "default".to_string(), tx)
+                    .await
+                    .unwrap();
+            }
 
             for domain in &domains {
                 let mut domain_tasks = Vec::new();
@@ -1998,7 +2010,15 @@ mod tests {
             // Wait for all scheduling to complete
             // Manually trigger dispatch multiple times instead of relying on timer to avoid CI timing issues
             for _ in 0..8 {
-                engine.shepherd_manager.dispatch_tick().await.unwrap();
+                // Trigger dispatch on all known domains
+                for domain in &domains {
+                    engine
+                        .shepherd_registry
+                        .get_or_create_manager(domain)
+                        .dispatch_tick()
+                        .await
+                        .unwrap();
+                }
                 tokio::time::sleep(Duration::from_millis(30)).await;
             }
 
@@ -2080,8 +2100,9 @@ mod tests {
             let shepherd_id = Uuid::new_v4();
             let (tx, _rx) = create_test_shepherd_tx();
             engine
-                .shepherd_manager
-                .register_shepherd(shepherd_id, 10, tx)
+                .shepherd_registry
+                .get_or_create_manager("test_domain")
+                .register_shepherd(shepherd_id, 10, "default".to_string(), tx)
                 .await
                 .unwrap();
 
@@ -2296,8 +2317,9 @@ mod tests {
             let shepherd_id = Uuid::new_v4();
             let (tx, _rx) = create_test_shepherd_tx();
             engine
-                .shepherd_manager
-                .register_shepherd(shepherd_id, 10, tx)
+                .shepherd_registry
+                .get_or_create_manager("test_domain")
+                .register_shepherd(shepherd_id, 10, "default".to_string(), tx)
                 .await
                 .unwrap();
 
@@ -2356,7 +2378,12 @@ mod tests {
             loop {
                 // Manually trigger dispatch multiple times to ensure it processes
                 for _ in 0..3 {
-                    engine.shepherd_manager.dispatch_tick().await.unwrap();
+                    engine
+                        .shepherd_registry
+                        .get_or_create_manager("test_domain")
+                        .dispatch_tick()
+                        .await
+                        .unwrap();
                     tokio::time::sleep(Duration::from_millis(20)).await;
                 }
                 tokio::time::sleep(Duration::from_millis(80)).await;
@@ -2399,7 +2426,8 @@ mod tests {
 
             // Simulate shepherd death
             engine
-                .shepherd_manager
+                .shepherd_registry
+                .get_or_create_manager("test_domain")
                 .mark_shepherd_disconnected(shepherd_id)
                 .await
                 .unwrap();
