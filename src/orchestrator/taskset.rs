@@ -442,14 +442,14 @@ impl TaskSetRegistry {
         domains.len()
     }
 
-    pub fn get_or_create_domain(&self, domain: &str) -> TaskSetRegistryHandle {
+    pub fn get_or_create_domain(&self, domain: &str) -> TaskSetRegistryHandle<'_> {
         TaskSetRegistryHandle {
             registry: self,
             domain: domain.to_string(),
         }
     }
 
-    pub fn get_domain(&self, domain: &str) -> Option<TaskSetRegistryHandle> {
+    pub fn get_domain(&self, domain: &str) -> Option<TaskSetRegistryHandle<'_>> {
         let domains = self.domains.lock().unwrap();
         if domains.contains_key(domain) {
             Some(TaskSetRegistryHandle {

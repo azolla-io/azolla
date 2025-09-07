@@ -845,7 +845,6 @@ mod tests {
     use super::*;
     use crate::db_test;
     use crate::orchestrator::event_stream::{EventStream, EventStreamConfig};
-    use crate::orchestrator::shepherd_manager::ShepherdManager;
     use crate::orchestrator::taskset::{Task, TaskSetRegistry};
     use crate::proto::common::{ErrorResult, SuccessResult, TaskResult};
     use crate::{
