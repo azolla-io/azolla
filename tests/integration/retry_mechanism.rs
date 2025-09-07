@@ -455,6 +455,7 @@ impl RetryTestData {
             })
             .to_string(),
             flow_instance_id: None,
+            shepherd_group: None,
         }
     }
 
@@ -477,6 +478,7 @@ impl RetryTestData {
             })
             .to_string(),
             flow_instance_id: None,
+            shepherd_group: None,
         }
     }
 }

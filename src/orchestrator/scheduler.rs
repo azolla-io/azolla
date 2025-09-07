@@ -2317,12 +2317,12 @@ mod tests {
             // Register a shepherd
             let shepherd_id = Uuid::new_v4();
             let (tx, _rx) = create_test_shepherd_tx();
-                engine
-                    .shepherd_registry
-                    .get_or_create_manager("test_domain")
-                    .register_shepherd(shepherd_id, 10, "default".to_string(), tx)
-                    .await
-                    .unwrap();
+            engine
+                .shepherd_registry
+                .get_or_create_manager("test_domain")
+                .register_shepherd(shepherd_id, 10, "default".to_string(), tx)
+                .await
+                .unwrap();
 
             // Create multiple tasks
             let mut task_ids = Vec::new();

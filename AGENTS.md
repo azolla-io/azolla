@@ -162,10 +162,19 @@ Located in `tests/integration/`:
 - `shepherd_management.rs`: Shepherd lifecycle and management
 - `life_cycle.rs`: Complete system lifecycle tests
 - `retry_mechanism.rs`: Error handling and retry logic
+ - `group_routing.rs`: Domain shepherd-group routing behavior
 
 ```bash
-# Run integration tests
-cargo test --test integration_tests_main
+# Run integration tests (sequentially) with feature flag
+# Strongly recommend wrapping with a 30s–5m timeout to avoid hangs
+# Linux:
+timeout 5m cargo test --features test-harness -- --test-threads=1
+
+# macOS (coreutils):
+gtimeout 5m cargo test --features test-harness -- --test-threads=1
+
+# Or run the integration test harness binary explicitly
+timeout 5m cargo test --test integration_tests_main --features test-harness -- --test-threads=1
 ```
 
 ### Test Environment Setup
@@ -201,6 +210,27 @@ cargo test --features test-harness
 3. **Use descriptive names**: Test names should indicate what functionality is being validated
 4. **Clean up resources**: Ensure tests clean up any created resources
 5. **Use appropriate test categories**: Unit tests for logic, integration tests for system behavior
+
+### Integration Test Patterns (test_harness.rs)
+
+Use the IntegrationTestEnvironment for end-to-end tests:
+
+- Ensure worker binary is available when tasks execute real workers:
+  - `harness.ensure_worker_binary().await?`
+- Start shepherds via harness and wait for registration:
+  - `let _shepherd = harness.start_shepherd().await?;`
+  - `harness.wait_for_shepherd_registration(uuid, Duration::from_secs(5))`
+- Query task and attempt status via harness helpers:
+  - `get_task_status`, `get_task_attempts`
+- Query event metadata for routing/dispatch assertions:
+  - `wait_for_attempt_started_metadata(&task_id, domain, Duration::from_secs(5))`
+
+Timeouts:
+- Do not add outer timeouts in test code. Instead, always run integration tests with an OS-level timeout wrapper (see above) to enforce a global bound.
+- New integration tests should be designed to complete well within 30 seconds.
+
+Execution:
+- Run with `--features test-harness` and `--test-threads=1` to avoid port and container contention.
 
 ## Commit Instructions
 

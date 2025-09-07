@@ -381,6 +381,37 @@ impl IntegrationTestEnvironment {
 
         Ok(())
     }
+
+    /// Wait for EVENT_TASK_ATTEMPT_STARTED for a task and return its metadata JSON.
+    /// Useful to assert routing fields like shepherd_group and shepherd_uuid.
+    pub async fn wait_for_attempt_started_metadata(
+        &self,
+        task_id: &uuid::Uuid,
+        domain: &str,
+        timeout: Duration,
+    ) -> Result<Option<serde_json::Value>> {
+        let start = std::time::Instant::now();
+        let pool = &self.engine().pool;
+        let client = pool.get().await?;
+
+        while start.elapsed() < timeout {
+            let row = client
+                .query_opt(
+                    "SELECT metadata FROM events WHERE task_instance_id = $1 AND domain = $2 AND event_type = $3 ORDER BY event_id DESC LIMIT 1",
+                    &[task_id, &domain, &crate::EVENT_TASK_ATTEMPT_STARTED],
+                )
+                .await?;
+
+            if let Some(row) = row {
+                let metadata: serde_json::Value = row.get("metadata");
+                return Ok(Some(metadata));
+            }
+
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        Ok(None)
+    }
 }
 
 impl Drop for IntegrationTestEnvironment {

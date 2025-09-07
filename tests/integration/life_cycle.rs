@@ -35,6 +35,7 @@ fn create_failing_task_with_long_retry() -> CreateTaskRequest {
         })
         .to_string(),
         flow_instance_id: None,
+        shepherd_group: None,
     }
 }
 
