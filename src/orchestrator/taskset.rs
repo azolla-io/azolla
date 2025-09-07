@@ -56,6 +56,7 @@ pub struct Task {
     pub kwargs: JsonValue,
     pub status: i16,
     pub attempts: Vec<TaskAttempt>,
+    pub shepherd_group: Option<String>,
 }
 
 impl Default for Task {
@@ -92,6 +93,7 @@ impl Task {
             kwargs: JsonValue::Null,
             status: 0,
             attempts: Vec::new(),
+            shepherd_group: None,
         }
     }
 
@@ -664,6 +666,7 @@ impl TaskSetRegistry {
                             kwargs: row.get("kwargs"),
                             status: row.get("status"),
                             attempts: Vec::new(),
+                            shepherd_group: None,
                         };
                         task_set.upsert_task(task);
                     }
@@ -939,6 +942,7 @@ mod tests {
             kwargs: JsonValue::Null,
             status: 1,
             attempts: Vec::new(),
+            shepherd_group: None,
         };
 
         task_set.upsert_task(task);
@@ -963,6 +967,7 @@ mod tests {
             kwargs: JsonValue::Null,
             status: 1,
             attempts: Vec::new(),
+            shepherd_group: None,
         };
 
         task_set.upsert_task(task);
@@ -990,6 +995,7 @@ mod tests {
             kwargs: JsonValue::Null,
             status: 1,
             attempts: Vec::new(),
+            shepherd_group: None,
         };
 
         task_set.upsert_task(task1);
@@ -1006,6 +1012,7 @@ mod tests {
             kwargs: JsonValue::Null,
             status: 1,
             attempts: Vec::new(),
+            shepherd_group: None,
         };
 
         task_set.upsert_task(task2);

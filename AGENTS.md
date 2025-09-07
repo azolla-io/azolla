@@ -93,25 +93,6 @@ cargo run --bin azolla-orchestrator
 cargo run --bin azolla-shepherd
 ```
 
-### Testing Commands
-```bash
-# Run all tests
-make test
-# or
-cargo test
-
-# Run specific test suite
-cargo test integration
-cargo test shepherd_management
-cargo test task_execution
-
-# Run with logging
-RUST_LOG=debug cargo test
-
-# Run tests with coverage
-cargo tarpaulin --out Html
-```
-
 ### Docker Commands
 ```bash
 # Development database only

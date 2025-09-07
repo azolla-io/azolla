@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::orchestrator::db::{DomainsConfig, PgPool};
 use crate::orchestrator::event_stream::{EventStream, EventStreamConfig};
 use crate::orchestrator::scheduler::{SchedulerConfig, SchedulerRegistry};
-use crate::orchestrator::shepherd_manager::ShepherdManager;
+use crate::orchestrator::shepherd_registry::ShepherdManagerRegistry;
 use crate::orchestrator::taskset::TaskSetRegistry;
 
 /// The central orchestration engine containing all shared state and infrastructure
@@ -38,7 +38,7 @@ pub struct Engine {
     pub registry: Arc<TaskSetRegistry>,
 
     pub event_stream: Arc<EventStream>,
-    pub shepherd_manager: Arc<ShepherdManager>,
+    pub shepherd_registry: Arc<ShepherdManagerRegistry>,
     pub scheduler_registry: Arc<SchedulerRegistry>,
 }
 
@@ -67,14 +67,14 @@ impl Engine {
         let event_stream = Arc::new(EventStream::new(pool.clone(), event_stream_config));
         let registry = Arc::new(TaskSetRegistry::new());
         let domains_config_arc = Arc::new(domains_config);
-        let shepherd_manager = Arc::new(ShepherdManager::new(
+        let shepherd_registry = Arc::new(ShepherdManagerRegistry::new(
             domains_config_arc.clone(),
             registry.clone(),
             event_stream.clone(),
         ));
         let scheduler_registry = Arc::new(SchedulerRegistry::new(
             registry.clone(),
-            shepherd_manager.clone(),
+            shepherd_registry.clone(),
             event_stream.clone(),
             scheduler_config,
         ));
@@ -83,7 +83,7 @@ impl Engine {
             pool,
             registry,
             event_stream,
-            shepherd_manager,
+            shepherd_registry,
             scheduler_registry,
         }
     }
@@ -119,11 +119,9 @@ impl Engine {
                 log::error!("Failed to shutdown scheduler registry: {e}");
             }
 
-            // Phase 2: Shutdown shepherd manager
-            log::info!("Shutting down shepherd manager...");
-            if let Err(e) = self.shepherd_manager.shutdown().await {
-                log::error!("Failed to shutdown shepherd manager: {e}");
-            }
+            // Phase 2: Shutdown shepherd managers
+            log::info!("Shutting down shepherd managers...");
+            self.shepherd_registry.shutdown_all().await;
 
             // Phase 3: Shutdown event stream
             log::info!("Shutting down event stream...");

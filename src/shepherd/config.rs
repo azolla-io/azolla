@@ -17,6 +17,8 @@ pub struct ShepherdConfig {
     pub reconnect_backoff_secs: u64,
     pub worker_timeout_secs: Option<u64>,
     pub log_level: Option<String>,
+    pub domain: String,
+    pub shepherd_group: String,
 }
 
 impl Default for ShepherdConfig {
@@ -31,6 +33,9 @@ impl Default for ShepherdConfig {
             reconnect_backoff_secs: 5,
             worker_timeout_secs: Some(300),
             log_level: Some("info".to_string()),
+            // Defaults suitable for tests
+            domain: "test".to_string(),
+            shepherd_group: "default".to_string(),
         }
     }
 }
@@ -107,6 +112,14 @@ impl ShepherdConfig {
         if let Some(log_level) = matches.get_one::<String>("log-level") {
             self.log_level = Some(log_level.clone());
         }
+
+        if let Some(domain) = matches.get_one::<String>("domain") {
+            self.domain = domain.clone();
+        }
+
+        if let Some(group) = matches.get_one::<String>("shepherd-group") {
+            self.shepherd_group = group.clone();
+        }
     }
 
     pub fn apply_env_overrides(&mut self) {
@@ -138,6 +151,14 @@ impl ShepherdConfig {
             if let Ok(timeout_secs) = timeout_str.parse::<u64>() {
                 self.worker_timeout_secs = Some(timeout_secs);
             }
+        }
+
+        if let Ok(domain) = std::env::var("AZOLLA_DOMAIN") {
+            self.domain = domain;
+        }
+
+        if let Ok(group) = std::env::var("AZOLLA_SHEPHERD_GROUP") {
+            self.shepherd_group = group;
         }
     }
 }

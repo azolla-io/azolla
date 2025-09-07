@@ -125,6 +125,8 @@ impl StreamHandler {
             kind: Some(client_msg::Kind::Hello(Hello {
                 shepherd_uuid: self.config.uuid.to_string(),
                 max_concurrency: self.config.max_concurrency,
+                domain: self.config.domain.clone(),
+                shepherd_group: self.config.shepherd_group.clone(),
             })),
         };
 
@@ -352,6 +354,8 @@ mod tests {
             reconnect_backoff_secs: 5,
             worker_timeout_secs: Some(300),
             log_level: Some("info".to_string()),
+            domain: "test".to_string(),
+            shepherd_group: "default".to_string(),
         };
 
         // Test that configuration values are preserved

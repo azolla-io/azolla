@@ -131,6 +131,8 @@ impl IntegrationTestEnvironment {
             heartbeat_interval_secs: 30,
             reconnect_backoff_secs: 5,
             worker_timeout_secs: Some(300),
+            domain: "test".to_string(),
+            shepherd_group: "default".to_string(),
         };
 
         Ok(Self {
@@ -281,8 +283,13 @@ impl IntegrationTestEnvironment {
     }
 
     pub async fn get_shepherd_count(&self) -> Result<i64> {
-        // Get actual shepherd count from ShepherdManager
-        let stats = self.engine().shepherd_manager.get_stats().await;
+        // Get shepherd count from any domain manager (tests use single domain 'test')
+        let stats = self
+            .engine()
+            .shepherd_registry
+            .get_or_create_manager("test")
+            .get_stats()
+            .await;
         Ok(stats.connected_shepherds as i64)
     }
 
@@ -290,7 +297,8 @@ impl IntegrationTestEnvironment {
     pub async fn is_shepherd_registered(&self, shepherd_uuid: uuid::Uuid) -> Result<bool> {
         Ok(self
             .engine()
-            .shepherd_manager
+            .shepherd_registry
+            .get_or_create_manager("test")
             .is_shepherd_registered(shepherd_uuid)
             .await)
     }
@@ -444,6 +452,7 @@ impl TaskTestData {
             })
             .to_string(),
             flow_instance_id: None,
+            shepherd_group: None,
         }
     }
 
@@ -466,6 +475,7 @@ impl TaskTestData {
             })
             .to_string(),
             flow_instance_id: None,
+            shepherd_group: None,
         }
     }
 
@@ -489,6 +499,7 @@ impl TaskTestData {
             })
             .to_string(),
             flow_instance_id: None,
+            shepherd_group: None,
         }
     }
 }

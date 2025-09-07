@@ -46,6 +46,8 @@ impl Default for EventStream {
 #[derive(Debug, Deserialize, Clone)]
 pub struct DomainConfig {
     pub concurrency_limit: u32,
+    #[serde(default = "default_shepherd_group")]
+    pub default_shepherd_group: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -62,6 +64,10 @@ impl Default for DomainsConfig {
             specific: HashMap::new(),
         }
     }
+}
+
+fn default_shepherd_group() -> String {
+    "default".to_string()
 }
 
 #[derive(Debug, Deserialize, Clone)]

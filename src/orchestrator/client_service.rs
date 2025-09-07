@@ -79,7 +79,8 @@ impl ClientService for ClientServiceImpl {
             "retry_policy": retry_policy,
             "args": req.args,
             "kwargs": kwargs,
-            "flow_instance_id": flow_instance_id
+            "flow_instance_id": flow_instance_id,
+            "shepherd_group": req.shepherd_group.clone()
         });
 
         let event_record = EventRecord {
@@ -110,6 +111,7 @@ impl ClientService for ClientServiceImpl {
             kwargs,
             status: TASK_STATUS_CREATED,
             attempts: Vec::new(),
+            shepherd_group: req.shepherd_group,
         };
 
         // Create and start the task via the SchedulerActor

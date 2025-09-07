@@ -9,7 +9,8 @@ use tonic::{Request, Response, Streaming};
 use uuid::Uuid;
 
 use crate::orchestrator::engine::Engine;
-use crate::orchestrator::shepherd_manager::ShepherdManager;
+// Shepherd managers are domain-scoped via a registry
+use crate::orchestrator::shepherd_registry::ShepherdManagerRegistry;
 use crate::orchestrator::taskset::TaskSetRegistry;
 
 use crate::proto::{common, orchestrator};
@@ -49,7 +50,7 @@ impl ClusterService for ClusterServiceImpl {
         let client_stream = request.into_inner();
         let (tx, rx) = mpsc::channel(100);
 
-        let shepherd_manager = (*self.engine.shepherd_manager).clone();
+        let shepherd_registry = self.engine.shepherd_registry.clone();
         let task_registry = self.engine.registry.clone();
         let scheduler_registry = self.engine.scheduler_registry.clone();
 
@@ -58,7 +59,7 @@ impl ClusterService for ClusterServiceImpl {
             if let Err(e) = handle_shepherd_connection(
                 client_stream,
                 tx.clone(),
-                shepherd_manager,
+                shepherd_registry,
                 task_registry,
                 scheduler_registry,
                 liveness_probe_threshold,
@@ -80,12 +81,13 @@ impl ClusterService for ClusterServiceImpl {
 async fn handle_shepherd_connection(
     mut client_stream: Streaming<ClientMsg>,
     tx: mpsc::Sender<Result<ServerMsg, tonic::Status>>,
-    shepherd_manager: ShepherdManager,
+    shepherd_registry: std::sync::Arc<ShepherdManagerRegistry>,
     _task_registry: Arc<TaskSetRegistry>,
     scheduler_registry: Arc<crate::orchestrator::scheduler::SchedulerRegistry>,
     liveness_probe_threshold: Duration,
 ) -> Result<()> {
     let mut shepherd_uuid: Option<Uuid> = None;
+    // Domain-specific manager is resolved via the registry for each operation
     let mut last_message_time = Instant::now();
     let mut ping_check_interval = tokio::time::interval(liveness_probe_threshold / 2);
 
@@ -96,15 +98,26 @@ async fn handle_shepherd_connection(
                     Some(Ok(client_msg)) => {
                         last_message_time = Instant::now();
                         if let Some(uuid) = shepherd_uuid {
-                            if let Err(e) = shepherd_manager.mark_shepherd_alive(uuid).await {
-                                error!("Failed to mark shepherd {uuid} as alive: {e}");
+                            // Try to mark alive in the manager that has this UUID
+                            let mut marked = false;
+                            for manager in shepherd_registry.list_managers() {
+                                if manager.is_shepherd_registered(uuid).await {
+                                    if let Err(e) = manager.mark_shepherd_alive(uuid).await {
+                                        error!("Failed to mark shepherd {uuid} as alive: {e}");
+                                    }
+                                    marked = true;
+                                    break;
+                                }
+                            }
+                            if !marked {
+                                warn!("Received liveness for unknown shepherd {uuid}");
                             }
                         }
 
                         if let Err(e) = handle_client_message(
                             client_msg,
                             &mut shepherd_uuid,
-                            &shepherd_manager,
+                            &shepherd_registry,
                             &scheduler_registry,
                             &tx
                         ).await {
@@ -148,8 +161,18 @@ async fn handle_shepherd_connection(
     if let Some(uuid) = shepherd_uuid {
         // codeql[rust/clear-text-logging-sensitive-data] Infrastructure UUID - safe to log
         info!("Shepherd {uuid} connection dropped, marking as temporarily unavailable");
-        if let Err(e) = shepherd_manager.mark_shepherd_disconnected(uuid).await {
-            error!("Failed to mark shepherd {uuid} as disconnected: {e}");
+        let mut marked = false;
+        for manager in shepherd_registry.list_managers() {
+            if manager.is_shepherd_registered(uuid).await {
+                if let Err(e) = manager.mark_shepherd_disconnected(uuid).await {
+                    error!("Failed to mark shepherd {uuid} as disconnected: {e}");
+                }
+                marked = true;
+                break;
+            }
+        }
+        if !marked {
+            warn!("Disconnect for unknown shepherd {uuid}");
         }
     }
 
@@ -159,25 +182,25 @@ async fn handle_shepherd_connection(
 async fn handle_client_message(
     client_msg: ClientMsg,
     shepherd_uuid: &mut Option<Uuid>,
-    shepherd_manager: &ShepherdManager,
+    shepherd_registry: &ShepherdManagerRegistry,
     scheduler_registry: &Arc<crate::orchestrator::scheduler::SchedulerRegistry>,
     tx: &mpsc::Sender<Result<ServerMsg, tonic::Status>>,
 ) -> Result<()> {
     match client_msg.kind {
         Some(client_msg::Kind::Hello(hello)) => {
-            handle_hello_message(hello, shepherd_uuid, shepherd_manager, tx).await?;
+            handle_hello_message(hello, shepherd_uuid, shepherd_registry, tx).await?;
         }
         Some(client_msg::Kind::Ack(ack)) => {
-            handle_ack_message(ack, shepherd_uuid, shepherd_manager).await?;
+            handle_ack_message(ack, shepherd_uuid, &None).await?;
         }
         Some(client_msg::Kind::Status(status)) => {
-            handle_status_message(status, shepherd_uuid, shepherd_manager).await?;
+            handle_status_message(status, shepherd_uuid, shepherd_registry).await?;
         }
         Some(client_msg::Kind::TaskResult(task_result)) => {
             handle_task_result_message(
                 task_result,
                 shepherd_uuid,
-                shepherd_manager,
+                shepherd_registry,
                 scheduler_registry,
             )
             .await?;
@@ -193,19 +216,22 @@ async fn handle_client_message(
 async fn handle_hello_message(
     hello: Hello,
     shepherd_uuid: &mut Option<Uuid>,
-    shepherd_manager: &ShepherdManager,
+    shepherd_registry: &ShepherdManagerRegistry,
     tx: &mpsc::Sender<Result<ServerMsg, tonic::Status>>,
 ) -> Result<()> {
     let uuid = Uuid::parse_str(&hello.shepherd_uuid)
         .map_err(|e| anyhow::anyhow!("Invalid shepherd UUID: {}", e))?;
+    let domain = hello.domain;
+    let group = hello.shepherd_group;
 
     info!(
-        "Shepherd {} registering with max_concurrency={}",
-        uuid, hello.max_concurrency
+        "Shepherd {uuid} registering in domain '{domain}' group '{group}' with max_concurrency={}",
+        hello.max_concurrency
     );
 
-    shepherd_manager
-        .register_shepherd(uuid, hello.max_concurrency, tx.clone())
+    let manager = shepherd_registry.get_or_create_manager(&domain);
+    manager
+        .register_shepherd(uuid, hello.max_concurrency, group, tx.clone())
         .await?;
     *shepherd_uuid = Some(uuid);
 
@@ -215,7 +241,7 @@ async fn handle_hello_message(
 async fn handle_ack_message(
     ack: Ack,
     shepherd_uuid: &mut Option<Uuid>,
-    _shepherd_manager: &ShepherdManager,
+    _unused: &Option<()>,
 ) -> Result<()> {
     if let Some(uuid) = shepherd_uuid {
         let task_id = Uuid::parse_str(&ack.task_id)
@@ -234,19 +260,25 @@ async fn handle_ack_message(
 async fn handle_status_message(
     status: orchestrator::Status,
     shepherd_uuid: &mut Option<Uuid>,
-    shepherd_manager: &ShepherdManager,
+    shepherd_registry: &ShepherdManagerRegistry,
 ) -> Result<()> {
     if let Some(uuid) = shepherd_uuid {
-        if let Err(e) = shepherd_manager
-            .update_shepherd_status(*uuid, status.current_load, status.available_capacity)
-            .await
-        {
-            error!("Failed to update shepherd status for {uuid}: {e}");
-        } else {
-            debug!(
-                "Updated status for shepherd {}: load={}, available={}",
-                uuid, status.current_load, status.available_capacity
-            );
+        // Try managers until one recognizes the UUID (connection-local manager is held in outer scope)
+        let mut updated = false;
+        for manager in shepherd_registry.list_managers() {
+            if manager.is_shepherd_registered(*uuid).await {
+                if let Err(e) = manager
+                    .update_shepherd_status(*uuid, status.current_load, status.available_capacity)
+                    .await
+                {
+                    error!("Failed to update shepherd status for {uuid}: {e}");
+                }
+                updated = true;
+                break;
+            }
+        }
+        if !updated {
+            warn!("Received status for unknown shepherd {uuid}");
         }
     } else {
         warn!("Received status from unregistered shepherd");
@@ -258,7 +290,7 @@ async fn handle_status_message(
 async fn handle_task_result_message(
     task_result: common::TaskResult,
     shepherd_uuid: &mut Option<Uuid>,
-    _shepherd_manager: &ShepherdManager,
+    _shepherd_registry: &ShepherdManagerRegistry,
     scheduler_registry: &Arc<crate::orchestrator::scheduler::SchedulerRegistry>,
 ) -> Result<()> {
     if let Some(uuid) = shepherd_uuid {
