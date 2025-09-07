@@ -1,4 +1,4 @@
-.PHONY: help dev-up dev-down dev-clean dev-logs build run test merge-events clean
+.PHONY: help dev-up dev-down dev-clean build test clean
 
 # Default target
 help:
@@ -7,9 +7,7 @@ help:
 	@echo "  dev-down   - Stop PostgreSQL database"
 	@echo "  dev-clean  - Stop and remove all dev containers, volumes, and orphans"
 	@echo "  build      - Build the application"
-	@echo "  run        - Run the application locally (requires dev-up)"
 	@echo "  test       - Run tests"
-	@echo "  merge-events - Merge events from events table to main tables"
 	@echo "  clean      - Clean build artifacts"
 
 # Development environment commands

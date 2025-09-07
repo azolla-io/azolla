@@ -18,7 +18,7 @@ Azolla is a reliable, high-performance async task orchestration platform built i
 azolla/
 ├── src/
 │   ├── bin/              # Executable binaries
-│   ├── orchestrator/     # Ocheratrator components
+│   ├── orchestrator/     # Orchestrator components
 │   ├── shepherd/         # Shepherd and Worker components
 │   ├── lib.rs           # Core library
 │   └── proto.rs         # Protocol definitions
@@ -228,7 +228,7 @@ This command performs an intelligent git commit by analyzing changes and followi
 ### Instructions
 
 1. **Analyze current state**: Run `git status` and `git diff` to understand all changes
-2. **Remove unnecessary comments**: Make sure no new comments are added for simple logics or self-explanatory code.
+2. **Remove unnecessary comments**: Make sure no new comments are added for simple logic or self-explanatory code.
 3. **Stage relevant files**: Add untracked and modified files that should be committed
 4. **Linting**: Run `cargo fmt` and `cargo clippy`, accept formatting changes and fix violations.
 5. **Generate commit message**: Create a commit message with a concise one-sentence title describing the main change. No other information should be added to the commit message.
@@ -237,9 +237,8 @@ This command performs an intelligent git commit by analyzing changes and followi
 ### Git Commit Message Standards
 
 - **Never add Claude Code promotion message**: Do not include any promotional text about Claude Code in commit messages
-- **Title only format**: Commit messages should only include a title that describes the commit
-- **Follow conventional commit format**: Use the format `<type>: <description>`
+- **Follow conventional commit format**: Use the format `<type>: <description>` as a single-line title
 - **Supported types**: fix, feat, build, chore, ci, docs, style, refactor, perf, test, and others
-- **Focus on the most impactful changes in bullet points, ignore changes that are easy to understand or self-explanatory
+- **Focus on the most impactful changes, ignore changes that are easy to understand or self-explanatory**
 - **ALWAYS ask for user confirmation before committing**
 - Wait for explicit approval ("yes", "commit", "proceed", etc.) before executing commit
