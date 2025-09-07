@@ -88,8 +88,7 @@ async fn handle_shepherd_connection(
 ) -> Result<()> {
     let mut shepherd_uuid: Option<Uuid> = None;
     // Cache the domain-specific manager after Hello for efficient lookups
-    let mut shepherd_manager: Option<crate::orchestrator::shepherd_manager::ShepherdManager> =
-        None;
+    let mut shepherd_manager: Option<crate::orchestrator::shepherd_manager::ShepherdManager> = None;
     let mut last_message_time = Instant::now();
     let mut ping_check_interval = tokio::time::interval(liveness_probe_threshold / 2);
 
@@ -177,11 +176,11 @@ async fn handle_client_message(
             *shepherd_manager = Some(manager);
         }
         Some(client_msg::Kind::Ack(ack)) => {
-            handle_ack_message(ack, shepherd_uuid, &None).await?;
+            handle_ack_message(ack, shepherd_uuid).await?;
         }
         Some(client_msg::Kind::Status(status)) => {
             handle_status_message(status, shepherd_uuid, shepherd_manager, shepherd_registry)
-            .await?;
+                .await?;
         }
         Some(client_msg::Kind::TaskResult(task_result)) => {
             handle_task_result_message(
@@ -225,11 +224,7 @@ async fn handle_hello_message(
     Ok((*manager).clone())
 }
 
-async fn handle_ack_message(
-    ack: Ack,
-    shepherd_uuid: &mut Option<Uuid>,
-    _unused: &Option<()>,
-) -> Result<()> {
+async fn handle_ack_message(ack: Ack, shepherd_uuid: &mut Option<Uuid>) -> Result<()> {
     if let Some(uuid) = shepherd_uuid {
         let task_id = Uuid::parse_str(&ack.task_id)
             .map_err(|e| anyhow::anyhow!("Invalid task ID in ack: {}", e))?;
