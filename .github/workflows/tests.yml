@@ -30,9 +30,10 @@ jobs:
           POSTGRES_DB: azolla_test
         options: >-
           --health-cmd pg_isready
-          --health-interval 10s
+          --health-interval 2s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 10
+          --tmpfs /var/lib/postgresql/data
         ports:
           - 5432:5432
 
@@ -54,13 +55,14 @@ jobs:
         shared-key: "tests"
         cache-targets: true
         cache-all-crates: true
+        cache-on-failure: true
     
     - name: Set up database environment
       run: |
         echo "DATABASE_URL=postgres://postgres:postgres@localhost:5432/azolla_test" >> $GITHUB_ENV
     
     - name: Build
-      run: cargo build --verbose
+      run: cargo build --verbose --jobs 2
       timeout-minutes: 10
     
     - name: Cache cargo-tarpaulin
