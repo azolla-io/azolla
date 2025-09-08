@@ -66,19 +66,12 @@ impl Worker {
 }
 
 /// Builder for worker configuration
+#[derive(Default)]
 pub struct WorkerBuilder {
     config: WorkerConfig,
     tasks: HashMap<String, Arc<dyn Task>>,
 }
 
-impl Default for WorkerBuilder {
-    fn default() -> Self {
-        Self {
-            config: WorkerConfig::default(),
-            tasks: HashMap::new(),
-        }
-    }
-}
 
 impl WorkerBuilder {
     /// Set orchestrator endpoint

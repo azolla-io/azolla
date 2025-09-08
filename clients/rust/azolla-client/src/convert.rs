@@ -13,7 +13,7 @@ pub struct ConversionError {
 impl ConversionError {
     pub fn type_mismatch(expected: &str, actual: &Value) -> Self {
         Self {
-            message: format!("Expected {}, got {:?}", expected, actual),
+            message: format!("Expected {expected}, got {actual:?}"),
         }
     }
 }
