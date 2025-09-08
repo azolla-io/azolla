@@ -1168,4 +1168,30 @@ services:
       - RUST_LOG=info
 ```
 
+## Running Examples
+
+The azolla-client crate includes example applications demonstrating different usage patterns:
+
+### Basic Usage Example
+
+Shows fundamental client operations:
+
+```bash
+cd clients/rust/azolla-client
+cargo run --example basic_usage
+```
+
+### Proc Macro Tasks Example
+
+Demonstrates type-safe task definitions with the `#[azolla_task]` macro:
+
+```bash
+cd clients/rust/azolla-client
+cargo run --example proc_macro_tasks --features macros
+```
+
+**Note**: The proc macro example requires the `macros` feature to be enabled.
+
+These examples provide practical starting points for building your own Azolla applications.
+
 You now have everything needed to build production Azolla applications with type-safe tasks and robust error handling.

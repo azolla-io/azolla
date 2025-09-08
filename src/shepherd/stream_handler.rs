@@ -309,7 +309,7 @@ mod tests {
 
         // Parse JSON args for test
         let args: Vec<String> = serde_json::from_str(&task.args).unwrap();
-        
+
         let incoming_task = IncomingTask {
             task_id,
             name: task.name.clone(),

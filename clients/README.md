@@ -195,11 +195,12 @@ A release script is provided to automate the coordinated publishing process:
 
 The script automatically:
 1. **Validates** version format, environment setup, and version consistency
-2. **Updates** azolla-client dependency to use published version
-3. **Tests** all feature combinations thoroughly
-4. **Publishes** azolla-macros first, then azolla-client after crates.io propagation
-5. **Reverts** to development path dependencies
-6. **Creates** git tag for the release
+2. **Updates** proto files from the main project to ensure synchronization
+3. **Updates** azolla-client dependency to use published version
+4. **Tests** all feature combinations thoroughly
+5. **Publishes** azolla-macros first, then azolla-client after crates.io propagation
+6. **Reverts** to development path dependencies
+7. **Creates** git tag for the release
 
 #### Usage Requirements
 
@@ -235,6 +236,7 @@ open https://crates.io/crates/azolla-macros
 #### Script Features
 
 - **Pre-flight checks**: Validates environment, git status, and crates.io access
+- **Proto synchronization**: Ensures client proto files match main project
 - **Comprehensive testing**: Tests all feature combinations before publishing
 - **Safe publishing**: Waits for crates.io propagation between publications
 - **Development restoration**: Automatically reverts to path dependencies

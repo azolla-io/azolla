@@ -315,9 +315,8 @@ impl ShepherdStatus {
         })?;
 
         // Convert args Vec<String> to JSON string for proto compatibility
-        let args_json = serde_json::to_string(&args).map_err(|e| {
-            anyhow::anyhow!("Failed to serialize args to JSON: {e}")
-        })?;
+        let args_json = serde_json::to_string(&args)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args to JSON: {e}"))?;
 
         let task = common::Task {
             task_id: task_id.to_string(),

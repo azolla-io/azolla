@@ -73,6 +73,11 @@ fi
 
 echo -e "${GREEN}✅ Pre-flight checks passed${NC}"
 
+# Update proto files from main project
+echo -e "${GREEN}📋 Updating proto files from main project...${NC}"
+cp ../../../proto/*.proto azolla-client/proto/
+echo -e "${GREEN}✅ Proto files updated${NC}"
+
 # Update dependency to published version for release
 echo -e "${GREEN}📝 Updating azolla-client dependency to published version...${NC}"
 sed -i.bak "s/azolla-macros = { path = \".*\", optional = true }/azolla-macros = { version = \"$VERSION\", optional = true }/" azolla-client/Cargo.toml

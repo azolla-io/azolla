@@ -25,7 +25,7 @@ azolla/
 ├── clients/             # Client libraries for different languages
 │   ├── README.md        # Developer guide for client library development
 │   └── rust/            # Rust client implementation
-│       ├── azolla-client/   # Main client library crate
+│       ├── azolla-client/   # Main client library crate (with examples/)
 │       ├── azolla-macros/   # Procedural macro support crate
 │       └── release.sh       # Automated release script for crates.io
 ├── config/              # Configuration files
