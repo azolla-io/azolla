@@ -104,7 +104,7 @@ async fn sum_numbers(numbers: Vec<i32>) -> Result<Value, TaskError> {
 For tasks that need to maintain state or complex initialization:
 
 ```rust
-use azolla::client::{Task, TaskResult, TaskError};
+use azolla_client::{Task, TaskResult, TaskError};
 use std::future::Future;
 use std::pin::Pin;
 
@@ -157,7 +157,7 @@ Workers execute tasks by polling the Azolla orchestrator. Here's how to build wo
 ### Simple Worker with Proc Macro Tasks
 
 ```rust
-use azolla::client::{azolla_task, Worker, TaskError};
+use azolla_client::{azolla_task, Worker, TaskError};
 use serde_json::{json, Value};
 
 // Define your tasks
@@ -194,7 +194,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Mixed Worker (Proc Macro + Trait Tasks)
 
 ```rust
-use azolla::client::{azolla_task, Worker, Task, TaskError};
+use azolla_client::{azolla_task, Worker, Task, TaskError};
 
 // Proc macro task
 #[azolla_task]
@@ -251,7 +251,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Production Worker Example
 
 ```rust
-use azolla::client::{azolla_task, Worker, TaskError};
+use azolla_client::{azolla_task, Worker, TaskError};
 use serde_json::{json, Value};
 use std::env;
 use tracing::{info, error};
@@ -656,7 +656,7 @@ This pattern separates client and worker into different processes while sharing 
 
 ```rust
 // Shared task definitions that both client and worker can use
-use azolla::client::{azolla_task, TaskError};
+use azolla_client::{azolla_task, TaskError};
 use serde_json::{json, Value};
 
 #[azolla_task]
@@ -699,7 +699,7 @@ pub async fn send_email(recipient: String, subject: String, body: String) -> Res
 **Worker Process (`src/bin/worker.rs`):**
 
 ```rust
-use azolla::client::Worker;
+use azolla_client::Worker;
 use my_app::tasks::{ProcessOrderTask, SendEmailTask};  // Import generated task structs
 
 #[tokio::main]
@@ -855,7 +855,7 @@ For production deployments, you'll want to run multiple workers and organize the
 ```rust
 // GPU-optimized worker for machine learning tasks
 // src/bin/gpu_worker.rs
-use azolla::client::{azolla_task, Worker, TaskError};
+use azolla_client::{azolla_task, Worker, TaskError};
 use serde_json::{json, Value};
 
 #[azolla_task]
@@ -913,7 +913,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```rust
 // High-memory worker for data processing tasks
 // src/bin/highmem_worker.rs
-use azolla::client::{azolla_task, Worker, TaskError};
+use azolla_client::{azolla_task, Worker, TaskError};
 use serde_json::{json, Value};
 
 #[azolla_task]
@@ -968,7 +968,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```rust
 // General-purpose CPU worker for lightweight tasks
 // src/bin/cpu_worker.rs  
-use azolla::client::{azolla_task, Worker, TaskError};
+use azolla_client::{azolla_task, Worker, TaskError};
 use serde_json::{json, Value};
 
 #[azolla_task]

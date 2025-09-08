@@ -72,7 +72,6 @@ pub struct WorkerBuilder {
     tasks: HashMap<String, Arc<dyn Task>>,
 }
 
-
 impl WorkerBuilder {
     /// Set orchestrator endpoint
     pub fn orchestrator(mut self, endpoint: &str) -> Self {

@@ -1,4 +1,3 @@
-pub mod client;
 pub mod orchestrator;
 pub mod proto;
 pub mod shepherd;
