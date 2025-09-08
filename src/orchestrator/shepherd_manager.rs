@@ -94,7 +94,7 @@ type ShepherdRxChannel = mpsc::Receiver<Result<ServerMsg, Status>>;
 pub struct TaskDispatch {
     pub task_id: Uuid,
     pub task_name: String,
-    pub args: Vec<String>,
+    pub args: String,
     pub kwargs: String,
     pub memory_limit: Option<u64>,
     pub cpu_limit: Option<u32>,
@@ -302,7 +302,7 @@ impl ShepherdStatus {
         &self,
         task_id: Uuid,
         task_name: String,
-        args: Vec<String>,
+        args: String,
         kwargs: String,
         memory_limit: Option<u64>,
         cpu_limit: Option<u32>,

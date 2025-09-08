@@ -80,8 +80,7 @@ echo -e "${GREEN}✅ Proto files updated${NC}"
 
 # Update dependency to published version for release
 echo -e "${GREEN}📝 Updating azolla-client dependency to published version...${NC}"
-sed -i.bak "s/azolla-macros = { path = \".*\", optional = true }/azolla-macros = { version = \"$VERSION\", optional = true }/" azolla-client/Cargo.toml
-rm azolla-client/Cargo.toml.bak
+perl -i -pe "s/azolla-macros = \\{ path = \"[^\"]*\", optional = true \\}/azolla-macros = { version = \"$VERSION\", optional = true }/" azolla-client/Cargo.toml
 
 echo -e "${GREEN}✅ Dependency updated to published version${NC}"
 
@@ -130,8 +129,7 @@ echo -e "${GREEN}✅ Both crates published successfully!${NC}"
 
 # Revert azolla-client Cargo.toml back to path dependency for development
 echo -e "${GREEN}🔄 Reverting to development configuration...${NC}"
-sed -i.bak "s/azolla-macros = { version = \"$VERSION\", optional = true }/azolla-macros = { path = \"..\/azolla-macros\", optional = true }/" azolla-client/Cargo.toml
-rm azolla-client/Cargo.toml.bak
+perl -i -pe "s/azolla-macros = \\{ version = \"[^\"]*\", optional = true \\}/azolla-macros = { path = \"..\\\/azolla-macros\", optional = true }/" azolla-client/Cargo.toml
 
 # Verify development setup still works
 (cd azolla-client && cargo check --features macros)

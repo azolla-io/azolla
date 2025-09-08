@@ -408,7 +408,9 @@ async fn main() -> Result<(), azolla_client::AzollaError> {
         .await?;
     
     // Create retry policy
-    let retry_policy = RetryPolicy::exponential_backoff(3, Duration::from_millis(500));
+    let retry_policy = RetryPolicy::exponential()
+        .attempts(3)
+        .build();
     
     // Submit task with retry policy and shepherd group
     let task = client
@@ -1032,7 +1034,7 @@ async fn main() -> Result<(), azolla_client::AzollaError> {
         .submit_task("train_model")
         .args(("/data/training_set.csv".to_string(), "cnn_config.json".to_string()))?
         .shepherd_group("gpu-workers")  // Target GPU workers specifically
-        .retry_policy(RetryPolicy::exponential_backoff(3, Duration::from_secs(1)))
+        .retry_policy(RetryPolicy::exponential().attempts(3).build())
         .submit()
         .await?;
     
