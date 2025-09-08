@@ -43,6 +43,9 @@ postgres-openssl = "0.5"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 clap = { version = "4.0", features = ["derive"] }
 rustc-hash = "1.1"
+thiserror = "2.0"
+async-trait = "0.1"
+azolla-macros = { path = "clients/rust/azolla-macros" }
 
 [build-dependencies]
 tonic-build = "0.11"
@@ -50,3 +53,4 @@ tonic-build = "0.11"
 [features]
 default = []
 test-harness = []
+__azolla_internal__ = []

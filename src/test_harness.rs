@@ -477,7 +477,7 @@ impl TaskTestData {
         CreateTaskRequest {
             name: "echo".to_string(),
             domain: "test".to_string(),
-            args: vec![message.to_string()],
+            args: serde_json::to_string(&vec![message.to_string()]).unwrap(),
             kwargs: "{}".to_string(),
             retry_policy: json!({
                 "version": 1,
@@ -495,7 +495,7 @@ impl TaskTestData {
         CreateTaskRequest {
             name: "flaky_task".to_string(),
             domain: "test".to_string(),
-            args: vec![],
+            args: serde_json::to_string(&Vec::<String>::new()).unwrap(),
             kwargs: r#"{"fail_first_attempt": true}"#.to_string(),
             retry_policy: json!({
                 "version": 1,
@@ -518,7 +518,7 @@ impl TaskTestData {
         CreateTaskRequest {
             name: "always_fail".to_string(),
             domain: "test".to_string(),
-            args: vec![],
+            args: serde_json::to_string(&Vec::<String>::new()).unwrap(),
             kwargs: r#"{"should_fail": true}"#.to_string(),
             retry_policy: json!({
                 "version": 1,

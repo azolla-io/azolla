@@ -234,10 +234,14 @@ impl StreamHandler {
                 let task_id = Uuid::parse_str(&task.task_id)
                     .map_err(|e| anyhow::anyhow!("Invalid task ID: {}", e))?;
 
+                // Parse JSON args back to Vec<String>
+                let args: Vec<String> = serde_json::from_str(&task.args)
+                    .map_err(|e| anyhow::anyhow!("Failed to parse task args JSON: {}", e))?;
+
                 let incoming_task = IncomingTask {
                     task_id,
                     name: task.name,
-                    args: task.args,
+                    args,
                     kwargs: task.kwargs,
                     memory_limit: task.memory_limit,
                     cpu_limit: task.cpu_limit,
@@ -295,7 +299,7 @@ mod tests {
         let task = common::Task {
             task_id: Uuid::new_v4().to_string(),
             name: "test_task".to_string(),
-            args: vec!["arg1".to_string(), "arg2".to_string()],
+            args: serde_json::to_string(&vec!["arg1".to_string(), "arg2".to_string()]).unwrap(),
             kwargs: r#"{"key": "value"}"#.to_string(),
             memory_limit: Some(1024),
             cpu_limit: Some(100),
@@ -303,10 +307,13 @@ mod tests {
 
         let task_id = Uuid::parse_str(&task.task_id).unwrap();
 
+        // Parse JSON args for test
+        let args: Vec<String> = serde_json::from_str(&task.args).unwrap();
+        
         let incoming_task = IncomingTask {
             task_id,
             name: task.name.clone(),
-            args: task.args.clone(),
+            args,
             kwargs: task.kwargs.clone(),
             memory_limit: task.memory_limit,
             cpu_limit: task.cpu_limit,

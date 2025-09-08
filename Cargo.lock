@@ -210,6 +210,8 @@ name = "azolla"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "azolla-macros",
  "chrono",
  "clap",
  "config",
@@ -229,6 +231,7 @@ dependencies = [
  "serde",
  "serde_json",
  "testcontainers",
+ "thiserror 2.0.12",
  "tokio",
  "tokio-postgres",
  "tokio-stream",
@@ -236,6 +239,17 @@ dependencies = [
  "tonic",
  "tonic-build",
  "uuid",
+]
+
+[[package]]
+name = "azolla-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde",
+ "serde_json",
+ "syn",
 ]
 
 [[package]]

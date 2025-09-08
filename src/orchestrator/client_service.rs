@@ -101,13 +101,21 @@ impl ClientService for ClientServiceImpl {
                 Status::internal("Failed to write event")
             })?;
 
+        // Parse JSON args back to Vec<String> for internal task representation
+        let args: Vec<String> = if req.args.is_empty() {
+            Vec::new()
+        } else {
+            serde_json::from_str(&req.args)
+                .map_err(|e| Status::invalid_argument(format!("Invalid args JSON: {e}")))?
+        };
+
         let task = Task {
             id: task_id,
             name: req.name.clone(),
             created_at: Utc::now(),
             flow_instance_id,
             retry_policy,
-            args: req.args,
+            args,
             kwargs,
             status: TASK_STATUS_CREATED,
             attempts: Vec::new(),

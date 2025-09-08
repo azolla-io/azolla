@@ -41,7 +41,7 @@ message TaskResult {
 message Task {
   string task_id = 1;
   string name = 2;
-  repeated string args = 3;
+  string args = 3; // JSON array of arguments for type safety
   string kwargs = 4; // JSON string
   optional uint64 memory_limit = 5; // bytes
   optional uint32 cpu_limit = 6; // millicores

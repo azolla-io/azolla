@@ -22,6 +22,12 @@ azolla/
 │   ├── shepherd/         # Shepherd and Worker components
 │   ├── lib.rs           # Core library
 │   └── proto.rs         # Protocol definitions
+├── clients/             # Client libraries for different languages
+│   ├── README.md        # Developer guide for client library development
+│   └── rust/            # Rust client implementation
+│       ├── azolla-client/   # Main client library crate
+│       ├── azolla-macros/   # Procedural macro support crate
+│       └── release.sh       # Automated release script for crates.io
 ├── config/              # Configuration files
 ├── proto/               # gRPC protocol definitions
 ├── tests/               # Tests
@@ -67,6 +73,15 @@ azolla/
 - **orchestrator.proto**: Client and cluster service definitions
 - **shepherd.proto**: Worker service definitions  
 - **common.proto**: Shared message types
+
+#### Client Libraries (`clients/`)
+*Multi-language client libraries for Azolla integration*
+
+- **README.md**: Comprehensive developer guide for client library development, publishing, and maintenance
+- **rust/**: Complete Rust client implementation with two-crate architecture
+  - **azolla-client/**: Main client library with gRPC client, retry policies, and optional proc macro support
+  - **azolla-macros/**: Procedural macro crate providing `#[azolla_task]` attribute for type-safe task definitions
+  - **release.sh**: Automated script for coordinated publishing to crates.io with version validation and testing
 
 ## Build and Test Commands
 

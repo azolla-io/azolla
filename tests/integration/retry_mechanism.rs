@@ -442,7 +442,7 @@ impl RetryTestData {
         CreateTaskRequest {
             name: "always_fail".to_string(),
             domain: "test".to_string(),
-            args: vec![],
+            args: serde_json::to_string(&Vec::<String>::new()).unwrap(),
             kwargs: r#"{"should_fail": true}"#.to_string(),
             retry_policy: json!({
                 "version": 1,
@@ -465,7 +465,7 @@ impl RetryTestData {
         CreateTaskRequest {
             name: "always_fail".to_string(),
             domain: "test".to_string(),
-            args: vec![],
+            args: serde_json::to_string(&Vec::<String>::new()).unwrap(),
             kwargs: r#"{"should_fail": true}"#.to_string(),
             retry_policy: json!({
                 "version": 1,

@@ -57,26 +57,56 @@ cargo run --bin azolla-orchestrator
 cargo run --bin azolla-shepherd
 ```
 
-### 2. Submit Your First Task
+### 2. Write and Submit Your First Task
+
+**Rust Example:**
+
+```rust
+// Define a task with the proc macro
+use azolla_client::{azolla_task, TaskError};
+use serde_json::{json, Value};
+
+#[azolla_task]
+async fn greet_user(name: String, age: u32) -> Result<Value, TaskError> {
+    Ok(json!({
+        "greeting": format!("Hello {name}! You are {age} years old."),
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    }))
+}
+
+// Submit the task from a client
+use azolla_client::{Client, TaskExecutionResult};
+
+#[tokio::main]
+async fn main() -> Result<(), azolla_client::AzollaError> {
+    let client = Client::connect("http://localhost:52710").await?;
+    
+    let task = client
+        .submit_task("greet_user")
+        .args(("Alice".to_string(), 25u32))?
+        .submit()
+        .await?;
+    
+    match task.wait().await? {
+        TaskExecutionResult::Success(result) => println!("✅ {}", result),
+        TaskExecutionResult::Failed(error) => println!("❌ {}", error),
+    }
+    
+    Ok(())
+}
+```
+
+**Python Example:**
 ```python
-# Python client
+# Python client (coming soon)
 import azolla
 
 client = azolla.Client("localhost:52710")
-result = client.submit_task("echo", args=["Hello, Azolla!"])
-print(result)  # "Hello, Azolla!"
+result = client.submit_task("greet_user", args=["Alice", 25])
+print(result)  # {"greeting": "Hello Alice! You are 25 years old.", ...}
 ```
 
-```bash
-# Or via gRPC
-grpcurl -plaintext -d '{
-  "name": "echo",
-  "domain": "default", 
-  "args": ["Hello, Azolla!"]
-}' localhost:52710 azolla.orchestrator.ClientService/CreateTask
-```
-
-**[📖 Full Documentation](docs/) | [🐍 Python Guide](examples/python/) | [🦀 Rust Guide](examples/rust/)**
+**[📖 Full Rust Client Guide](docs/client_library.md) | [🐍 Python Guide](examples/python/) | [🦀 More Examples](examples/)**
 
 ---
 
@@ -140,11 +170,14 @@ cargo build --release
 docker-compose up --build
 ```
 
-### Language Support
+### Client Libraries
 
-- **🐍 Python**: `pip install azolla-client` 
-- **🦀 Rust**: `cargo add azolla-client`
+- **🦀 Rust**: `azolla-client = { version = "0.1.0", features = ["macros"] }` - Type-safe with proc macro support
+- **🐍 Python**: Coming soon - `pip install azolla-client`
+- **🟨 JavaScript**: Coming soon - `npm install azolla-client`
 - **🌐 Any Language**: Use gRPC directly
+
+See [`clients/`](clients/) directory for all available and planned client libraries.
 
 ---
 

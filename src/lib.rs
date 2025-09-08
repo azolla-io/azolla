@@ -1,6 +1,7 @@
 pub mod orchestrator;
 pub mod proto;
 pub mod shepherd;
+pub mod client;
 
 #[cfg(any(test, feature = "test-harness"))]
 pub mod test_harness;
