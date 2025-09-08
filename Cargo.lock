@@ -211,7 +211,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "azolla-macros",
+ "azolla-client",
+ "azolla-macros 0.1.1",
  "chrono",
  "clap",
  "config",
@@ -242,8 +243,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "azolla-client"
+version = "0.1.1"
+dependencies = [
+ "async-trait",
+ "azolla-macros 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "log",
+ "prost",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-build",
+ "uuid",
+]
+
+[[package]]
 name = "azolla-macros"
 version = "0.1.1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde",
+ "serde_json",
+ "syn",
+]
+
+[[package]]
+name = "azolla-macros"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93f0c6b7255b18a4093233ac4925f436b43261faf2ae26af8debbc6183bb635f"
 dependencies = [
  "proc-macro2",
  "quote",

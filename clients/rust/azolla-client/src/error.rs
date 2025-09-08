@@ -60,6 +60,29 @@ impl TaskError {
             data: None,
         }
     }
+
+    /// Create a general task error with a custom message
+    pub fn new(message: &str) -> Self {
+        Self {
+            error_type: "TaskError".to_string(),
+            message: message.to_string(),
+            code: None,
+            stacktrace: None,
+            data: None,
+        }
+    }
+
+    /// Set the error type
+    pub fn with_error_type(mut self, error_type: &str) -> Self {
+        self.error_type = error_type.to_string();
+        self
+    }
+
+    /// Set the error code
+    pub fn with_error_code(mut self, code: &str) -> Self {
+        self.code = Some(code.to_string());
+        self
+    }
     
     /// Get error type for external use
     pub fn error_type(&self) -> Option<String> {

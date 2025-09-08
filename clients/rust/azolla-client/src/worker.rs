@@ -100,7 +100,7 @@ impl Worker {
                     }
                     
                     log::error!("Worker connection failed: {e}");
-                    log::info!("Reconnecting in {:?}...", reconnect_delay);
+                    log::info!("Reconnecting in {reconnect_delay:?}...");
                     
                     tokio::time::sleep(reconnect_delay).await;
                     
@@ -278,7 +278,7 @@ impl Worker {
         let args = match Self::parse_task_args(&proto_task.args) {
             Ok(args) => args,
             Err(e) => {
-                log::error!("Failed to parse args for task {}: {e}", task_id);
+                log::error!("Failed to parse args for task {task_id}: {e}");
                 return ProtoTaskResult {
                     task_id,
                     result_type: Some(crate::proto::common::task_result::ResultType::Error(ErrorResult {
@@ -294,7 +294,7 @@ impl Worker {
         
         // Validate arguments
         if let Err(e) = task_impl.validate_args(&args) {
-            log::error!("Argument validation failed for task {}: {e}", task_id);
+            log::error!("Argument validation failed for task {task_id}: {e}");
             return ProtoTaskResult {
                 task_id,
                 result_type: Some(crate::proto::common::task_result::ResultType::Error(ErrorResult {
@@ -312,7 +312,7 @@ impl Worker {
         let execution_result = task_impl.execute(args).await;
         let execution_time = start_time.elapsed();
         
-        log::info!("Task {} completed in {:?}", task_id, execution_time);
+        log::info!("Task {task_id} completed in {execution_time:?}");
         
         match execution_result {
             Ok(result) => {
@@ -326,7 +326,7 @@ impl Worker {
                 }
             }
             Err(e) => {
-                log::error!("Task {} failed: {e}", task_id);
+                log::error!("Task {task_id} failed: {e}");
                 ProtoTaskResult {
                     task_id,
                     result_type: Some(crate::proto::common::task_result::ResultType::Error(ErrorResult {
@@ -372,7 +372,7 @@ impl Worker {
             let status_msg = ClientMsg {
                 kind: Some(crate::proto::orchestrator::client_msg::Kind::Status(Status {
                     current_load: current,
-                    available_capacity: if current < 100 { 100 - current } else { 0 },
+                    available_capacity: 100u32.saturating_sub(current),
                 })),
             };
             

@@ -21,6 +21,7 @@ pub trait Task: Send + Sync {
     fn execute(&self, args: Vec<Value>) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>>;
 
     /// Optional: Validate arguments before execution
+    #[allow(clippy::result_large_err)]
     fn validate_args(&self, _args: &[Value]) -> Result<(), TaskError> {
         Ok(())
     }

@@ -119,6 +119,7 @@ impl<'a> TaskSubmissionBuilder<'a> {
     }
 
     /// Set typed arguments (any serializable type)
+    #[allow(clippy::result_large_err)]
     pub fn args<T: Serialize>(mut self, args: T) -> Result<Self, AzollaError> {
         let json_value = serde_json::to_value(args)?;
         self.args = match json_value {
@@ -212,7 +213,7 @@ impl TaskHandle {
                     // Parse the actual task result
                     let result_value: serde_json::Value = serde_json::from_str(
                         &response.result.unwrap_or_else(|| "null".to_string()),
-                    ).map_err(|e| AzollaError::Serialization(e))?;
+                    ).map_err(AzollaError::Serialization)?;
                     return Ok(TaskExecutionResult::Success(result_value));
                 }
                 "failed" => {
@@ -255,7 +256,7 @@ impl TaskHandle {
                 // Parse the actual task result
                 let result_value: serde_json::Value = serde_json::from_str(
                     &response.result.unwrap_or_else(|| "null".to_string()),
-                ).map_err(|e| AzollaError::Serialization(e))?;
+                ).map_err(AzollaError::Serialization)?;
                 Ok(Some(TaskExecutionResult::Success(result_value)))
             }
             "failed" => {

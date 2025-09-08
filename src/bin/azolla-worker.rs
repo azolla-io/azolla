@@ -1,7 +1,9 @@
 use anyhow::Result;
 use clap::{Arg, Command};
 use log::{error, info};
-use serde_json::Value;
+use serde_json::{json, Value};
+use std::future::Future;
+use std::pin::Pin;
 use std::time::Duration;
 use tonic::Request;
 use uuid::Uuid;
@@ -10,26 +12,128 @@ use azolla::proto::{common, shepherd};
 use shepherd::worker_client::WorkerClient;
 use shepherd::*;
 
+// Import client library for new worker mode
+use azolla_client::{azolla_task, FromJsonValue, Task, TaskError, TaskResult, Worker};
+
+// Macro-based task implementations using #[azolla_task] attribute
+
+/// Echo task using proc macro - returns the first argument
+#[azolla_task]
+async fn echo_task(message: String) -> Result<Value, TaskError> {
+    Ok(json!(message))
+}
+
+/// Always fail task using proc macro - always fails for testing
+#[azolla_task]
+async fn always_fail_task(should_fail: Option<bool>) -> Result<Value, TaskError> {
+    let should_fail = should_fail.unwrap_or(true);
+
+    if should_fail {
+        Err(TaskError::new("This task always fails").with_error_type("TestError"))
+    } else {
+        Ok(json!({"status": "unexpectedly_succeeded"}))
+    }
+}
+
+/// Flaky task using proc macro - fails on first attempt, succeeds on retry
+#[azolla_task]
+async fn flaky_task(fail_first_attempt: Option<bool>) -> Result<Value, TaskError> {
+    let fail_first_attempt = fail_first_attempt.unwrap_or(false);
+
+    if fail_first_attempt {
+        // Use process ID to track attempts (simplified for this implementation)
+        let state_file =
+            std::env::temp_dir().join(format!("flaky_task_state_{}", std::process::id()));
+
+        let attempt_count = match std::fs::read_to_string(&state_file) {
+            Ok(content) => content.trim().parse::<u32>().unwrap_or(0),
+            Err(_) => 0,
+        };
+
+        let new_attempt_count = attempt_count + 1;
+        let _ = std::fs::write(&state_file, new_attempt_count.to_string());
+
+        info!("Flaky task attempt #{new_attempt_count}");
+
+        if new_attempt_count == 1 {
+            return Err(TaskError::new("First attempt failure")
+                .with_error_type("TestError")
+                .with_error_code("FLAKY_TASK_FIRST_ATTEMPT"));
+        }
+    }
+
+    Ok(json!("Flaky task succeeded on retry"))
+}
+
+// Traditional task implementations using the client library Task trait
+
+/// Math add task - adds two numbers from kwargs
+#[derive(Debug)]
+struct MathAddTask;
+
+impl Task for MathAddTask {
+    fn name(&self) -> &'static str {
+        "math_add"
+    }
+
+    fn execute(&self, args: Vec<Value>) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+        Box::pin(async move {
+            // For math_add, we expect kwargs to be passed as args[1] if present
+            let kwargs = if args.len() > 1 {
+                &args[1]
+            } else {
+                return Err(TaskError::new("Missing kwargs for math_add task"));
+            };
+
+            let a = kwargs.get("a").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let b = kwargs.get("b").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            Ok(json!(a + b))
+        })
+    }
+}
+
+/// Count args task - counts the number of arguments
+#[derive(Debug)]
+struct CountArgsTask;
+
+impl Task for CountArgsTask {
+    fn name(&self) -> &'static str {
+        "count_args"
+    }
+
+    fn execute(&self, args: Vec<Value>) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+        Box::pin(async move { Ok(json!(args.len() as i64)) })
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
 
     let matches = Command::new("azolla-worker")
         .version("0.1.0")
-        .about("Azolla Worker - Executes individual tasks")
+        .about("Azolla Worker - Executes individual tasks or runs as a service")
+        .arg(
+            Arg::new("mode")
+                .long("mode")
+                .value_name("MODE")
+                .help("Worker mode: 'task' (default) for single task execution, 'service' for continuous worker service")
+                .default_value("task")
+                .value_parser(["task", "service"]),
+        )
         .arg(
             Arg::new("task-id")
                 .long("task-id")
                 .value_name("UUID")
-                .help("Task ID to execute")
-                .required(true),
+                .help("Task ID to execute (required in task mode)")
+                .required_if_eq("mode", "task"),
         )
         .arg(
             Arg::new("name")
                 .long("name")
                 .value_name("NAME")
-                .help("Task name")
-                .required(true),
+                .help("Task name (required in task mode)")
+                .required_if_eq("mode", "task"),
         )
         .arg(
             Arg::new("args")
@@ -49,11 +153,57 @@ async fn main() -> Result<()> {
             Arg::new("shepherd-endpoint")
                 .long("shepherd-endpoint")
                 .value_name("ENDPOINT")
-                .help("Shepherd gRPC endpoint for result reporting")
-                .required(true),
+                .help("Shepherd gRPC endpoint for result reporting (required in task mode)")
+                .required_if_eq("mode", "task"),
+        )
+        .arg(
+            Arg::new("orchestrator-endpoint")
+                .long("orchestrator-endpoint")
+                .value_name("ENDPOINT")
+                .help("Orchestrator gRPC endpoint (for service mode)")
+                .default_value("localhost:52710"),
+        )
+        .arg(
+            Arg::new("domain")
+                .long("domain")
+                .value_name("DOMAIN")
+                .help("Worker domain (for service mode)")
+                .default_value("default"),
+        )
+        .arg(
+            Arg::new("shepherd-group")
+                .long("shepherd-group")
+                .value_name("GROUP")
+                .help("Shepherd group (for service mode)")
+                .default_value("rust-workers"),
+        )
+        .arg(
+            Arg::new("max-concurrency")
+                .long("max-concurrency")
+                .value_name("NUM")
+                .help("Maximum concurrent tasks (for service mode)")
+                .default_value("10")
+                .value_parser(clap::value_parser!(u32)),
         )
         .get_matches();
 
+    let mode = matches.get_one::<String>("mode").unwrap();
+
+    match mode.as_str() {
+        "task" => {
+            // Legacy single-task execution mode
+            run_single_task_mode(&matches).await
+        }
+        "service" => {
+            // New worker service mode using client library
+            run_worker_service_mode(&matches).await
+        }
+        _ => unreachable!("Invalid mode"), // clap should prevent this
+    }
+}
+
+/// Run in single-task execution mode (backward compatibility)
+async fn run_single_task_mode(matches: &clap::ArgMatches) -> Result<()> {
     // Parse arguments
     let task_id = matches.get_one::<String>("task-id").unwrap();
     let task_name = matches.get_one::<String>("name").unwrap();
@@ -90,6 +240,49 @@ async fn main() -> Result<()> {
     }
 
     info!("Worker completed successfully");
+    Ok(())
+}
+
+/// Run in worker service mode using the client library
+async fn run_worker_service_mode(matches: &clap::ArgMatches) -> Result<()> {
+    let orchestrator_endpoint = matches.get_one::<String>("orchestrator-endpoint").unwrap();
+    let domain = matches.get_one::<String>("domain").unwrap();
+    let shepherd_group = matches.get_one::<String>("shepherd-group").unwrap();
+    let max_concurrency = *matches.get_one::<u32>("max-concurrency").unwrap();
+
+    info!("Starting worker service mode");
+    info!("Orchestrator: {orchestrator_endpoint}");
+    info!("Domain: {domain}, Group: {shepherd_group}, Max concurrency: {max_concurrency}");
+
+    // Build worker with hybrid task implementations (macro + traditional)
+    let worker = Worker::builder()
+        .orchestrator(orchestrator_endpoint)
+        .domain(domain)
+        .shepherd_group(shepherd_group)
+        .max_concurrency(max_concurrency)
+        // Macro-generated tasks
+        .register_task(EchoTaskTask) // Generated from echo_task function
+        .register_task(AlwaysFailTaskTask) // Generated from always_fail_task function
+        .register_task(FlakyTaskTask) // Generated from flaky_task function
+        // Traditional Task trait implementations
+        .register_task(MathAddTask)
+        .register_task(CountArgsTask)
+        .build()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to build worker: {e}"))?;
+
+    info!(
+        "Worker built successfully with {} tasks",
+        worker.task_count()
+    );
+
+    // Run the worker (this will block until shutdown)
+    worker
+        .run()
+        .await
+        .map_err(|e| anyhow::anyhow!("Worker failed: {e}"))?;
+
+    info!("Worker service stopped");
     Ok(())
 }
 
