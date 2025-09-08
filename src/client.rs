@@ -45,7 +45,7 @@ impl ConversionError {
     pub fn type_mismatch(expected: &str, value: &Value) -> Self {
         Self::TypeMismatch {
             expected: expected.to_string(),
-            actual: format!("{:?}", value),
+            actual: format!("{value:?}"),
         }
     }
 }
