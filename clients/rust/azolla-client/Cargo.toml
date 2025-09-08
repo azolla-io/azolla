@@ -62,7 +62,23 @@ macros = ["azolla-macros"]
 __azolla_internal__ = []
 
 [dev-dependencies]
+# Async testing utilities
 tokio-test = "0.4"
+
+# Performance testing and benchmarking  
+criterion = { version = "0.5", features = ["html_reports"] }
+
+# Mock and test utilities
+mockall = "0.12"
+
+# Ensure tests run in sequence when needed
+serial_test = "3.0"
+
+# Additional testing assertions
+assert_matches = "1.5"
+
+# Property-based testing
+proptest = "1.0"
 
 # Examples that require macros feature
 [[example]]
@@ -71,4 +87,14 @@ required-features = ["macros"]
 
 [[example]]  
 name = "basic_usage"
+required-features = ["macros"]
+
+# Performance benchmarks
+[[bench]]
+name = "conversion_performance"
+harness = false
+
+[[bench]]
+name = "task_execution_performance" 
+harness = false
 required-features = ["macros"]

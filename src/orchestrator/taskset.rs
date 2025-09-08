@@ -760,8 +760,8 @@ impl TaskSetRegistry {
                     COALESCE((e.metadata->'retry_policy')::jsonb, '{}'::jsonb),
                     CASE 
                         WHEN e.metadata->'args' IS NOT NULL 
-                        THEN ARRAY(SELECT jsonb_array_elements_text(e.metadata->'args'))
-                        ELSE ARRAY[]::text[]
+                        THEN (e.metadata->>'args')::text
+                        ELSE '[]'::text
                     END,
                     COALESCE((e.metadata->'kwargs')::jsonb, '{}'::jsonb),
                     $4,

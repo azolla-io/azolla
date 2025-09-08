@@ -23,13 +23,13 @@ clients/
 │   │   │   ├── orchestrator.proto
 │   │   │   └── common.proto
 │   │   ├── examples/             # Usage examples
-│   │   ├── LICENSE-APACHE        # Apache 2.0 license
+│   │   ├── LICENSE              # Apache 2.0 license
 │   │   └── PUBLISHING.md         # Publishing instructions
 │   └── azolla-macros/            # Procedural macro support crate
 │       ├── Cargo.toml           # Proc macro package metadata
 │       ├── README.md            # Macro-specific documentation
 │       ├── src/lib.rs           # Proc macro implementation
-│       └── LICENSE-APACHE       # Apache 2.0 license
+│       └── LICENSE             # Apache 2.0 license
 └── python/                       # Python client (planned)
     └── .gitkeep                  # Placeholder for future implementation
 ```

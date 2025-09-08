@@ -13,6 +13,25 @@ use tonic::transport::Channel;
 use serde_json::Value;
 use uuid::Uuid;
 
+/// RAII guard for managing load counter
+/// Automatically decrements the counter when dropped, ensuring panic safety
+struct LoadGuard {
+    counter: Arc<AtomicU32>,
+}
+
+impl LoadGuard {
+    fn new(counter: Arc<AtomicU32>) -> Self {
+        counter.fetch_add(1, Ordering::Relaxed);
+        Self { counter }
+    }
+}
+
+impl Drop for LoadGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 /// Worker for executing tasks
 pub struct Worker {
     config: WorkerConfig,
@@ -202,15 +221,17 @@ impl Worker {
             return Err(AzollaError::WorkerError(format!("Failed to send ack: {e}")));
         }
         
-        // Increment current load
-        self.current_load.fetch_add(1, Ordering::Relaxed);
-        
         // Execute task asynchronously
         let tasks = self.tasks.clone();
-        let current_load = self.current_load.clone();
         let task_id = task.task_id.clone();
         
+        // Create load guard to ensure counter is properly managed even on panic
+        let load_guard = LoadGuard::new(self.current_load.clone());
+        
         tokio::spawn(async move {
+            // Move the guard into the async task to ensure it lives for the task duration
+            let _guard = load_guard;
+            
             let result = Self::execute_task_impl(tasks, task).await;
             
             // Send result
@@ -222,8 +243,7 @@ impl Worker {
                 log::error!("Failed to send result for task {task_id}: {e}");
             }
             
-            // Decrement current load
-            current_load.fetch_sub(1, Ordering::Relaxed);
+            // Load counter automatically decremented when _guard is dropped
         });
         
         Ok(())
@@ -427,5 +447,229 @@ impl WorkerBuilder {
             current_load: Arc::new(AtomicU32::new(0)),
             shutdown_signal: Arc::new(AtomicBool::new(false)),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use tokio::sync::mpsc;
+    use serde_json::json;
+    use std::future::Future;
+    use std::pin::Pin;
+    use crate::TaskResult;
+
+    /// Test the purpose of LoadGuard: ensure load counter is managed correctly even on panic
+    #[test]
+    fn test_load_guard_increments_on_create() {
+        let counter = Arc::new(AtomicU32::new(0));
+        assert_eq!(counter.load(Ordering::Relaxed), 0);
+        
+        {
+            let _guard = LoadGuard::new(counter.clone());
+            assert_eq!(counter.load(Ordering::Relaxed), 1);
+        } // _guard drops here
+        
+        assert_eq!(counter.load(Ordering::Relaxed), 0);
+    }
+
+    /// Test the expected behavior: load counter should be decremented even when panic occurs
+    #[test]
+    fn test_load_guard_handles_panic() {
+        let counter = Arc::new(AtomicU32::new(0));
+        
+        let result = std::panic::catch_unwind(|| {
+            let _guard = LoadGuard::new(counter.clone());
+            assert_eq!(counter.load(Ordering::Relaxed), 1);
+            panic!("Simulated panic in task!");
+        });
+        
+        assert!(result.is_err());
+        // Critical test: counter should be back to 0 even after panic
+        assert_eq!(counter.load(Ordering::Relaxed), 0);
+    }
+
+    /// Test multiple guards work independently
+    #[test]
+    fn test_multiple_load_guards() {
+        let counter = Arc::new(AtomicU32::new(0));
+        
+        {
+            let _guard1 = LoadGuard::new(counter.clone());
+            assert_eq!(counter.load(Ordering::Relaxed), 1);
+            
+            {
+                let _guard2 = LoadGuard::new(counter.clone());
+                assert_eq!(counter.load(Ordering::Relaxed), 2);
+            }
+            
+            assert_eq!(counter.load(Ordering::Relaxed), 1);
+        }
+        
+        assert_eq!(counter.load(Ordering::Relaxed), 0);
+    }
+
+    // Mock task that panics for testing
+    struct PanickingTask;
+    
+    impl Task for PanickingTask {
+        fn name(&self) -> &'static str {
+            "panicking_task"
+        }
+        
+        fn execute(&self, _args: Vec<Value>) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+            Box::pin(async {
+                panic!("Task intentionally panicked for testing!");
+            })
+        }
+    }
+
+    // Mock task that succeeds for testing  
+    struct SuccessTask;
+    
+    impl Task for SuccessTask {
+        fn name(&self) -> &'static str {
+            "success_task"
+        }
+        
+        fn execute(&self, _args: Vec<Value>) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+            Box::pin(async {
+                Ok(json!({"status": "success"}))
+            })
+        }
+    }
+
+    /// Test that task execution panic doesn't break worker load tracking
+    #[tokio::test]
+    async fn test_task_execution_panic_safety() {
+        let config = WorkerConfig::default();
+        let mut tasks = HashMap::new();
+        tasks.insert("panicking_task".to_string(), Arc::new(PanickingTask) as Arc<dyn Task>);
+        
+        let worker = Worker {
+            config,
+            tasks,
+            shepherd_uuid: "test-uuid".to_string(),
+            current_load: Arc::new(AtomicU32::new(0)),
+            shutdown_signal: Arc::new(AtomicBool::new(false)),
+        };
+
+        let (tx, mut rx) = mpsc::channel(10);
+        let proto_task = crate::proto::common::Task {
+            task_id: "panic-test-task".to_string(),
+            name: "panicking_task".to_string(),
+            args: "[]".to_string(),
+            kwargs: "{}".to_string(),
+            memory_limit: Some(0),
+            cpu_limit: Some(0),
+        };
+
+        // Initial load should be 0
+        assert_eq!(worker.current_load.load(Ordering::Relaxed), 0);
+
+        // Handle the task - this should not panic the worker itself
+        let result = worker.handle_task(proto_task, tx).await;
+        assert!(result.is_ok(), "handle_incoming_task should not fail even with panicking tasks");
+
+        // Give the spawned task time to complete/panic
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        
+        // Critical assertion: load should be back to 0 even though the task panicked
+        assert_eq!(worker.current_load.load(Ordering::Relaxed), 0, "Load counter should be reset even after task panic");
+
+        // Verify we get an error result message
+        if let Ok(msg) = rx.try_recv() {
+            if let Some(crate::proto::orchestrator::client_msg::Kind::TaskResult(task_result)) = msg.kind {
+                assert!(task_result.result_type.is_some());
+                // Should be an error result due to panic
+            }
+        }
+    }
+
+    /// Test that successful task execution properly manages load
+    #[tokio::test]
+    async fn test_task_execution_success_load_management() {
+        let config = WorkerConfig::default();
+        let mut tasks = HashMap::new();
+        tasks.insert("success_task".to_string(), Arc::new(SuccessTask) as Arc<dyn Task>);
+        
+        let worker = Worker {
+            config,
+            tasks,
+            shepherd_uuid: "test-uuid".to_string(),
+            current_load: Arc::new(AtomicU32::new(0)),
+            shutdown_signal: Arc::new(AtomicBool::new(false)),
+        };
+
+        let (tx, mut rx) = mpsc::channel(10);
+        let proto_task = crate::proto::common::Task {
+            task_id: "success-test-task".to_string(),
+            name: "success_task".to_string(),
+            args: "[]".to_string(),
+            kwargs: "{}".to_string(),
+            memory_limit: Some(0),
+            cpu_limit: Some(0),
+        };
+
+        // Initial load should be 0
+        assert_eq!(worker.current_load.load(Ordering::Relaxed), 0);
+
+        // Handle the task
+        let result = worker.handle_task(proto_task, tx).await;
+        assert!(result.is_ok());
+
+        // Give the task time to complete
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        
+        // Load should be back to 0 after successful completion
+        assert_eq!(worker.current_load.load(Ordering::Relaxed), 0);
+
+        // Verify we get a success result message
+        if let Ok(msg) = rx.try_recv() {
+            if let Some(crate::proto::orchestrator::client_msg::Kind::TaskResult(task_result)) = msg.kind {
+                assert!(task_result.result_type.is_some());
+            }
+        }
+    }
+
+    /// Test worker configuration defaults
+    #[test]
+    fn test_worker_config_defaults() {
+        let config = WorkerConfig::default();
+        assert_eq!(config.orchestrator_endpoint, "localhost:52710");
+        assert_eq!(config.domain, "default");
+        assert_eq!(config.shepherd_group, "rust-workers");
+        assert_eq!(config.max_concurrency, 10);
+        assert_eq!(config.heartbeat_interval, Duration::from_secs(30));
+    }
+
+    /// Test worker builder functionality
+    #[test]
+    fn test_worker_builder() {
+        let builder = Worker::builder()
+            .orchestrator("test-orchestrator:8080")
+            .domain("test-domain")
+            .shepherd_group("test-group")
+            .max_concurrency(5);
+        
+        // We can verify the builder accepts our configuration
+        assert_eq!(builder.config.orchestrator_endpoint, "test-orchestrator:8080");
+        assert_eq!(builder.config.domain, "test-domain");
+        assert_eq!(builder.config.shepherd_group, "test-group");
+        assert_eq!(builder.config.max_concurrency, 5);
+    }
+
+    /// Test task registration in builder
+    #[test]
+    fn test_worker_builder_task_registration() {
+        let builder = Worker::builder()
+            .register_task(SuccessTask)
+            .register_task(PanickingTask);
+        
+        assert_eq!(builder.tasks.len(), 2);
+        assert!(builder.tasks.contains_key("success_task"));
+        assert!(builder.tasks.contains_key("panicking_task"));
     }
 }

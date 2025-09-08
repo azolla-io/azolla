@@ -76,6 +76,13 @@ pub fn azolla_task(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     // Extract typed arguments
                     #(#param_extractions)*
                     
+                    // Check for extra arguments
+                    if args_iter.next().is_some() {
+                        return Err(#crate_path::error::TaskError::invalid_args(
+                            "Too many arguments provided"
+                        ));
+                    }
+                    
                     // Call original function
                     let result = #fn_name(#(#param_names),*).await;
                     
