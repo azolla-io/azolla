@@ -2,64 +2,7 @@
 //!
 //! A Rust client library for the Azolla distributed task processing platform.
 //!
-//! ## Features
-//!
-//! - **Type-safe task arguments** - Compile-time argument validation with automatic JSON conversion
-//! - **Proc macro support** - Define tasks using `#[azolla_task]` attribute for zero boilerplate
-//! - **Async/await ready** - Built on tokio with full async support
-//! - **Worker registration** - Create workers that automatically discover and execute tasks
-//! - **Retry policies** - Configurable retry behavior for failed tasks
-//! - **Error handling** - Comprehensive error types with detailed messages
-//!
-//! ## Quick Start
-//!
-//! ### Defining Tasks
-//!
-//! ```no_run
-//! use azolla_client::{azolla_task, TaskError};
-//! use serde_json::{json, Value};
-//!
-//! #[azolla_task]
-//! async fn greet_user(name: String, age: u32) -> Result<Value, TaskError> {
-//!     Ok(json!({
-//!         "greeting": format!("Hello {name}, you are {age} years old!"),
-//!         "name": name,
-//!         "age": age
-//!     }))
-//! }
-//! ```
-//!
-//! ### Creating a Client
-//!
-//! ```no_run
-//! use azolla_client::Client;
-//!
-//! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let client = Client::builder()
-//!         .endpoint("http://localhost:52710")
-//!         .domain("my-domain")
-//!         .build()
-//!         .await?;
-//!     
-//!     // Submit a task with type-safe arguments
-//!     let task = client
-//!         .submit_task("greet_user")
-//!         .args(("Alice".to_string(), 25u32))?
-//!         .submit()
-//!         .await?;
-//!         
-//!     // Wait for completion
-//!     let result = task.wait().await?;
-//!     println!("Result: {:?}", result);
-//!     
-//!     Ok(())
-//! }
-//! ```
-//!
-//! ### Creating a Worker
-//!
-//! See README.md for complete examples of creating workers.
+//! See [https://github.com/azolla-io/azolla](https://github.com/azolla-io/azolla) for documentation.
 
 pub mod client;
 pub mod convert;

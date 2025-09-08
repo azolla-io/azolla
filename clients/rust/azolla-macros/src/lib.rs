@@ -23,6 +23,13 @@ pub fn azolla_task(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let fn_name_str = fn_name.to_string();
     let fn_vis = &input_fn.vis;
     
+    // Determine crate path - check for internal feature flag
+    let crate_path = if cfg!(feature = "__azolla_internal__") {
+        quote! { crate }
+    } else {
+        quote! { ::azolla_client }
+    };
+
     // Extract parameter types and names
     let mut param_extractions = Vec::new();
     let mut param_names = Vec::new();
@@ -34,13 +41,11 @@ pub fn azolla_task(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 let param_type = &pat_type.ty;
                 param_names.push(param_name);
                 
-                // Create extraction - let the user import the trait into scope
                 let extraction = quote! {
-                    let #param_name: #param_type = FromJsonValue::try_from(
-                        args.get(#i)
-                            .ok_or_else(|| TaskError::invalid_args(&format!("Missing argument {} ({})", #i, stringify!(#param_name))))?
-                            .clone()
-                    ).map_err(|e| TaskError::invalid_args(&format!("Invalid type for argument {} ({}): {}", #i, stringify!(#param_name), e)))?;
+                    let #param_name: #param_type = #crate_path::convert::FromJsonValue::try_from(
+                        args_iter.next()
+                            .ok_or_else(|| #crate_path::error::TaskError::invalid_args(&format!("Missing argument {} ({})", #i, stringify!(#param_name))))?
+                    ).map_err(|e| #crate_path::error::TaskError::invalid_args(&format!("Invalid type for argument {} ({}): {}", #i, stringify!(#param_name), e)))?;
                 };
                 param_extractions.push(extraction);
             }
@@ -58,13 +63,16 @@ pub fn azolla_task(_attr: TokenStream, item: TokenStream) -> TokenStream {
         // Generate wrapper struct
         #fn_vis struct #wrapper_struct_name;
         
-        impl Task for #wrapper_struct_name {
+        impl #crate_path::task::Task for #wrapper_struct_name {
             fn name(&self) -> &'static str {
                 #fn_name_str
             }
             
-            fn execute(&self, args: Vec<serde_json::Value>) -> std::pin::Pin<Box<dyn std::future::Future<Output = TaskResult> + Send + '_>> {
+            fn execute(&self, args: Vec<serde_json::Value>) -> std::pin::Pin<Box<dyn std::future::Future<Output = #crate_path::task::TaskResult> + Send + '_>> {
                 Box::pin(async move {
+                    // Use an iterator to consume the args vector and avoid cloning
+                    let mut args_iter = args.into_iter();
+                    
                     // Extract typed arguments
                     #(#param_extractions)*
                     
@@ -75,7 +83,7 @@ pub fn azolla_task(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     match result {
                         Ok(value) => {
                             let json_value = serde_json::to_value(value)
-                                .map_err(|e| TaskError::execution_failed(&format!("Failed to serialize result: {}", e)))?;
+                                .map_err(|e| #crate_path::error::TaskError::execution_failed(&format!("Failed to serialize result: {}", e)))?;
                             Ok(json_value)
                         },
                         Err(e) => Err(e),

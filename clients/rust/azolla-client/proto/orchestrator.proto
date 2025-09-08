@@ -57,6 +57,8 @@ message WaitForTaskRequest {
 
 message WaitForTaskResponse {
   string status = 1;
+  optional string result = 2;  // JSON result when status is "completed"
+  optional string error = 3;   // Error message when status is "failed"
 }
 
 message CreateFlowRequest {

@@ -16,7 +16,7 @@ use orchestrator::*;
 pub struct IncomingTask {
     pub task_id: Uuid,
     pub name: String,
-    pub args: Vec<String>,
+    pub args: Vec<serde_json::Value>,
     pub kwargs: String,
     pub memory_limit: Option<u64>,
     pub cpu_limit: Option<u32>,
@@ -234,8 +234,8 @@ impl StreamHandler {
                 let task_id = Uuid::parse_str(&task.task_id)
                     .map_err(|e| anyhow::anyhow!("Invalid task ID: {}", e))?;
 
-                // Parse JSON args back to Vec<String>
-                let args: Vec<String> = serde_json::from_str(&task.args)
+                // Parse JSON args to Vec<serde_json::Value> to preserve types
+                let args: Vec<serde_json::Value> = serde_json::from_str(&task.args)
                     .map_err(|e| anyhow::anyhow!("Failed to parse task args JSON: {}", e))?;
 
                 let incoming_task = IncomingTask {
@@ -308,7 +308,7 @@ mod tests {
         let task_id = Uuid::parse_str(&task.task_id).unwrap();
 
         // Parse JSON args for test
-        let args: Vec<String> = serde_json::from_str(&task.args).unwrap();
+        let args: Vec<serde_json::Value> = serde_json::from_str(&task.args).unwrap();
 
         let incoming_task = IncomingTask {
             task_id,

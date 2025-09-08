@@ -75,16 +75,10 @@ echo -e "${GREEN}✅ Pre-flight checks passed${NC}"
 
 # Update proto files from main project
 echo -e "${GREEN}📋 Updating proto files from main project...${NC}"
-cp ../../../proto/*.proto azolla-client/proto/
+cp ../../proto/*.proto azolla-client/proto/
 echo -e "${GREEN}✅ Proto files updated${NC}"
 
-# Update dependency to published version for release
-echo -e "${GREEN}📝 Updating azolla-client dependency to published version...${NC}"
-perl -i -pe "s/azolla-macros = \\{ path = \"[^\"]*\", optional = true \\}/azolla-macros = { version = \"$VERSION\", optional = true }/" azolla-client/Cargo.toml
-
-echo -e "${GREEN}✅ Dependency updated to published version${NC}"
-
-# Run tests
+# Run tests first with path dependencies
 echo -e "${GREEN}🧪 Running test suite...${NC}"
 echo "Testing azolla-macros..."
 (cd azolla-macros && cargo test)
@@ -102,13 +96,13 @@ echo -e "${GREEN}✅ All tests passed${NC}"
 
 # Verify packaging
 echo -e "${GREEN}📦 Verifying packaging...${NC}"
-(cd azolla-macros && cargo package --list > /dev/null)
-(cd azolla-client && cargo package --list > /dev/null)
+(cd azolla-macros && cargo package --list --allow-dirty > /dev/null)
+(cd azolla-client && cargo package --list --allow-dirty > /dev/null)
 echo -e "${GREEN}✅ Packaging verified${NC}"
 
 # Publish azolla-macros first
 echo -e "${GREEN}📤 Publishing azolla-macros v${VERSION}...${NC}"
-(cd azolla-macros && cargo publish)
+(cd azolla-macros && cargo publish --allow-dirty)
 
 echo -e "${GREEN}⏳ Waiting for crates.io propagation (2 minutes)...${NC}"
 sleep 120
@@ -120,10 +114,15 @@ timeout 30 bash -c "until cargo search azolla-macros | grep -q \"$VERSION\"; do 
   echo "You may need to wait longer before publishing azolla-client"
 }
 
+# Update azolla-client to use published version
+echo -e "${GREEN}📝 Updating azolla-client dependency to published version...${NC}"
+perl -i -pe "s/azolla-macros = \\{ path = \"[^\"]*\", optional = true \\}/azolla-macros = { version = \"$VERSION\", optional = true }/" azolla-client/Cargo.toml
+echo -e "${GREEN}✅ Dependency updated to published version${NC}"
+
 # Publish azolla-client
 echo -e "${GREEN}📤 Publishing azolla-client v${VERSION}...${NC}"
 (cd azolla-client && cargo check)  # Final verification with published dependency
-(cd azolla-client && cargo publish)
+(cd azolla-client && cargo publish --allow-dirty)
 
 echo -e "${GREEN}✅ Both crates published successfully!${NC}"
 

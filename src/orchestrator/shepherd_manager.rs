@@ -1551,7 +1551,7 @@ mod tests {
         TaskDispatch {
             task_id: Uuid::new_v4(),
             task_name: task_name.to_string(),
-            args: vec!["arg1".to_string(), "arg2".to_string()],
+            args: r#"["arg1", "arg2"]"#.to_string(),
             kwargs: "{}".to_string(),
             memory_limit: Some(1024),
             cpu_limit: Some(2),

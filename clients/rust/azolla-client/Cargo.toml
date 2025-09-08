@@ -1,6 +1,6 @@
 [package]
 name = "azolla-client"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.70"
 authors = ["Azolla Team <team@azolla.io>"]
@@ -9,7 +9,6 @@ description = "Type-safe Rust client library for Azolla distributed task process
 homepage = "https://azolla.io"
 repository = "https://github.com/azolla-io/azolla"
 documentation = "https://docs.rs/azolla-client"
-readme = "README.md"
 keywords = ["distributed", "tasks", "async", "grpc", "orchestration"]
 categories = ["asynchronous", "network-programming", "api-bindings"]
 exclude = [
@@ -41,8 +40,14 @@ async-trait = "0.1"
 # Logging
 log = "0.4"
 
+# UUID generation
+uuid = { version = "1.0", features = ["v4"] }
+
+# Stream utilities for tokio
+tokio-stream = "0.1"
+
 # Proc macro for task definitions (optional)
-azolla-macros = { path = "../azolla-macros", optional = true }
+azolla-macros = { version = "0.1.0", optional = true }
 
 [build-dependencies]
 tonic-build = "0.11"
@@ -58,3 +63,12 @@ __azolla_internal__ = []
 
 [dev-dependencies]
 tokio-test = "0.4"
+
+# Examples that require macros feature
+[[example]]
+name = "proc_macro_tasks"
+required-features = ["macros"]
+
+[[example]]  
+name = "basic_usage"
+required-features = ["macros"]

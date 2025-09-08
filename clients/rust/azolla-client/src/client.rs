@@ -205,22 +205,25 @@ impl TaskHandle {
                 .wait_for_task(request)
                 .await?;
 
-            let status = response.into_inner().status;
+            let response = response.into_inner();
 
-            match status.as_str() {
+            match response.status.as_str() {
                 "completed" => {
-                    // For now, return a simple success result
-                    // In a real implementation, we'd parse the actual result
-                    return Ok(TaskExecutionResult::Success(Value::String(
-                        "Task completed successfully".to_string(),
-                    )));
+                    // Parse the actual task result
+                    let result_value: serde_json::Value = serde_json::from_str(
+                        &response.result.unwrap_or_else(|| "null".to_string()),
+                    ).map_err(|e| AzollaError::Serialization(e))?;
+                    return Ok(TaskExecutionResult::Success(result_value));
                 }
                 "failed" => {
-                    // For now, return a generic failure
-                    // In a real implementation, we'd parse the actual error
-                    return Ok(TaskExecutionResult::Failed(TaskError::execution_failed(
-                        "Task execution failed",
-                    )));
+                    // Parse the actual task error
+                    let error_msg = response.error.unwrap_or_else(|| "Task execution failed with unknown error".to_string());
+                    
+                    // Try to parse as structured TaskError, fallback to generic error
+                    let task_error = serde_json::from_str::<TaskError>(&error_msg)
+                        .unwrap_or_else(|_| TaskError::execution_failed(&error_msg));
+                    
+                    return Ok(TaskExecutionResult::Failed(task_error));
                 }
                 _ => {
                     // Task still running, wait and retry
@@ -245,15 +248,26 @@ impl TaskHandle {
             .wait_for_task(request)
             .await?;
 
-        let status = response.into_inner().status;
+        let response = response.into_inner();
 
-        match status.as_str() {
-            "completed" => Ok(Some(TaskExecutionResult::Success(Value::String(
-                "Task completed successfully".to_string(),
-            )))),
-            "failed" => Ok(Some(TaskExecutionResult::Failed(
-                TaskError::execution_failed("Task execution failed"),
-            ))),
+        match response.status.as_str() {
+            "completed" => {
+                // Parse the actual task result
+                let result_value: serde_json::Value = serde_json::from_str(
+                    &response.result.unwrap_or_else(|| "null".to_string()),
+                ).map_err(|e| AzollaError::Serialization(e))?;
+                Ok(Some(TaskExecutionResult::Success(result_value)))
+            }
+            "failed" => {
+                // Parse the actual task error
+                let error_msg = response.error.unwrap_or_else(|| "Task execution failed with unknown error".to_string());
+                
+                // Try to parse as structured TaskError, fallback to generic error
+                let task_error = serde_json::from_str::<TaskError>(&error_msg)
+                    .unwrap_or_else(|_| TaskError::execution_failed(&error_msg));
+                
+                Ok(Some(TaskExecutionResult::Failed(task_error)))
+            }
             _ => Ok(None), // Still running
         }
     }

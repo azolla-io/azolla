@@ -21,10 +21,16 @@ pub enum AzollaError {
 
     #[error("Timeout waiting for task completion")]
     Timeout,
+    
+    #[error("Connection error: {0}")]
+    ConnectionError(String),
+    
+    #[error("Worker error: {0}")]
+    WorkerError(String),
 }
 
 /// Specific error for task failures
-#[derive(Debug, Clone, Error)]
+#[derive(Debug, Clone, Error, serde::Serialize, serde::Deserialize)]
 #[error("{error_type}: {message}")]
 pub struct TaskError {
     pub error_type: String,
@@ -53,6 +59,16 @@ impl TaskError {
             stacktrace: None,
             data: None,
         }
+    }
+    
+    /// Get error type for external use
+    pub fn error_type(&self) -> Option<String> {
+        Some(self.error_type.clone())
+    }
+    
+    /// Get error code for external use
+    pub fn error_code(&self) -> Option<String> {
+        self.code.clone()
     }
 }
 
