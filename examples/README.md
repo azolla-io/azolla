@@ -80,13 +80,4 @@ cargo run --example <example_name>
 
 The examples will attempt to connect to local Azolla services but will gracefully handle connection failures, showing you how the library works even without a full deployment.
 
-## Next Steps
-
-After exploring these examples:
-
-1. **[📖 Read the Full Documentation](../docs/client_library.md)** for comprehensive guides
-2. **Start with the worker example** to understand task processing
-3. **Try the client example** to learn task submission
-4. **Experiment with proc macros** for rapid development
-
 For production deployment, you'll need to start the Azolla orchestrator and configure your workers to connect to it.
