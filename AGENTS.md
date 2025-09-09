@@ -25,10 +25,11 @@ azolla/
 ├── clients/             # Client libraries for different languages
 │   ├── README.md        # Developer guide for client library development
 │   └── rust/            # Rust client implementation
-│       ├── azolla-client/   # Main client library crate (with examples/)
+│       ├── azolla-client/   # Main client library crate
 │       ├── azolla-macros/   # Procedural macro support crate
 │       └── release.sh       # Automated release script for crates.io
 ├── config/              # Configuration files
+├── examples/            # Usage examples for client libraries  
 ├── proto/               # gRPC protocol definitions
 ├── tests/               # Tests
 │   ├── integrations/    # Integration tests

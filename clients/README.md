@@ -22,7 +22,7 @@ clients/
 │   │   ├── proto/                # Protocol buffer definitions
 │   │   │   ├── orchestrator.proto
 │   │   │   └── common.proto
-│   │   ├── examples/             # Usage examples
+│   │   ├── examples/             # Moved to repo root examples/
 │   │   ├── LICENSE              # Apache 2.0 license
 │   │   └── PUBLISHING.md         # Publishing instructions
 │   └── azolla-macros/            # Procedural macro support crate

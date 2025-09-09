@@ -45,7 +45,7 @@ clap = { version = "4.0", features = ["derive"] }
 rustc-hash = "1.1"
 thiserror = "2.0"
 async-trait = "0.1"
-azolla-macros = { path = "clients/rust/azolla-macros" }
+azolla-macros = { path = "clients/rust/azolla-macros", features = ["__azolla_internal__"] }
 azolla-client = { path = "clients/rust/azolla-client", features = ["macros"] }
 
 [build-dependencies]
@@ -55,3 +55,16 @@ tonic-build = "0.11"
 default = []
 test-harness = []
 __azolla_internal__ = []
+
+# Examples
+[[example]]
+name = "client_example"
+path = "examples/client_example.rs"
+
+[[example]]
+name = "worker_example"
+path = "examples/worker_example.rs"
+
+[[example]]
+name = "proc_macro_tasks"
+path = "examples/proc_macro_tasks.rs"

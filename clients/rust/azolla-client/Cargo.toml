@@ -14,8 +14,7 @@ categories = ["asynchronous", "network-programming", "api-bindings"]
 exclude = [
     "target/",
     ".git/",
-    "*.tmp",
-    "examples/.gitignore"
+    "*.tmp"
 ]
 
 
@@ -47,7 +46,7 @@ uuid = { version = "1.0", features = ["v4"] }
 tokio-stream = "0.1"
 
 # Proc macro for task definitions (optional)
-azolla-macros = { version = "0.1.0", optional = true }
+azolla-macros = { path = "../azolla-macros", optional = true }
 
 [build-dependencies]
 tonic-build = "0.11"
@@ -80,20 +79,9 @@ assert_matches = "1.5"
 # Property-based testing
 proptest = "1.0"
 
-# Examples that require macros feature
-[[example]]
-name = "proc_macro_tasks"
-required-features = ["macros"]
-
-[[example]]  
-name = "basic_usage"
-required-features = ["macros"]
+# Examples moved to repo root examples/ directory
 
 # Performance benchmarks
-[[bench]]
-name = "conversion_performance"
-harness = false
-
 [[bench]]
 name = "task_execution_performance" 
 harness = false
