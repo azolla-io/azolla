@@ -141,7 +141,6 @@ impl Task for FlakyTaskTask {
     }
 }
 
-
 // Additional type-safe task implementations with custom argument types
 
 /// Arguments for math add task

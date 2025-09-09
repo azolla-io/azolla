@@ -19,10 +19,6 @@ clients/
 │   │   │   ├── retry_policy.rs   # Retry policy implementation
 │   │   │   ├── task.rs           # Task trait and utilities
 │   │   │   └── worker.rs         # Worker building (stub for examples)
-│   │   ├── proto/                # Protocol buffer definitions
-│   │   │   ├── orchestrator.proto
-│   │   │   └── common.proto
-│   │   ├── examples/             # Moved to repo root examples/
 │   │   ├── LICENSE              # Apache 2.0 license
 │   │   └── PUBLISHING.md         # Publishing instructions
 │   └── azolla-macros/            # Procedural macro support crate
