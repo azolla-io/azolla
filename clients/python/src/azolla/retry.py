@@ -1,9 +1,9 @@
 """Retry policy implementation for Azolla tasks."""
 import math
 import random
-from typing import List, Optional, Type, Union
+from typing import List, Optional, Type, Union, Any, Dict
 from abc import ABC, abstractmethod
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 
 class BackoffStrategy(ABC):
     """Base class for backoff strategies."""
@@ -59,6 +59,19 @@ class RetryPolicy(BaseModel):
     stop_on_codes: List[str] = Field(default_factory=list)
     
     model_config = {"arbitrary_types_allowed": True}
+    
+    @field_serializer('retry_on')
+    def serialize_retry_on(self, value: List[Union[str, Type[Exception]]]) -> List[str]:
+        """Serialize retry_on list, converting class types to their names."""
+        result = []
+        for item in value:
+            if isinstance(item, str):
+                result.append(item)
+            elif isinstance(item, type):
+                result.append(item.__name__)
+            else:
+                result.append(str(item))
+        return result
         
     def should_retry(
         self, 

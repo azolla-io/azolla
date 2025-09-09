@@ -72,9 +72,14 @@ testing = [
     "factory-boy>=3.3.0",
     "freezegun>=1.2.0",
 ]
+# Integration testing utilities
+integration = [
+    "psutil>=5.9.0",
+    "httpx>=0.24.0",
+]
 # Complete development environment
 all = [
-    "azolla[performance,dev,docs,monitoring,testing]"
+    "azolla[performance,dev,docs,monitoring,testing,integration]"
 ]
 
 [project.urls]

@@ -92,6 +92,7 @@ class Worker:
         self._load_tracker = LoadTracker()
         self._shepherd_uuid = str(uuid.uuid4())
         self._shutdown_event = asyncio.Event()
+        self._ready_event = asyncio.Event()  # Signals when worker is connected and ready
         self._running = False
         
         # gRPC components
@@ -106,6 +107,22 @@ class Worker:
     def task_count(self) -> int:
         """Get number of registered tasks."""
         return self._task_registry.count()
+    
+    def register_task(self, task: Union[Task, Any]) -> None:
+        """Register a task implementation after worker creation."""
+        self._task_registry.register(task)
+    
+    async def wait_for_ready(self, timeout: Optional[float] = None) -> bool:
+        """Wait for worker to be connected and ready to receive tasks.
+        
+        Returns:
+            bool: True if worker becomes ready within timeout, False otherwise.
+        """
+        try:
+            await asyncio.wait_for(self._ready_event.wait(), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
     
     async def start(self) -> None:
         """Start the worker with reconnection logic."""
@@ -156,6 +173,9 @@ class Worker:
     
     async def _run_connection(self) -> None:
         """Run a single connection to the orchestrator."""
+        # Clear ready state at start of connection attempt
+        self._ready_event.clear()
+        
         # Create gRPC channel
         endpoint = self._config.orchestrator_endpoint
         self._channel = grpc.aio.insecure_channel(endpoint)
@@ -180,6 +200,9 @@ class Worker:
             await request_queue.put(hello_msg)
             
             logger.info(f"Shepherd {self._shepherd_uuid} registered successfully")
+            
+            # Signal that worker is ready to receive tasks
+            self._ready_event.set()
             
             # Start heartbeat task
             heartbeat_task = asyncio.create_task(

@@ -39,6 +39,10 @@ class TaskSubmissionBuilder:
         self._retry_policy = policy
         return self
     
+    def with_retry(self, policy: RetryPolicy) -> 'TaskSubmissionBuilder':
+        """Set retry policy for this task (alias for retry_policy)."""
+        return self.retry_policy(policy)
+    
     def shepherd_group(self, group: str) -> 'TaskSubmissionBuilder':
         """Set shepherd group for targeted execution."""
         self._shepherd_group = group
@@ -51,6 +55,9 @@ class TaskSubmissionBuilder:
     
     async def submit(self) -> 'TaskHandle':
         """Submit the task and get a handle."""
+        # Ensure connection is established
+        await self._client._ensure_connection()
+        
         try:
             # Serialize arguments
             if self._args is None:
@@ -63,7 +70,7 @@ class TaskSubmissionBuilder:
                 args_json = json.dumps([self._args])
             
             # Serialize retry policy
-            retry_policy_json = ""
+            retry_policy_json = "{}"  # Default to empty JSON object
             if self._retry_policy:
                 retry_policy_json = self._retry_policy.model_dump_json()
             
@@ -91,7 +98,7 @@ class TaskSubmissionBuilder:
             
         except grpc.RpcError as e:
             raise ConnectionError(f"Failed to submit task: {e.details()}") from e
-        except (json.JSONEncodeError, TypeError) as e:
+        except (json.JSONDecodeError, TypeError) as e:
             raise SerializationError(f"Failed to serialize task arguments: {e}") from e
 
 class TaskHandle:
@@ -136,6 +143,9 @@ class TaskHandle:
     
     async def try_result(self) -> Optional[TaskResult[Any]]:
         """Try to get result without blocking."""
+        # Ensure connection is established
+        await self._client._ensure_connection()
+        
         try:
             request = orchestrator_pb2.WaitForTaskRequest(
                 task_id=self.task_id,
@@ -147,7 +157,7 @@ class TaskHandle:
                 timeout=self._client._config.timeout
             )
             
-            if response.status == "completed":
+            if response.status.lower() == "completed":
                 # Parse result
                 result_value = None
                 if response.result:
@@ -162,7 +172,7 @@ class TaskHandle:
                     value=result_value
                 )
                 
-            elif response.status == "failed":
+            elif response.status.lower() == "failed":
                 error_msg = response.error or "Task execution failed"
                 return TaskResult(
                     task_id=self.task_id,
@@ -171,7 +181,7 @@ class TaskHandle:
                     error_code="EXECUTION_ERROR"
                 )
             
-            elif response.status in ["pending", "running"]:
+            elif response.status.lower() in ["pending", "running"]:
                 return None  # Still in progress
             
             else:
@@ -188,8 +198,26 @@ class TaskHandle:
 class Client:
     """Main client for interacting with Azolla orchestrator."""
     
-    def __init__(self, config: ClientConfig) -> None:
-        self._config = config
+    def __init__(self, config: Optional[ClientConfig] = None, 
+                 orchestrator_endpoint: Optional[str] = None,
+                 domain: Optional[str] = None,
+                 timeout: Optional[float] = None,
+                 **kwargs) -> None:
+        # Support both documented API and config-based API
+        if config is not None:
+            self._config = config
+        elif orchestrator_endpoint is not None:
+            # Create config from documented constructor parameters
+            config_params = {"endpoint": orchestrator_endpoint}
+            if domain is not None:
+                config_params["domain"] = domain
+            if timeout is not None:
+                config_params["timeout"] = timeout
+            config_params.update(kwargs)
+            self._config = ClientConfig(**config_params)
+        else:
+            raise ValueError("Either 'config' or 'orchestrator_endpoint' must be provided")
+        
         self._channel: Optional[grpc.aio.Channel] = None
         self._stub: Optional[orchestrator_pb2_grpc.ClientServiceStub] = None
     
