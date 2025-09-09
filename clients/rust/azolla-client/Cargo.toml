@@ -80,9 +80,3 @@ assert_matches = "1.5"
 proptest = "1.0"
 
 # Examples moved to repo root examples/ directory
-
-# Performance benchmarks
-[[bench]]
-name = "task_execution_performance" 
-harness = false
-required-features = ["macros"]
