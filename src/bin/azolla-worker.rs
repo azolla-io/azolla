@@ -16,9 +16,7 @@ use shepherd::*;
 // Import client library for new worker mode
 use azolla_client::{Task, TaskError, TaskResult, Worker};
 
-// Macro-based task implementations using #[azolla_task] attribute
-
-// Manual implementations to replace macro-generated tasks
+// Manual task implementations using the type-safe Task trait
 
 /// Echo task - returns the first argument
 async fn echo_task(message: String) -> Result<Value, TaskError> {
@@ -143,49 +141,8 @@ impl Task for FlakyTaskTask {
     }
 }
 
-// /// Always fail task using proc macro - always fails for testing
-// #[azolla_task]
-// async fn always_fail_task(should_fail: Option<bool>) -> Result<Value, TaskError> {
-//     let should_fail = should_fail.unwrap_or(true);
-//
-//     if should_fail {
-//         Err(TaskError::new("This task always fails").with_error_type("TestError"))
-//     } else {
-//         Ok(json!({"status": "unexpectedly_succeeded"}))
-//     }
-// }
 
-// /// Flaky task using proc macro - fails on first attempt, succeeds on retry
-// #[azolla_task]
-// async fn flaky_task(fail_first_attempt: Option<bool>) -> Result<Value, TaskError> {
-//     let fail_first_attempt = fail_first_attempt.unwrap_or(false);
-//
-//     if fail_first_attempt {
-//         // Use process ID to track attempts (simplified for this implementation)
-//         let state_file =
-//             std::env::temp_dir().join(format!("flaky_task_state_{}", std::process::id()));
-//
-//         let attempt_count = match std::fs::read_to_string(&state_file) {
-//             Ok(content) => content.trim().parse::<u32>().unwrap_or(0),
-//             Err(_) => 0,
-//         };
-//
-//         let new_attempt_count = attempt_count + 1;
-//         let _ = std::fs::write(&state_file, new_attempt_count.to_string());
-//
-//         info!("Flaky task attempt #{new_attempt_count}");
-//
-//         if new_attempt_count == 1 {
-//             return Err(TaskError::new("First attempt failure")
-//                 .with_error_type("TestError")
-//                 .with_error_code("FLAKY_TASK_FIRST_ATTEMPT"));
-//         }
-//     }
-//
-//     Ok(json!("Flaky task succeeded on retry"))
-// }
-
-// Type-safe task implementations using the new Task trait
+// Additional type-safe task implementations with custom argument types
 
 /// Arguments for math add task
 #[derive(Debug, Deserialize, Serialize)]
@@ -399,17 +356,17 @@ async fn run_worker_service_mode(matches: &clap::ArgMatches) -> Result<()> {
     info!("Orchestrator: {orchestrator_endpoint}");
     info!("Domain: {domain}, Group: {shepherd_group}, Max concurrency: {max_concurrency}");
 
-    // Build worker with hybrid task implementations (macro + traditional)
+    // Build worker with type-safe task implementations
     let worker = Worker::builder()
         .orchestrator(orchestrator_endpoint)
         .domain(domain)
         .shepherd_group(shepherd_group)
         .max_concurrency(max_concurrency)
-        // Manual implementations (converted from macro tasks)
+        // Basic task implementations
         .register_task(EchoTaskTask)
         .register_task(AlwaysFailTaskTask)
         .register_task(FlakyTaskTask)
-        // Traditional Task trait implementations
+        // Tasks with custom argument types
         .register_task(MathAddTask)
         .register_task(CountArgsTask)
         .build()
