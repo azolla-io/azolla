@@ -52,7 +52,7 @@ pub struct Task {
     pub created_at: DateTime<Utc>,
     pub flow_instance_id: Option<Uuid>,
     pub retry_policy: JsonValue,
-    pub args: Vec<String>,
+    pub args: String,
     pub kwargs: JsonValue,
     pub status: i16,
     pub attempts: Vec<TaskAttempt>,
@@ -89,7 +89,7 @@ impl Task {
             created_at: DateTime::UNIX_EPOCH,
             flow_instance_id: None,
             retry_policy: JsonValue::Null,
-            args: Vec::new(),
+            args: String::new(),
             kwargs: JsonValue::Null,
             status: 0,
             attempts: Vec::new(),
@@ -760,8 +760,8 @@ impl TaskSetRegistry {
                     COALESCE((e.metadata->'retry_policy')::jsonb, '{}'::jsonb),
                     CASE 
                         WHEN e.metadata->'args' IS NOT NULL 
-                        THEN ARRAY(SELECT jsonb_array_elements_text(e.metadata->'args'))
-                        ELSE ARRAY[]::text[]
+                        THEN (e.metadata->>'args')::text
+                        ELSE '[]'::text
                     END,
                     COALESCE((e.metadata->'kwargs')::jsonb, '{}'::jsonb),
                     $4,
@@ -938,7 +938,7 @@ mod tests {
             created_at: Utc::now(),
             flow_instance_id: None,
             retry_policy: JsonValue::Null,
-            args: Vec::new(),
+            args: String::new(),
             kwargs: JsonValue::Null,
             status: 1,
             attempts: Vec::new(),
@@ -963,7 +963,7 @@ mod tests {
             created_at: Utc::now(),
             flow_instance_id: None,
             retry_policy: JsonValue::Null,
-            args: Vec::new(),
+            args: String::new(),
             kwargs: JsonValue::Null,
             status: 1,
             attempts: Vec::new(),
@@ -991,7 +991,7 @@ mod tests {
             created_at: Utc::now(),
             flow_instance_id: None,
             retry_policy: JsonValue::Null,
-            args: Vec::new(),
+            args: String::new(),
             kwargs: JsonValue::Null,
             status: 1,
             attempts: Vec::new(),
@@ -1008,7 +1008,7 @@ mod tests {
             created_at: Utc::now(),
             flow_instance_id: None,
             retry_policy: JsonValue::Null,
-            args: Vec::new(),
+            args: String::new(),
             kwargs: JsonValue::Null,
             status: 1,
             attempts: Vec::new(),

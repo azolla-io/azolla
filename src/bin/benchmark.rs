@@ -238,7 +238,7 @@ fn generate_random_task_data(
         name: task_name,
         domain: domain.to_string(),
         retry_policy: serde_json::to_string(&retry_policy_json).unwrap_or_default(),
-        args,
+        args: serde_json::to_string(&args).unwrap_or_default(),
         kwargs: serde_json::to_string(&kwargs_obj).unwrap_or_default(),
         flow_instance_id: None,
         shepherd_group: None,

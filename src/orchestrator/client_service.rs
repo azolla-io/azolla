@@ -101,13 +101,16 @@ impl ClientService for ClientServiceImpl {
                 Status::internal("Failed to write event")
             })?;
 
+        // Keep args as JSON string - will be parsed by worker with proper types
+        let args_json = req.args;
+
         let task = Task {
             id: task_id,
             name: req.name.clone(),
             created_at: Utc::now(),
             flow_instance_id,
             retry_policy,
-            args: req.args,
+            args: args_json,
             kwargs,
             status: TASK_STATUS_CREATED,
             attempts: Vec::new(),
@@ -144,6 +147,8 @@ impl ClientService for ClientServiceImpl {
     ) -> Result<Response<WaitForTaskResponse>, Status> {
         Ok(Response::new(WaitForTaskResponse {
             status: "COMPLETED".to_string(),
+            result: Some("{}".to_string()), // TODO: Return actual task result
+            error: None,
         }))
     }
 

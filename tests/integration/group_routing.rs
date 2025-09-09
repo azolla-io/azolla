@@ -47,7 +47,7 @@ async fn test_default_group_routing() {
             "wait": {"strategy": "fixed", "delay": 1}
         })
         .to_string(),
-        args: vec!["hello".to_string()],
+        args: serde_json::to_string(&vec!["hello".to_string()]).unwrap(),
         kwargs: "{}".to_string(),
         flow_instance_id: None,
         shepherd_group: None,
@@ -117,7 +117,7 @@ async fn test_designated_group_routing() {
             "wait": {"strategy": "fixed", "delay": 1}
         })
         .to_string(),
-        args: vec!["world".to_string()],
+        args: serde_json::to_string(&vec!["world".to_string()]).unwrap(),
         kwargs: "{}".to_string(),
         flow_instance_id: None,
         shepherd_group: Some("green".to_string()),

@@ -861,7 +861,7 @@ mod tests {
             created_at: Utc::now(),
             flow_instance_id: None,
             retry_policy,
-            args: vec!["arg1".to_string(), "arg2".to_string()],
+            args: r#"["arg1", "arg2"]"#.to_string(),
             kwargs: json!({"key": "value"}),
             status: TASK_STATUS_CREATED,
             attempts: Vec::new(),
@@ -1512,7 +1512,7 @@ mod tests {
                             "wait": {"strategy": "fixed", "delay": 1},
                             "retry": {"include_errors": ["ValueError", "RuntimeError", "RetryableError", "FatalError"]}
                         });
-                        task.args = vec![format!("arg_{i}")];
+                        task.args = format!(r#"["arg_{i}"]"#);
                         task.kwargs = json!({"domain": domain, "index": i});
                         task.status = TASK_STATUS_CREATED;
                         task.created_at = Utc::now();
@@ -1788,7 +1788,7 @@ mod tests {
             let mut task = Task::new();
             task.name = task_name.to_string();
             task.retry_policy = retry_policy.clone();
-            task.args = vec!["arg1".to_string()];
+            task.args = r#"["arg1"]"#.to_string();
             task.kwargs = json!({"test": "value"});
             task.status = TASK_STATUS_CREATED;
             task.created_at = Utc::now();
@@ -1967,7 +1967,7 @@ mod tests {
                     let mut task = Task::new();
                     task.name = format!("db_task_{domain}_{i}");
                     task.retry_policy = json!({"max_attempts": 2});
-                    task.args = vec![format!("arg_{i}")];
+                    task.args = format!(r#"["arg_{i}"]"#);
                     task.kwargs = json!({"domain": domain, "index": i});
                     task.status = TASK_STATUS_CREATED;
                     task.created_at = Utc::now();

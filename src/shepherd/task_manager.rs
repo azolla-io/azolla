@@ -416,7 +416,7 @@ mod tests {
         IncomingTask {
             task_id: Uuid::new_v4(),
             name: name.to_string(),
-            args: vec![],
+            args: vec![], // Empty Vec<serde_json::Value>
             kwargs: "{}".to_string(),
             memory_limit: None,
             cpu_limit: None,

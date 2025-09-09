@@ -22,7 +22,7 @@ fn create_failing_task_with_long_retry() -> CreateTaskRequest {
     CreateTaskRequest {
         name: "always_fail".to_string(),
         domain: "lifecycle_test".to_string(),
-        args: vec![],
+        args: serde_json::to_string(&Vec::<String>::new()).unwrap(),
         kwargs: r#"{"should_fail": true}"#.to_string(),
         retry_policy: json!({
             "version": 1,

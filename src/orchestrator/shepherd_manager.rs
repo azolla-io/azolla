@@ -94,7 +94,7 @@ type ShepherdRxChannel = mpsc::Receiver<Result<ServerMsg, Status>>;
 pub struct TaskDispatch {
     pub task_id: Uuid,
     pub task_name: String,
-    pub args: Vec<String>,
+    pub args: String,
     pub kwargs: String,
     pub memory_limit: Option<u64>,
     pub cpu_limit: Option<u32>,
@@ -302,7 +302,7 @@ impl ShepherdStatus {
         &self,
         task_id: Uuid,
         task_name: String,
-        args: Vec<String>,
+        args: String,
         kwargs: String,
         memory_limit: Option<u64>,
         cpu_limit: Option<u32>,
@@ -314,6 +314,7 @@ impl ShepherdStatus {
             )
         })?;
 
+        // Args is already a JSON string, use it directly
         let task = common::Task {
             task_id: task_id.to_string(),
             name: task_name,
@@ -1547,7 +1548,7 @@ mod tests {
         TaskDispatch {
             task_id: Uuid::new_v4(),
             task_name: task_name.to_string(),
-            args: vec!["arg1".to_string(), "arg2".to_string()],
+            args: r#"["arg1", "arg2"]"#.to_string(),
             kwargs: "{}".to_string(),
             memory_limit: Some(1024),
             cpu_limit: Some(2),

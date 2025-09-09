@@ -39,7 +39,7 @@ message CreateTaskRequest {
   // Using string for JSON representation for simplicity in proto.
   // The server will parse this into JSONB.
   string retry_policy = 3; 
-  repeated string args = 4;
+  string args = 4; // JSON array of arguments for type safety
   string kwargs = 5;
   optional string flow_instance_id = 6;
   // Optional shepherd group for dispatch scoping. If omitted, domain's default applies.
@@ -57,6 +57,8 @@ message WaitForTaskRequest {
 
 message WaitForTaskResponse {
   string status = 1;
+  optional string result = 2;  // JSON result when status is "completed"
+  optional string error = 3;   // Error message when status is "failed"
 }
 
 message CreateFlowRequest {

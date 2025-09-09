@@ -15,7 +15,7 @@ CREATE TABLE task_instance (
     end_time TIMESTAMPTZ,
     flow_instance_id UUID,
     retry_policy JSONB,
-    args TEXT[],
+    args TEXT,
     kwargs JSONB,
     status SMALLINT NOT NULL,
     PRIMARY KEY (id, domain)
