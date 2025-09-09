@@ -160,9 +160,7 @@ dependencies = [
 
 [[package]]
 name = "azolla-macros"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbf6fdd26c9ad76a884348f84be8f2c14f39d0e17830d74f6ae92bc6e77b30f0"
+version = "0.1.1"
 dependencies = [
  "proc-macro2",
  "quote",

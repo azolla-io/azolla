@@ -2,7 +2,7 @@ use crate::error::AzollaError;
 use crate::proto::orchestrator::cluster_service_client::ClusterServiceClient;
 use crate::proto::orchestrator::{ClientMsg, ServerMsg, Hello, Ack, Status, Ping};
 use crate::proto::common::{Task as ProtoTask, TaskResult as ProtoTaskResult, SuccessResult, ErrorResult, AnyValue};
-use crate::task::Task;
+use crate::task::{BoxedTask, Task};
 use std::collections::HashMap;
 use std::sync::{Arc, atomic::{AtomicU32, AtomicBool, Ordering}};
 use std::time::{Duration, Instant};
@@ -35,7 +35,7 @@ impl Drop for LoadGuard {
 /// Worker for executing tasks
 pub struct Worker {
     config: WorkerConfig,
-    tasks: HashMap<String, Arc<dyn Task>>,
+    tasks: HashMap<String, Arc<dyn BoxedTask>>,
     shepherd_uuid: String,
     current_load: Arc<AtomicU32>,
     shutdown_signal: Arc<AtomicBool>,
@@ -251,7 +251,7 @@ impl Worker {
     
     /// Execute a task implementation
     async fn execute_task_impl(
-        tasks: HashMap<String, Arc<dyn Task>>,
+        tasks: HashMap<String, Arc<dyn BoxedTask>>,
         proto_task: ProtoTask,
     ) -> ProtoTaskResult {
         let task_id = proto_task.task_id.clone();
@@ -292,24 +292,11 @@ impl Worker {
             }
         };
         
-        // Validate arguments
-        if let Err(e) = task_impl.validate_args(&args) {
-            log::error!("Argument validation failed for task {task_id}: {e}");
-            return ProtoTaskResult {
-                task_id,
-                result_type: Some(crate::proto::common::task_result::ResultType::Error(ErrorResult {
-                    r#type: "ArgumentValidationError".to_string(),
-                    message: format!("Argument validation failed: {e}"),
-                    code: "ARG_VALIDATION_ERROR".to_string(),
-                    stacktrace: "".to_string(),
-                    data: None,
-                })),
-            };
-        }
+        // Note: Argument validation is now handled automatically by the type system
         
         // Execute the task
         let start_time = Instant::now();
-        let execution_result = task_impl.execute(args).await;
+        let execution_result = task_impl.execute_json(args).await;
         let execution_time = start_time.elapsed();
         
         log::info!("Task {task_id} completed in {execution_time:?}");
@@ -393,7 +380,7 @@ impl Worker {
 #[derive(Default)]
 pub struct WorkerBuilder {
     config: WorkerConfig,
-    tasks: HashMap<String, Arc<dyn Task>>,
+    tasks: HashMap<String, Arc<dyn BoxedTask>>,
 }
 
 impl WorkerBuilder {
@@ -424,7 +411,7 @@ impl WorkerBuilder {
     /// Register a task implementation
     pub fn register_task<T: Task + 'static>(mut self, task: T) -> Self {
         let name = task.name().to_string();
-        self.tasks.insert(name, Arc::new(task));
+        self.tasks.insert(name, Arc::new(task) as Arc<dyn BoxedTask>);
         self
     }
 
@@ -515,11 +502,13 @@ mod tests {
     struct PanickingTask;
     
     impl Task for PanickingTask {
+        type Args = ();
+
         fn name(&self) -> &'static str {
             "panicking_task"
         }
         
-        fn execute(&self, _args: Vec<Value>) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+        fn execute(&self, _args: Self::Args) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
             Box::pin(async {
                 panic!("Task intentionally panicked for testing!");
             })
@@ -530,11 +519,13 @@ mod tests {
     struct SuccessTask;
     
     impl Task for SuccessTask {
+        type Args = ();
+
         fn name(&self) -> &'static str {
             "success_task"
         }
         
-        fn execute(&self, _args: Vec<Value>) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+        fn execute(&self, _args: Self::Args) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
             Box::pin(async {
                 Ok(json!({"status": "success"}))
             })
@@ -546,7 +537,7 @@ mod tests {
     async fn test_task_execution_panic_safety() {
         let config = WorkerConfig::default();
         let mut tasks = HashMap::new();
-        tasks.insert("panicking_task".to_string(), Arc::new(PanickingTask) as Arc<dyn Task>);
+        tasks.insert("panicking_task".to_string(), Arc::new(PanickingTask) as Arc<dyn BoxedTask>);
         
         let worker = Worker {
             config,
@@ -593,7 +584,7 @@ mod tests {
     async fn test_task_execution_success_load_management() {
         let config = WorkerConfig::default();
         let mut tasks = HashMap::new();
-        tasks.insert("success_task".to_string(), Arc::new(SuccessTask) as Arc<dyn Task>);
+        tasks.insert("success_task".to_string(), Arc::new(SuccessTask) as Arc<dyn BoxedTask>);
         
         let worker = Worker {
             config,

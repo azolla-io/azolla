@@ -15,6 +15,9 @@ categories = ["development-tools::procedural-macro-helpers", "asynchronous"]
 [lib]
 proc-macro = true
 
+[features]
+__azolla_internal__ = []
+
 [dependencies]
 proc-macro2 = "1.0"
 quote = "1.0"

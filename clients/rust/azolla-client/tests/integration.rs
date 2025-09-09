@@ -183,11 +183,13 @@ fn test_worker_configuration_integration() {
 struct IntegrationTestTask;
 
 impl Task for IntegrationTestTask {
+    type Args = Vec<Value>;
+
     fn name(&self) -> &'static str {
         "integration_test_task"
     }
     
-    fn execute(&self, args: Vec<Value>) -> std::pin::Pin<Box<dyn std::future::Future<Output = TaskResult> + Send + '_>> {
+    fn execute(&self, args: Self::Args) -> std::pin::Pin<Box<dyn std::future::Future<Output = TaskResult> + Send + '_>> {
         Box::pin(async move {
             // Simulate task processing
             if args.is_empty() {

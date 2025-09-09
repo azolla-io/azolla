@@ -22,40 +22,46 @@ pub fn azolla_task(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let fn_name = &input_fn.sig.ident;
     let fn_name_str = fn_name.to_string();
     let fn_vis = &input_fn.vis;
-    
-    // Determine crate path - check for internal feature flag
-    let crate_path = if cfg!(feature = "__azolla_internal__") {
-        quote! { crate }
-    } else {
-        quote! { ::azolla_client }
-    };
 
-    // Extract parameter types and names
-    let mut param_extractions = Vec::new();
+    // Extract parameter information
+    let mut param_types = Vec::new();
     let mut param_names = Vec::new();
     
-    for (i, input) in input_fn.sig.inputs.iter().enumerate() {
+    for input in input_fn.sig.inputs.iter() {
         if let FnArg::Typed(pat_type) = input {
             if let Pat::Ident(pat_ident) = pat_type.pat.as_ref() {
-                let param_name = &pat_ident.ident;
-                let param_type = &pat_type.ty;
-                param_names.push(param_name);
-                
-                let extraction = quote! {
-                    let #param_name: #param_type = #crate_path::convert::FromJsonValue::try_from(
-                        args_iter.next()
-                            .ok_or_else(|| #crate_path::error::TaskError::invalid_args(&format!("Missing argument {} ({})", #i, stringify!(#param_name))))?
-                    ).map_err(|e| #crate_path::error::TaskError::invalid_args(&format!("Invalid type for argument {} ({}): {}", #i, stringify!(#param_name), e)))?;
-                };
-                param_extractions.push(extraction);
+                param_names.push(&pat_ident.ident);
+                param_types.push(&pat_type.ty);
             }
         }
     }
-    
-    // Generate wrapper struct name (convert to PascalCase)
-    let fn_name_pascal = to_pascal_case(&fn_name.to_string());
+
+    // Generate wrapper struct name
+    let fn_name_pascal = to_pascal_case(&fn_name_str);
     let wrapper_struct_name = syn::Ident::new(&format!("{}Task", fn_name_pascal), fn_name.span());
     
+    // Generate the Args type and unpacking logic
+    let (args_type, arg_unpacking) = match param_types.len() {
+        0 => {
+            // No parameters
+            (quote! { () }, quote! { let _ = args; })
+        },
+        1 => {
+            // Single parameter
+            let param_type = &param_types[0];
+            let param_name = &param_names[0];
+            (quote! { #param_type }, quote! { let #param_name = args; })
+        },
+        _ => {
+            // Multiple parameters - use tuple
+            (
+                quote! { (#(#param_types),*) },
+                quote! { let (#(#param_names),*) = args; }
+            )
+        }
+    };
+
+    // Use a simple, reliable approach with explicit imports in generated code
     let expanded = quote! {
         // Keep the original function
         #input_fn
@@ -63,25 +69,18 @@ pub fn azolla_task(_attr: TokenStream, item: TokenStream) -> TokenStream {
         // Generate wrapper struct
         #fn_vis struct #wrapper_struct_name;
         
-        impl #crate_path::task::Task for #wrapper_struct_name {
+        // Generate the Task implementation
+        impl ::azolla_client::task::Task for #wrapper_struct_name {
+            type Args = #args_type;
+
             fn name(&self) -> &'static str {
                 #fn_name_str
             }
             
-            fn execute(&self, args: Vec<serde_json::Value>) -> std::pin::Pin<Box<dyn std::future::Future<Output = #crate_path::task::TaskResult> + Send + '_>> {
-                Box::pin(async move {
-                    // Use an iterator to consume the args vector and avoid cloning
-                    let mut args_iter = args.into_iter();
-                    
-                    // Extract typed arguments
-                    #(#param_extractions)*
-                    
-                    // Check for extra arguments
-                    if args_iter.next().is_some() {
-                        return Err(#crate_path::error::TaskError::invalid_args(
-                            "Too many arguments provided"
-                        ));
-                    }
+            fn execute(&self, args: Self::Args) -> ::std::pin::Pin<::std::boxed::Box<dyn ::std::future::Future<Output = ::azolla_client::task::TaskResult> + ::std::marker::Send + '_>> {
+                ::std::boxed::Box::pin(async move {
+                    // Unpack arguments
+                    #arg_unpacking
                     
                     // Call original function
                     let result = #fn_name(#(#param_names),*).await;
@@ -89,8 +88,10 @@ pub fn azolla_task(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     // Convert result to JSON
                     match result {
                         Ok(value) => {
-                            let json_value = serde_json::to_value(value)
-                                .map_err(|e| #crate_path::error::TaskError::execution_failed(&format!("Failed to serialize result: {}", e)))?;
+                            let json_value = ::serde_json::to_value(value)
+                                .map_err(|e| ::azolla_client::error::TaskError::execution_failed(
+                                    &::std::format!("Failed to serialize result: {}", e)
+                                ))?;
                             Ok(json_value)
                         },
                         Err(e) => Err(e),
