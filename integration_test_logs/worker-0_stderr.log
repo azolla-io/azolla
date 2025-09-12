@@ -1,0 +1,5 @@
+2025-09-09 13:19:08,484 - __main__ - INFO - Starting worker service: localhost:52710, domain: default
+2025-09-09 13:19:08,484 - __main__ - INFO - Successfully registered 5 tasks: ['echo', 'always_fail', 'flaky', 'math_add', 'count_args']
+2025-09-09 13:19:08,484 - __main__ - INFO - Starting worker service connecting to localhost:52710
+2025-09-09 13:19:08,484 - azolla.worker - INFO - Worker starting with 5 tasks on localhost:52710 (domain: default, group: python-test-workers)
+2025-09-09 13:19:08,487 - azolla.worker - INFO - Shepherd 17f9ec9d-d1f3-424e-9642-1cfc04054c88 registered successfully

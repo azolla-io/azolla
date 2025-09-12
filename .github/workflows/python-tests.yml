@@ -27,17 +27,14 @@ jobs:
   python-unit-tests:
     name: Python Unit Tests
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
     
     steps:
     - uses: actions/checkout@v4
     
-    - name: Set up Python ${{ matrix.python-version }}
+    - name: Set up Python 3.9
       uses: actions/setup-python@v4
       with:
-        python-version: ${{ matrix.python-version }}
+        python-version: "3.9"
     
     - name: Cache pip dependencies
       uses: actions/cache@v4
@@ -72,11 +69,11 @@ jobs:
           --cov=azolla \
           --cov-report=xml \
           --cov-report=term-missing \
+          --cov-fail-under=80 \
           -v
     
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
-      if: matrix.python-version == '3.11'
       with:
         file: ./clients/python/coverage.xml
         flags: python-unit

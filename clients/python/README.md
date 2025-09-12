@@ -266,13 +266,38 @@ worker = Worker(config)
 
 ## Examples
 
-See the [`examples/`](./examples/) directory for complete examples:
+See the [`../../examples/python/`](../../examples/python/) directory for complete examples:
 
-- [`basic_usage.py`](./examples/basic_usage.py) - Basic client and worker usage
-- [`advanced_retry.py`](./examples/advanced_retry.py) - Advanced retry policies  
-- [`production_worker.py`](./examples/production_worker.py) - Production worker setup
+- [`basic_client_example.py`](../../examples/python/basic_client_example.py) - Basic client usage and task submission
+- [`basic_worker_example.py`](../../examples/python/basic_worker_example.py) - Basic worker setup and task handling
 
-## Testing Your Tasks
+## Development
+
+### Running Tests
+
+Install development dependencies:
+
+```bash
+pip install -e ".[dev,testing]"
+```
+
+Run the test suite:
+
+```bash
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=azolla --cov-report=term-missing
+
+# Run only unit tests
+pytest tests/unit/
+
+# Run integration tests (requires Azolla orchestrator)
+pytest tests/integration/
+```
+
+### Testing Your Tasks
 
 ```python
 import pytest
@@ -291,6 +316,22 @@ async def test_send_email_task():
     
     assert result.success
     assert result.value["sent_to"] == "test@example.com"
+```
+
+### Code Quality
+
+This project uses several tools to maintain code quality:
+
+```bash
+# Linting and formatting
+ruff check src tests
+black src tests
+
+# Type checking
+mypy src
+
+# Security scanning
+bandit -r src/
 ```
 
 ## API Reference

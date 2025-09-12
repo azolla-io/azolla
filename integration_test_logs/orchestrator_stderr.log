@@ -1,0 +1,47 @@
+[2025-09-09T20:19:08Z INFO  azolla_orchestrator] Loaded settings: Settings { database: Database { url: "postgres://postgres:postgres@127.0.0.1:5432/azolla", pool_size: 8 }, server: Server { port: 52710 }, event_stream: EventStream { max_batch_size: 100, adaptive_threshold: 10, max_wait_time_ms: 1, channel_capacity: 1000 }, domains: DomainsConfig { default_concurrency_limit: 100, specific: {} }, shutdown: ShutdownConfig { timeout_secs: 30 } }
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::db] Running database migrations...
+[2025-09-09T20:19:08Z INFO  tokio_postgres::connection] NOTICE: relation "refinery_schema_history" already exists, skipping
+[2025-09-09T20:19:08Z INFO  refinery_core::traits] current version: 1
+[2025-09-09T20:19:08Z INFO  refinery_core::traits::r#async] no migrations to apply
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::db] Database migrations completed.
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::taskset] Starting to load tasks from database...
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::taskset] Successfully loaded 0 domains.
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::engine] Engine initialized - TaskSetRegistry loaded with 0 domains and virtual queue dispatcher started
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::startup] Azolla Orchestrator listening on [::1]:52710
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::startup] Starting both ClientService and ClusterService
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::cluster_service] Shepherd 17f9ec9d-d1f3-424e-9642-1cfc04054c88 registering in domain 'default' group 'python-test-workers' with max_concurrency=5
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::shepherd_manager] Registering new shepherd 17f9ec9d-d1f3-424e-9642-1cfc04054c88 with max_concurrency=5 in group python-test-workers
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::shepherd_manager] Successfully registered shepherd 17f9ec9d-d1f3-424e-9642-1cfc04054c88
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::client_service] Creating task: echo in domain: default
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::client_service] Successfully created and scheduled task b92c1dbb-41c2-4db7-a6a7-2e2d32bf78a4 in domain default
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::scheduler] Scheduler received StartTask command for task b92c1dbb-41c2-4db7-a6a7-2e2d32bf78a4 in domain default
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::scheduler] Scheduling task b92c1dbb-41c2-4db7-a6a7-2e2d32bf78a4 in domain default
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::scheduler] Found task b92c1dbb-41c2-4db7-a6a7-2e2d32bf78a4 with status 0 in domain default
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::scheduler] Updating task b92c1dbb-41c2-4db7-a6a7-2e2d32bf78a4 status from 0 to ATTEMPT_STARTED in domain default
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::scheduler] Prepared task b92c1dbb-41c2-4db7-a6a7-2e2d32bf78a4 attempt 0 for dispatch in domain default
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::shepherd_manager] ⚡ DISPATCH: Executing immediate dispatch tick
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::shepherd_manager] ➡️ DISPATCH: Dispatching task b92c1dbb-41c2-4db7-a6a7-2e2d32bf78a4 to shepherd 17f9ec9d-d1f3-424e-9642-1cfc04054c88 in group python-test-workers
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::scheduler] Successfully scheduled task b92c1dbb-41c2-4db7-a6a7-2e2d32bf78a4 in domain 'default' virtual queue
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::shepherd_manager] Dispatched task b92c1dbb-41c2-4db7-a6a7-2e2d32bf78a4 to shepherd 17f9ec9d-d1f3-424e-9642-1cfc04054c88
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::shepherd_manager] Successfully started task b92c1dbb-41c2-4db7-a6a7-2e2d32bf78a4 attempt 0 on shepherd 17f9ec9d-d1f3-424e-9642-1cfc04054c88
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::shepherd_manager] 🏁 DISPATCH: Finished dispatch loop for domain 'default', dispatched 1 tasks
+[2025-09-09T20:19:08Z ERROR azolla::orchestrator::cluster_service] Error receiving message from shepherd: status: Unknown, message: "h2 protocol error: error reading a body from connection: connection reset", details: [], metadata: MetadataMap { headers: {} }
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::cluster_service] Shepherd 17f9ec9d-d1f3-424e-9642-1cfc04054c88 connection dropped, marking as temporarily unavailable
+[2025-09-09T20:19:08Z INFO  azolla_orchestrator] Received SIGTERM, shutting down...
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::client_service] ClientServiceImpl dropping
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::startup] Orchestrator terminated, shutting down engine...
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::engine] Shutting down orchestration engine with 30s timeout...
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::engine] Shutting down scheduler registry...
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::scheduler] Scheduler for domain default shutting down
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::engine] Shutting down shepherd managers...
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::shepherd_manager] ShepherdManager actor shutting down
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::engine] Shutting down event stream...
+=== EventStream Metrics Summary ===
+Total flushes: 3
+  Due to timeout: 0 (0.0%)
+  Due to max batch size: 0 (0.0%)
+  Due to low queue: 3 (100.0%)
+Average batch size: 1.00
+======================================
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::shepherd_manager] ShepherdManager main loop shutting down gracefully
+[2025-09-09T20:19:08Z INFO  azolla::orchestrator::engine] Orchestration engine shutdown complete
