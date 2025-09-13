@@ -7,6 +7,7 @@ This module provides helper functions to:
 - Check port availability
 - Collect logs for debugging
 """
+
 import asyncio
 import logging
 import os
@@ -16,7 +17,7 @@ import subprocess
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -26,11 +27,13 @@ def find_available_port(start_port: int = 52710, max_attempts: int = 100) -> int
     for port in range(start_port, start_port + max_attempts):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             try:
-                sock.bind(('localhost', port))
+                sock.bind(("localhost", port))
                 return port
             except OSError:
                 continue
-    raise RuntimeError(f"Could not find available port in range {start_port}-{start_port + max_attempts}")
+    raise RuntimeError(
+        f"Could not find available port in range {start_port}-{start_port + max_attempts}"
+    )
 
 
 def is_port_open(host: str, port: int, timeout: float = 1.0) -> bool:
@@ -42,7 +45,9 @@ def is_port_open(host: str, port: int, timeout: float = 1.0) -> bool:
         return False
 
 
-async def wait_for_port(host: str, port: int, timeout: float = 30.0, check_interval: float = 0.1) -> bool:
+async def wait_for_port(
+    host: str, port: int, timeout: float = 30.0, check_interval: float = 0.1
+) -> bool:
     """Wait for a port to become available."""
     start_time = time.time()
     while time.time() - start_time < timeout:
@@ -55,7 +60,9 @@ async def wait_for_port(host: str, port: int, timeout: float = 30.0, check_inter
 class ProcessManager:
     """Manages a subprocess with logging and cleanup."""
 
-    def __init__(self, name: str, cmd: List[str], cwd: Optional[Path] = None, env: Optional[dict] = None):
+    def __init__(
+        self, name: str, cmd: list[str], cwd: Optional[Path] = None, env: Optional[dict] = None
+    ):
         self.name = name
         self.cmd = cmd
         self.cwd = cwd
@@ -77,8 +84,8 @@ class ProcessManager:
         full_env.update(self.env)
 
         # Open output files if specified
-        stdout = open(stdout_file, 'w') if stdout_file else subprocess.PIPE
-        stderr = open(stderr_file, 'w') if stderr_file else subprocess.PIPE
+        stdout = open(stdout_file, "w") if stdout_file else subprocess.PIPE
+        stderr = open(stderr_file, "w") if stderr_file else subprocess.PIPE
 
         logger.info(f"Starting process {self.name}: {' '.join(self.cmd)}")
 
@@ -89,7 +96,7 @@ class ProcessManager:
                 env=full_env,
                 stdout=stdout,
                 stderr=stderr,
-                preexec_fn=os.setsid if os.name != 'nt' else None
+                preexec_fn=os.setsid if os.name != "nt" else None,
             )
             logger.info(f"Process {self.name} started with PID {self.process.pid}")
         except Exception as e:
@@ -97,7 +104,7 @@ class ProcessManager:
                 stdout.close()
             if stderr != subprocess.PIPE:
                 stderr.close()
-            raise RuntimeError(f"Failed to start process {self.name}: {e}")
+            raise RuntimeError(f"Failed to start process {self.name}: {e}") from e
 
     def stop(self, timeout: float = 10.0) -> bool:
         """Stop the process gracefully."""
@@ -108,7 +115,7 @@ class ProcessManager:
 
         try:
             # Try graceful shutdown first
-            if os.name != 'nt':
+            if os.name != "nt":
                 os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
             else:
                 self.process.terminate()
@@ -122,7 +129,7 @@ class ProcessManager:
                 logger.warning(f"Process {self.name} did not stop gracefully, forcing...")
 
                 # Force kill
-                if os.name != 'nt':
+                if os.name != "nt":
                     os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
                 else:
                     self.process.kill()
@@ -136,16 +143,16 @@ class ProcessManager:
             return False
         finally:
             # Close output files
-            if hasattr(self.process.stdout, 'close') and self.process.stdout:
+            if hasattr(self.process.stdout, "close") and self.process.stdout:
                 self.process.stdout.close()
-            if hasattr(self.process.stderr, 'close') and self.process.stderr:
+            if hasattr(self.process.stderr, "close") and self.process.stderr:
                 self.process.stderr.close()
 
     def is_running(self) -> bool:
         """Check if the process is running."""
         return self.process is not None and self.process.poll() is None
 
-    def get_output(self) -> Tuple[Optional[str], Optional[str]]:
+    def get_output(self) -> tuple[Optional[str], Optional[str]]:
         """Get stdout and stderr if available."""
         if not self.process:
             return None, None
@@ -177,14 +184,11 @@ class OrchestratorManager:
         self.env = {
             "AZOLLA__DATABASE__URL": "postgres://postgres:postgres@localhost:5432/azolla_test",
             "RUST_LOG": "info",
-            "AZOLLA_CLUSTER_BIND": f"0.0.0.0:{self.port}"
+            "AZOLLA_CLUSTER_BIND": f"0.0.0.0:{self.port}",
         }
 
         self.process_manager = ProcessManager(
-            name="orchestrator",
-            cmd=[str(self.binary_path)],
-            cwd=self.project_root,
-            env=self.env
+            name="orchestrator", cmd=[str(self.binary_path)], cwd=self.project_root, env=self.env
         )
 
     def _find_orchestrator_binary(self) -> Path:
@@ -243,7 +247,7 @@ class WorkerManager:
     def __init__(self, worker_script: Path, orchestrator_endpoint: str):
         self.worker_script = worker_script
         self.orchestrator_endpoint = orchestrator_endpoint
-        self.workers: List[ProcessManager] = []
+        self.workers: list[ProcessManager] = []
         self.default_log_dir: Optional[Path] = None
 
     def start_worker(
@@ -252,7 +256,7 @@ class WorkerManager:
         worker_id: Optional[str] = None,
         log_dir: Optional[Path] = None,
         wait_for_ready: bool = True,
-        ready_timeout: float = 30.0
+        ready_timeout: float = 30.0,
     ) -> ProcessManager:
         """Start a new worker process and optionally wait for it to be ready."""
         worker_id = worker_id or f"worker-{len(self.workers)}"
@@ -262,19 +266,24 @@ class WorkerManager:
             log_dir = self.default_log_dir
         if log_dir is None:
             import tempfile
+
             log_dir = Path(tempfile.gettempdir()) / "azolla_worker_logs"
         log_dir.mkdir(exist_ok=True)
 
         cmd = [
             "python3",
             str(self.worker_script),
-            "--mode", "service",
-            "--orchestrator-endpoint", self.orchestrator_endpoint,
-            "--domain", domain
+            "--mode",
+            "service",
+            "--orchestrator-endpoint",
+            self.orchestrator_endpoint,
+            "--domain",
+            domain,
         ]
 
         # Set up environment to ensure azolla module can be found
         import os
+
         worker_env = os.environ.copy()
 
         # Add the src directory to PYTHONPATH for the worker process
@@ -295,13 +304,12 @@ class WorkerManager:
         if not azolla_src_path.exists():
             logger.error(f"Azolla src directory does not exist: {azolla_src_dir}")
         else:
-            logger.info(f"Azolla src directory exists and contains: {list(azolla_src_path.iterdir())}")
+            logger.info(
+                f"Azolla src directory exists and contains: {list(azolla_src_path.iterdir())}"
+            )
 
         worker = ProcessManager(
-            name=f"worker-{worker_id}",
-            cmd=cmd,
-            cwd=self.worker_script.parent,
-            env=worker_env
+            name=f"worker-{worker_id}", cmd=cmd, cwd=self.worker_script.parent, env=worker_env
         )
 
         # Set up log files
@@ -323,11 +331,7 @@ class WorkerManager:
         return worker
 
     def _wait_for_worker_ready(
-        self,
-        worker_id: str,
-        stdout_file: Path,
-        stderr_file: Path,
-        timeout: float
+        self, worker_id: str, stdout_file: Path, stderr_file: Path, timeout: float
     ) -> bool:
         """Wait for worker to show ready status in logs."""
         import time
@@ -335,7 +339,7 @@ class WorkerManager:
         start_time = time.time()
         ready_indicators = [
             "registered successfully",
-            "Worker started successfully and connected to orchestrator"
+            "Worker started successfully and connected to orchestrator",
         ]
 
         while time.time() - start_time < timeout:
@@ -358,7 +362,7 @@ class WorkerManager:
         self,
         orchestrator_log_dir: Path,
         expected_group: str = "python-test-workers",
-        timeout: float = 10.0
+        timeout: float = 10.0,
     ) -> bool:
         """Wait for orchestrator to show shepherds available for the given group."""
         import time
@@ -375,7 +379,7 @@ class WorkerManager:
                     no_shepherd_msg = f"No shepherd available for group '{expected_group}'"
 
                     # If we don't see the "no shepherd" message recently, shepherds might be available
-                    lines = content.split('\n')
+                    lines = content.split("\n")
                     recent_lines = lines[-50:]  # Check last 50 lines
 
                     if not any(no_shepherd_msg in line for line in recent_lines):
@@ -401,15 +405,17 @@ class WorkerManager:
 async def integration_test_environment(project_root: Path):
     """
     Context manager that sets up a complete integration test environment.
-    
+
     This includes:
     - Starting the orchestrator
-    - Providing utilities to manage workers  
+    - Providing utilities to manage workers
     - Setting up shared log directory for debugging
     - Cleaning up everything on exit
     """
     orchestrator = OrchestratorManager(project_root)
-    worker_script = project_root / "clients" / "python" / "tests" / "integration" / "bin" / "test_worker.py"
+    worker_script = (
+        project_root / "clients" / "python" / "tests" / "integration" / "bin" / "test_worker.py"
+    )
 
     # Set up shared log directory for this test session
     log_dir = project_root / "integration_test_logs"

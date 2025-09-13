@@ -1,4 +1,5 @@
 """Shared test fixtures and configuration."""
+
 import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -16,22 +17,21 @@ def event_loop():
     yield loop
     loop.close()
 
+
 @pytest.fixture
 async def mock_grpc_stub():
     """Provide a mock gRPC stub for testing."""
     stub = AsyncMock()
     # Mock successful task creation
-    stub.CreateTask.return_value = orchestrator_pb2.CreateTaskResponse(
-        task_id="test-task-123"
-    )
+    stub.CreateTask.return_value = orchestrator_pb2.CreateTaskResponse(task_id="test-task-123")
 
     # Mock task completion
     stub.WaitForTask.return_value = orchestrator_pb2.WaitForTaskResponse(
-        status="completed",
-        result='{"status": "success", "message": "Task completed"}'
+        status="completed", result='{"status": "success", "message": "Task completed"}'
     )
 
     return stub
+
 
 @pytest.fixture
 async def mock_client(mock_grpc_stub) -> Client:
@@ -45,6 +45,7 @@ async def mock_client(mock_grpc_stub) -> Client:
 
     return client
 
+
 @pytest.fixture
 def worker_config() -> WorkerConfig:
     """Provide a test worker configuration."""
@@ -53,15 +54,11 @@ def worker_config() -> WorkerConfig:
         domain="test-domain",
         shepherd_group="test-workers",
         max_concurrency=5,
-        heartbeat_interval=1.0
+        heartbeat_interval=1.0,
     )
+
 
 @pytest.fixture
 def sample_task_args() -> dict[str, Any]:
     """Provide sample task arguments for testing."""
-    return {
-        "name": "test",
-        "count": 42,
-        "enabled": True,
-        "metadata": {"key": "value"}
-    }
+    return {"name": "test", "count": 42, "enabled": True, "metadata": {"key": "value"}}

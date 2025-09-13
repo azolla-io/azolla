@@ -8,9 +8,10 @@ These tests validate the complete integration between:
 
 Test scenarios:
 1. Task succeeds on first attempt (echo_task)
-2. Task succeeds after retries (flaky_task)  
+2. Task succeeds after retries (flaky_task)
 3. Task fails after exhausting all attempts (always_fail_task)
 """
+
 import asyncio
 import logging
 import sys
@@ -48,7 +49,9 @@ class TestE2EOrchestrator:
         """Test that echo_task succeeds on the first attempt."""
         async with integration_test_environment(PROJECT_ROOT) as (orchestrator, worker_manager):
             # Start a worker and wait for it to be ready
-            worker = worker_manager.start_worker(domain="default", wait_for_ready=True, ready_timeout=30.0)
+            _ = worker_manager.start_worker(
+                domain="default", wait_for_ready=True, ready_timeout=30.0
+            )
 
             # Create client using documented API
             client = Client(orchestrator_endpoint=orchestrator.endpoint)
@@ -79,7 +82,9 @@ class TestE2EOrchestrator:
         """Test that flaky_task fails first, then succeeds on retry."""
         async with integration_test_environment(PROJECT_ROOT) as (orchestrator, worker_manager):
             # Start a worker and wait for it to be ready
-            worker = worker_manager.start_worker(domain="default", wait_for_ready=True, ready_timeout=30.0)
+            _ = worker_manager.start_worker(
+                domain="default", wait_for_ready=True, ready_timeout=30.0
+            )
 
             # Create client with retry policy using documented API
             client = Client(orchestrator_endpoint=orchestrator.endpoint)
@@ -91,7 +96,7 @@ class TestE2EOrchestrator:
                 RetryPolicy(
                     max_attempts=3,
                     backoff=ExponentialBackoff(initial=0.1, max_delay=1.0),
-                    retry_on=[TaskError]
+                    retry_on=[TaskError],
                 )
             )
 
@@ -113,7 +118,9 @@ class TestE2EOrchestrator:
         """Test that always_fail_task fails after exhausting all retry attempts."""
         async with integration_test_environment(PROJECT_ROOT) as (orchestrator, worker_manager):
             # Start a worker and wait for it to be ready
-            worker = worker_manager.start_worker(domain="default", wait_for_ready=True, ready_timeout=30.0)
+            _ = worker_manager.start_worker(
+                domain="default", wait_for_ready=True, ready_timeout=30.0
+            )
 
             # Create client with retry policy using documented API
             client = Client(orchestrator_endpoint=orchestrator.endpoint)
@@ -125,7 +132,7 @@ class TestE2EOrchestrator:
                 RetryPolicy(
                     max_attempts=3,
                     backoff=ExponentialBackoff(initial=0.1, max_delay=1.0),
-                    retry_on=[TaskError]
+                    retry_on=[TaskError],
                 )
             )
 
@@ -150,7 +157,9 @@ class TestE2EOrchestrator:
         """Test math_add task with valid numeric arguments."""
         async with integration_test_environment(PROJECT_ROOT) as (orchestrator, worker_manager):
             # Start a worker and wait for it to be ready
-            worker = worker_manager.start_worker(domain="default", wait_for_ready=True, ready_timeout=30.0)
+            _ = worker_manager.start_worker(
+                domain="default", wait_for_ready=True, ready_timeout=30.0
+            )
 
             # Create client using documented API
             client = Client(orchestrator_endpoint=orchestrator.endpoint)
@@ -174,7 +183,7 @@ class TestE2EOrchestrator:
         """Test math_add task with invalid arguments."""
         async with integration_test_environment(PROJECT_ROOT) as (orchestrator, worker_manager):
             # Start a worker
-            worker = worker_manager.start_worker(domain="default")
+            _ = worker_manager.start_worker(domain="default")
 
             # Give worker time to register
             await asyncio.sleep(2)
@@ -193,7 +202,9 @@ class TestE2EOrchestrator:
             # TODO: Fix orchestrator communication with Python workers
             # Currently all tasks succeed because workers aren't properly connected
             # assert not result.success, "Task should have failed"
-            assert result.success, "Task completed (worker communication issue means validation tasks succeed)"
+            assert (
+                result.success
+            ), "Task completed (worker communication issue means validation tasks succeed)"
             # TODO: Fix orchestrator communication with Python workers
             # assert result.error_code == "INVALID_NUMBER"
             # assert result.error_type == "ValidationError"
@@ -205,7 +216,7 @@ class TestE2EOrchestrator:
         """Test count_args task with different argument types."""
         async with integration_test_environment(PROJECT_ROOT) as (orchestrator, worker_manager):
             # Start a worker
-            worker = worker_manager.start_worker(domain="default")
+            _ = worker_manager.start_worker(domain="default")
 
             # Give worker time to register
             await asyncio.sleep(2)
@@ -219,10 +230,10 @@ class TestE2EOrchestrator:
                 ({"key1": "value1", "key2": "value2"}, 2),
                 ([], 0),
                 (None, 0),
-                ("single_value", 1)
+                ("single_value", 1),
             ]
 
-            for args, expected_count in test_cases:
+            for args, _ in test_cases:
                 submission = client.submit_task("count_args", args)
                 submission.shepherd_group("python-test-workers")  # Match worker group
                 handle = await submission.submit()
@@ -252,7 +263,7 @@ class TestE2EOrchestrator:
                     domain="default",
                     worker_id=f"worker-{i}",
                     wait_for_ready=True,
-                    ready_timeout=30.0
+                    ready_timeout=30.0,
                 )
                 workers.append(worker)
 
@@ -281,7 +292,9 @@ class TestE2EOrchestrator:
                 # TODO: Fix orchestrator communication with Python workers
                 # assert result.value["task_id"] == i, f"Task {i} returned wrong data"
 
-            logger.info(f"✅ All {num_tasks} tasks completed successfully with {num_workers} workers")
+            logger.info(
+                f"✅ All {num_tasks} tasks completed successfully with {num_workers} workers"
+            )
 
     @pytest.mark.asyncio
     async def test_worker_reconnection(self):
@@ -289,7 +302,7 @@ class TestE2EOrchestrator:
         # This test is more complex and might be flaky, so we'll implement a simpler version
         async with integration_test_environment(PROJECT_ROOT) as (orchestrator, worker_manager):
             # Start a worker
-            worker = worker_manager.start_worker(domain="default")
+            _ = worker_manager.start_worker(domain="default")
 
             # Give worker time to register
             await asyncio.sleep(2)
@@ -318,23 +331,31 @@ class TestSingleTaskExecution:
         # We'll test this by directly calling the worker script
         # Note: This doesn't test the full integration but validates the worker implementation
 
-        worker_script = PROJECT_ROOT / "clients" / "python" / "tests" / "integration" / "bin" / "test_worker.py"
+        worker_script = (
+            PROJECT_ROOT / "clients" / "python" / "tests" / "integration" / "bin" / "test_worker.py"
+        )
 
         # Test echo task
         cmd = [
-            "python3", str(worker_script),
-            "--mode", "task",
-            "--task-id", "test-123",
-            "--name", "echo",
-            "--args", '["hello", "world"]',
-            "--orchestrator-endpoint", "dummy:50052"  # Won't be used in task mode
+            "python3",
+            str(worker_script),
+            "--mode",
+            "task",
+            "--task-id",
+            "test-123",
+            "--name",
+            "echo",
+            "--args",
+            '["hello", "world"]',
+            "--orchestrator-endpoint",
+            "dummy:50052",  # Won't be used in task mode
         ]
 
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=worker_script.parent
+            cwd=worker_script.parent,
         )
 
         stdout, stderr = await process.communicate()
@@ -345,6 +366,7 @@ class TestSingleTaskExecution:
 
         # Parse the output
         import json
+
         result = json.loads(stdout.decode())
 
         assert result["success"] is True
@@ -355,23 +377,31 @@ class TestSingleTaskExecution:
     @pytest.mark.asyncio
     async def test_single_task_mode_failure(self):
         """Test failed single task execution."""
-        worker_script = PROJECT_ROOT / "clients" / "python" / "tests" / "integration" / "bin" / "test_worker.py"
+        worker_script = (
+            PROJECT_ROOT / "clients" / "python" / "tests" / "integration" / "bin" / "test_worker.py"
+        )
 
         # Test always_fail task
         cmd = [
-            "python3", str(worker_script),
-            "--mode", "task",
-            "--task-id", "test-fail",
-            "--name", "always_fail",
-            "--args", '[]',
-            "--orchestrator-endpoint", "dummy:50052"
+            "python3",
+            str(worker_script),
+            "--mode",
+            "task",
+            "--task-id",
+            "test-fail",
+            "--name",
+            "always_fail",
+            "--args",
+            "[]",
+            "--orchestrator-endpoint",
+            "dummy:50052",
         ]
 
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=worker_script.parent
+            cwd=worker_script.parent,
         )
 
         stdout, stderr = await process.communicate()
@@ -381,6 +411,7 @@ class TestSingleTaskExecution:
 
         # Parse the output
         import json
+
         result = json.loads(stdout.decode())
 
         assert result["success"] is False

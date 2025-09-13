@@ -1,4 +1,5 @@
 """Unit tests for retry policy functionality."""
+
 from azolla.exceptions import TaskError, ValidationError
 from azolla.retry import ExponentialBackoff, FixedBackoff, LinearBackoff, RetryPolicy
 
@@ -39,13 +40,13 @@ class TestBackoffStrategies:
         backoff = LinearBackoff(initial=2.0, increment=1.5, max_delay=20.0)
 
         # Test linear growth
-        assert backoff.get_delay(1) == 2.0      # 2.0 + 1.5 * 0
-        assert backoff.get_delay(2) == 3.5      # 2.0 + 1.5 * 1
-        assert backoff.get_delay(3) == 5.0      # 2.0 + 1.5 * 2
-        assert backoff.get_delay(4) == 6.5      # 2.0 + 1.5 * 3
+        assert backoff.get_delay(1) == 2.0  # 2.0 + 1.5 * 0
+        assert backoff.get_delay(2) == 3.5  # 2.0 + 1.5 * 1
+        assert backoff.get_delay(3) == 5.0  # 2.0 + 1.5 * 2
+        assert backoff.get_delay(4) == 6.5  # 2.0 + 1.5 * 3
 
         # Test max delay cap
-        assert backoff.get_delay(20) == 20.0    # Should be capped
+        assert backoff.get_delay(20) == 20.0  # Should be capped
 
     def test_fixed_backoff(self) -> None:
         """Test fixed backoff calculation."""
@@ -55,6 +56,7 @@ class TestBackoffStrategies:
         assert backoff.get_delay(1) == 5.0
         assert backoff.get_delay(5) == 5.0
         assert backoff.get_delay(100) == 5.0
+
 
 class TestRetryPolicy:
     """Test retry policy functionality."""
@@ -75,7 +77,7 @@ class TestRetryPolicy:
             max_attempts=5,
             backoff=backoff,
             retry_on=[ValueError, "TimeoutError"],
-            stop_on_codes=["VALIDATION_ERROR", "AUTH_ERROR"]
+            stop_on_codes=["VALIDATION_ERROR", "AUTH_ERROR"],
         )
 
         assert policy.max_attempts == 5
@@ -157,7 +159,7 @@ class TestRetryPolicy:
         policy = RetryPolicy(
             max_attempts=5,
             retry_on=[ConnectionError, "TimeoutError"],
-            stop_on_codes=["INVALID_INPUT"]
+            stop_on_codes=["INVALID_INPUT"],
         )
 
         # Should retry connection errors

@@ -27,8 +27,7 @@ from azolla.exceptions import TaskError
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -53,9 +52,7 @@ class AlwaysFailTask(Task):
     async def execute(self, args: Any, context=None) -> Any:
         logger.info(f"Always fail task executing with args: {args}")
         raise TaskError(
-            "Task designed to always fail",
-            error_code="ALWAYS_FAIL",
-            error_type="TestError"
+            "Task designed to always fail", error_code="ALWAYS_FAIL", error_type="TestError"
         )
 
 
@@ -89,7 +86,7 @@ class FlakyTask(Task):
             raise TaskError(
                 "First attempt failure",
                 error_code="FLAKY_TASK_FIRST_ATTEMPT",
-                error_type="TestError"
+                error_type="TestError",
             )
 
         # Succeed on subsequent attempts
@@ -110,7 +107,7 @@ class MathAddTask(Task):
             raise TaskError(
                 f"Math add expects exactly 2 arguments, got {len(args) if isinstance(args, list) else 'non-list'}",
                 error_code="INVALID_ARGS",
-                error_type="ValidationError"
+                error_type="ValidationError",
             )
 
         try:
@@ -122,8 +119,8 @@ class MathAddTask(Task):
             raise TaskError(
                 f"Math add requires numeric arguments: {e}",
                 error_code="INVALID_NUMBER",
-                error_type="ValidationError"
-            )
+                error_type="ValidationError",
+            ) from e
 
 
 class CountArgsTask(Task):
@@ -149,23 +146,13 @@ class CountArgsTask(Task):
 
 
 async def run_single_task(
-    task_id: str,
-    task_name: str,
-    task_args: str,
-    task_kwargs: str,
-    orchestrator_endpoint: str
+    task_id: str, task_name: str, task_args: str, task_kwargs: str, orchestrator_endpoint: str
 ) -> None:
     """Execute a single task (equivalent to Rust 'task' mode)."""
     logger.info(f"Running single task: {task_name} (ID: {task_id})")
 
     # Create task registry and register all test tasks
-    tasks = [
-        EchoTask(),
-        AlwaysFailTask(),
-        FlakyTask(),
-        MathAddTask(),
-        CountArgsTask()
-    ]
+    tasks = [EchoTask(), AlwaysFailTask(), FlakyTask(), MathAddTask(), CountArgsTask()]
 
     # Find the requested task
     task_instance = None
@@ -181,7 +168,9 @@ async def run_single_task(
     # Parse arguments
     try:
         args = json.loads(task_args) if task_args else []
-        kwargs = json.loads(task_kwargs) if task_kwargs else {}
+        _ = (
+            json.loads(task_kwargs) if task_kwargs else {}
+        )  # kwargs not used in current implementation
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse arguments: {e}")
         sys.exit(1)
@@ -194,11 +183,7 @@ async def run_single_task(
         print(json.dumps({"success": True, "result": result}))
     except Exception as e:
         logger.error(f"Task failed: {e}")
-        error_info = {
-            "success": False,
-            "error": str(e),
-            "error_type": type(e).__name__
-        }
+        error_info = {"success": False, "error": str(e), "error_type": type(e).__name__}
         if isinstance(e, TaskError):
             error_info["error_code"] = getattr(e, "error_code", "UNKNOWN")
         print(json.dumps(error_info))
@@ -213,19 +198,13 @@ async def run_worker_service(orchestrator_endpoint: str, domain: str) -> None:
         orchestrator_endpoint=orchestrator_endpoint,
         domain=domain,
         shepherd_group="python-test-workers",
-        max_concurrency=5
+        max_concurrency=5,
     )
 
     worker = Worker(config)
 
     # Register all test tasks
-    tasks = [
-        EchoTask(),
-        AlwaysFailTask(),
-        FlakyTask(),
-        MathAddTask(),
-        CountArgsTask()
-    ]
+    tasks = [EchoTask(), AlwaysFailTask(), FlakyTask(), MathAddTask(), CountArgsTask()]
 
     # Register tasks with error handling
     try:
@@ -233,7 +212,9 @@ async def run_worker_service(orchestrator_endpoint: str, domain: str) -> None:
             worker.register_task(task)
             logger.debug(f"Registered task: {task.name()}")
 
-        logger.info(f"Successfully registered {len(tasks)} tasks: {[task.name() for task in tasks]}")
+        logger.info(
+            f"Successfully registered {len(tasks)} tasks: {[task.name() for task in tasks]}"
+        )
 
     except Exception as e:
         logger.error(f"Failed to register tasks: {e}", exc_info=True)
@@ -269,20 +250,16 @@ def main():
         "--mode",
         choices=["task", "service"],
         default="service",
-        help="Run mode: 'task' for single execution, 'service' for continuous worker"
+        help="Run mode: 'task' for single execution, 'service' for continuous worker",
     )
 
     # Common arguments
     parser.add_argument(
         "--orchestrator-endpoint",
         default="localhost:52710",
-        help="Orchestrator endpoint (default: localhost:52710)"
+        help="Orchestrator endpoint (default: localhost:52710)",
     )
-    parser.add_argument(
-        "--domain",
-        default="default",
-        help="Task domain (default: default)"
-    )
+    parser.add_argument("--domain", default="default", help="Task domain (default: default)")
 
     # Task mode arguments
     parser.add_argument("--task-id", help="Task ID (for task mode)")
@@ -297,13 +274,15 @@ def main():
             logger.error("Task mode requires --task-id and --name")
             sys.exit(1)
 
-        asyncio.run(run_single_task(
-            args.task_id,
-            args.name,
-            args.args or "[]",
-            args.kwargs or "{}",
-            args.orchestrator_endpoint
-        ))
+        asyncio.run(
+            run_single_task(
+                args.task_id,
+                args.name,
+                args.args or "[]",
+                args.kwargs or "{}",
+                args.orchestrator_endpoint,
+            )
+        )
     else:
         asyncio.run(run_worker_service(args.orchestrator_endpoint, args.domain))
 

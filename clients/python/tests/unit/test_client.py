@@ -1,4 +1,5 @@
 """Unit tests for client functionality."""
+
 import json
 
 from azolla import Client, ClientConfig, TaskHandle, azolla_task
@@ -11,6 +12,7 @@ from azolla.types import TaskStatus
 async def sample_client_task(message: str, count: int = 1) -> dict:
     """Test task for client testing."""
     return {"message": message, "count": count}
+
 
 class TestClientConfig:
     """Test client configuration."""
@@ -29,12 +31,13 @@ class TestClientConfig:
             endpoint="http://production:8080",
             domain="prod",
             timeout=60.0,
-            max_message_size=8 * 1024 * 1024
+            max_message_size=8 * 1024 * 1024,
         )
         assert config.endpoint == "http://production:8080"
         assert config.domain == "prod"
         assert config.timeout == 60.0
         assert config.max_message_size == 8 * 1024 * 1024
+
 
 class TestClient:
     """Test Client functionality."""
@@ -61,9 +64,7 @@ class TestClient:
         assert builder._args is None
 
         # Test builder configuration
-        builder = (builder
-                  .args({"message": "hello", "count": 5})
-                  .shepherd_group("test-group"))
+        builder = builder.args({"message": "hello", "count": 5}).shepherd_group("test-group")
 
         assert builder._args == {"message": "hello", "count": 5}
         assert builder._shepherd_group == "test-group"
@@ -83,10 +84,7 @@ class TestClient:
             task_id="test-task-456"
         )
 
-        handle = await (mock_client
-                       .submit_task("test_task")
-                       .args({"key": "value"})
-                       .submit())
+        handle = await mock_client.submit_task("test_task").args({"key": "value"}).submit()
 
         assert isinstance(handle, TaskHandle)
         assert handle.task_id == "test-task-456"
@@ -98,36 +96,34 @@ class TestClient:
         assert call_args.domain == "default"
         assert json.loads(call_args.args) == [{"key": "value"}]
 
-    async def test_task_submission_argument_serialization(self, mock_client: Client, mock_grpc_stub) -> None:
+    async def test_task_submission_argument_serialization(
+        self, mock_client: Client, mock_grpc_stub
+    ) -> None:
         """Test that task arguments are serialized correctly."""
         # Test with dict
-        await (mock_client.submit_task("test").args({"a": 1, "b": 2}).submit())
+        await mock_client.submit_task("test").args({"a": 1, "b": 2}).submit()
         call_args = mock_grpc_stub.CreateTask.call_args[0][0]
         assert json.loads(call_args.args) == [{"a": 1, "b": 2}]
 
         # Test with list
-        await (mock_client.submit_task("test").args([1, 2, 3]).submit())
+        await mock_client.submit_task("test").args([1, 2, 3]).submit()
         call_args = mock_grpc_stub.CreateTask.call_args[0][0]
         assert json.loads(call_args.args) == [1, 2, 3]
 
         # Test with single value
-        await (mock_client.submit_task("test").args("single").submit())
+        await mock_client.submit_task("test").args("single").submit()
         call_args = mock_grpc_stub.CreateTask.call_args[0][0]
         assert json.loads(call_args.args) == ["single"]
 
-    async def test_task_submission_with_retry_policy(self, mock_client: Client, mock_grpc_stub) -> None:
+    async def test_task_submission_with_retry_policy(
+        self, mock_client: Client, mock_grpc_stub
+    ) -> None:
         """Test task submission with retry policy."""
         from azolla.retry import ExponentialBackoff, RetryPolicy
 
-        retry_policy = RetryPolicy(
-            max_attempts=5,
-            backoff=ExponentialBackoff(initial=2.0)
-        )
+        retry_policy = RetryPolicy(max_attempts=5, backoff=ExponentialBackoff(initial=2.0))
 
-        await (mock_client
-              .submit_task("test")
-              .retry_policy(retry_policy)
-              .submit())
+        await mock_client.submit_task("test").retry_policy(retry_policy).submit()
 
         call_args = mock_grpc_stub.CreateTask.call_args[0][0]
         assert call_args.retry_policy != ""
@@ -135,6 +131,7 @@ class TestClient:
         # Should be valid JSON
         retry_data = json.loads(call_args.retry_policy)
         assert retry_data["max_attempts"] == 5
+
 
 class TestTaskHandle:
     """Test TaskHandle functionality."""
@@ -149,8 +146,7 @@ class TestTaskHandle:
         """Test getting successful task result."""
         # Configure mock to return completed task
         mock_grpc_stub.WaitForTask.return_value = orchestrator_pb2.WaitForTaskResponse(
-            status="completed",
-            result='{"status": "success", "value": 42}'
+            status="completed", result='{"status": "success", "value": 42}'
         )
 
         handle = TaskHandle("test-task", mock_client)
@@ -164,8 +160,7 @@ class TestTaskHandle:
     async def test_failed_task_result(self, mock_client: Client, mock_grpc_stub) -> None:
         """Test getting failed task result."""
         mock_grpc_stub.WaitForTask.return_value = orchestrator_pb2.WaitForTaskResponse(
-            status="failed",
-            error="Task execution failed with error"
+            status="failed", error="Task execution failed with error"
         )
 
         handle = TaskHandle("test-task", mock_client)
@@ -200,17 +195,19 @@ class TestTaskHandle:
         assert result.failed is True
         assert "timeout" in result.error.lower()
 
+
 class TestClientBuilder:
     """Test ClientBuilder functionality."""
 
     def test_client_builder_configuration(self) -> None:
         """Test client builder configuration."""
         builder = Client.builder()
-        builder = (builder
-                  .endpoint("http://custom:9999")
-                  .domain("custom-domain")
-                  .timeout(45.0)
-                  .max_message_size(16 * 1024 * 1024))
+        builder = (
+            builder.endpoint("http://custom:9999")
+            .domain("custom-domain")
+            .timeout(45.0)
+            .max_message_size(16 * 1024 * 1024)
+        )
 
         assert builder._config.endpoint == "http://custom:9999"
         assert builder._config.domain == "custom-domain"

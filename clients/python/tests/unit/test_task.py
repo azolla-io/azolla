@@ -1,4 +1,5 @@
 """Unit tests for task functionality."""
+
 from typing import Optional
 
 import pytest
@@ -13,12 +14,14 @@ async def simple_task(name: str, count: int = 1) -> dict:
     """Simple task for testing decorator."""
     return {"message": f"Hello {name}!", "count": count}
 
+
 @azolla_task
 async def failing_task(should_fail: bool = True) -> dict:
     """Task that can fail for testing error handling."""
     if should_fail:
         raise ValueError("Task intentionally failed")
     return {"status": "success"}
+
 
 # Test task for explicit approach
 class ExplicitTask(Task):
@@ -32,14 +35,15 @@ class ExplicitTask(Task):
         result = args.value * args.multiplier
         return {"input": args.value, "multiplier": args.multiplier, "result": result}
 
+
 class TestTaskDecorator:
     """Test azolla_task decorator functionality."""
 
     def test_decorator_creates_task_attributes(self) -> None:
         """Test that decorator creates proper task attributes."""
-        assert hasattr(simple_task, '__azolla_task_class__')
-        assert hasattr(simple_task, '__azolla_args_model__')
-        assert hasattr(simple_task, '__azolla_task_instance__')
+        assert hasattr(simple_task, "__azolla_task_class__")
+        assert hasattr(simple_task, "__azolla_args_model__")
+        assert hasattr(simple_task, "__azolla_task_instance__")
 
         task_class = simple_task.__azolla_task_class__
         assert issubclass(task_class, Task)
@@ -98,6 +102,7 @@ class TestTaskDecorator:
         result = await task_instance._execute_with_casting({"should_fail": False})
         assert result == {"status": "success"}
 
+
 class TestExplicitTask:
     """Test explicit Task class implementation."""
 
@@ -143,6 +148,7 @@ class TestExplicitTask:
         result = await task._execute_with_casting({"value": 4})
         expected = {"input": 4, "multiplier": 2.0, "result": 8.0}
         assert result == expected
+
 
 class TestTaskContext:
     """Test TaskContext functionality."""
