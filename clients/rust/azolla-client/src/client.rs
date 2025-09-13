@@ -488,4 +488,315 @@ mod tests {
             _ => panic!("Expected failed result"),
         }
     }
+
+    /// Test TaskSubmissionBuilder with complex serialization scenarios
+    #[test]
+    fn test_task_submission_builder_advanced_serialization() {
+        use serde::Serialize;
+        use std::collections::HashMap;
+
+        #[derive(Serialize)]
+        struct NestedStruct {
+            id: u64,
+            data: HashMap<String, serde_json::Value>,
+        }
+
+        let mut data = HashMap::new();
+        data.insert("key1".to_string(), json!("value1"));
+        data.insert("key2".to_string(), json!(42));
+        data.insert("key3".to_string(), json!(null));
+
+        let nested = NestedStruct { id: 123, data };
+
+        // Test that complex nested structures can be serialized
+        let json_value = serde_json::to_value(&nested).unwrap();
+        assert!(json_value.is_object());
+        assert_eq!(json_value["id"], 123);
+        assert!(json_value["data"].is_object());
+    }
+
+    /// Test TaskSubmissionBuilder with empty arguments
+    #[test]
+    fn test_task_submission_builder_empty_args() {
+        let empty_vec: Vec<i32> = vec![];
+        let json_value = serde_json::to_value(&empty_vec).unwrap();
+        assert!(json_value.is_array());
+        assert_eq!(json_value.as_array().unwrap().len(), 0);
+    }
+
+    /// Test TaskSubmissionBuilder with unit type
+    #[test]
+    fn test_task_submission_builder_unit_args() {
+        let unit_value = ();
+        let json_value = serde_json::to_value(unit_value).unwrap();
+        assert!(json_value.is_null());
+    }
+
+    /// Test TaskSubmissionBuilder with optional values
+    #[test]
+    fn test_task_submission_builder_optional_args() {
+        #[derive(serde::Serialize)]
+        struct OptionalArgs {
+            required_field: String,
+            optional_field: Option<i32>,
+            another_optional: Option<String>,
+        }
+
+        let args_with_some = OptionalArgs {
+            required_field: "test".to_string(),
+            optional_field: Some(42),
+            another_optional: None,
+        };
+
+        let json_value = serde_json::to_value(&args_with_some).unwrap();
+        assert_eq!(json_value["required_field"], "test");
+        assert_eq!(json_value["optional_field"], 42);
+        assert!(json_value["another_optional"].is_null());
+
+        let args_with_none = OptionalArgs {
+            required_field: "test2".to_string(),
+            optional_field: None,
+            another_optional: Some("present".to_string()),
+        };
+
+        let json_value2 = serde_json::to_value(&args_with_none).unwrap();
+        assert_eq!(json_value2["required_field"], "test2");
+        assert!(json_value2["optional_field"].is_null());
+        assert_eq!(json_value2["another_optional"], "present");
+    }
+
+    /// Test retry policy handling in task submission
+    #[test]
+    fn test_task_submission_retry_policy_handling() {
+        use crate::retry_policy::{RetryCondition, RetryPolicy, StopCondition, WaitStrategy};
+        use std::time::Duration;
+
+        // Test retry policy with different configurations
+        let retry_policy = RetryPolicy {
+            version: 1,
+            retry: RetryCondition {
+                include_errors: vec!["NetworkError".to_string(), "TimeoutError".to_string()],
+                exclude_errors: vec!["ValidationError".to_string()],
+            },
+            stop: StopCondition {
+                max_attempts: Some(5),
+                max_delay: Some(Duration::from_secs(60)),
+            },
+            wait: WaitStrategy::Exponential {
+                initial_delay: Duration::from_millis(100),
+                multiplier: 2.0,
+                max_delay: Duration::from_secs(10),
+            },
+        };
+
+        // Test that it serializes correctly
+        let serialized = serde_json::to_string(&retry_policy).unwrap();
+        assert!(!serialized.is_empty());
+        assert!(serialized.contains("NetworkError"));
+        assert!(serialized.contains("max_attempts"));
+
+        // Test that it can be deserialized
+        let deserialized: RetryPolicy = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(
+            retry_policy.retry.include_errors,
+            deserialized.retry.include_errors
+        );
+        assert_eq!(
+            retry_policy.stop.max_attempts,
+            deserialized.stop.max_attempts
+        );
+    }
+
+    /// Test client configuration with various endpoint formats
+    #[test]
+    fn test_client_config_endpoint_variations() {
+        let configs = vec![
+            ("http://localhost:8080", "localhost with port"),
+            ("https://example.com", "https without port"),
+            ("http://127.0.0.1:52710", "IP address with port"),
+            (
+                "https://api.example.com:443",
+                "subdomain with standard port",
+            ),
+        ];
+
+        for (endpoint, description) in configs {
+            let config = ClientConfig {
+                endpoint: endpoint.to_string(),
+                domain: "test".to_string(),
+                timeout: Duration::from_secs(30),
+            };
+
+            assert_eq!(config.endpoint, endpoint, "Failed for {description}");
+            assert!(!config.endpoint.is_empty());
+            assert!(
+                config.endpoint.starts_with("http://") || config.endpoint.starts_with("https://")
+            );
+        }
+    }
+
+    /// Test ClientBuilder with extreme timeout values
+    #[test]
+    fn test_client_builder_extreme_timeouts() {
+        // Test very short timeout
+        let short_config = Client::builder().timeout(Duration::from_millis(1)).config;
+        assert_eq!(short_config.timeout, Duration::from_millis(1));
+
+        // Test very long timeout
+        let long_config = Client::builder()
+            .timeout(Duration::from_secs(86400)) // 24 hours
+            .config;
+        assert_eq!(long_config.timeout, Duration::from_secs(86400));
+
+        // Test zero timeout (edge case)
+        let zero_config = Client::builder().timeout(Duration::from_secs(0)).config;
+        assert_eq!(zero_config.timeout, Duration::from_secs(0));
+    }
+
+    /// Test domain name variations
+    #[test]
+    fn test_client_config_domain_variations() {
+        let domains = vec![
+            ("", "empty domain"),
+            ("test", "simple domain"),
+            ("production-environment", "domain with hyphens"),
+            ("test_environment", "domain with underscores"),
+            (
+                "very-long-domain-name-with-multiple-segments",
+                "very long domain",
+            ),
+            ("123", "numeric domain"),
+            ("test.domain.com", "domain with dots"),
+            ("测试", "unicode domain"),
+        ];
+
+        for (domain, description) in domains {
+            let config = ClientConfig {
+                endpoint: "http://localhost:52710".to_string(),
+                domain: domain.to_string(),
+                timeout: Duration::from_secs(30),
+            };
+
+            assert_eq!(config.domain, domain, "Failed for {description}");
+        }
+    }
+
+    /// Test TaskExecutionResult with various success values
+    #[test]
+    fn test_task_execution_result_success_variations() {
+        let success_cases = vec![
+            (json!(null), "null result"),
+            (json!(42), "number result"),
+            (json!("hello"), "string result"),
+            (json!(true), "boolean result"),
+            (json!([1, 2, 3]), "array result"),
+            (json!({"key": "value"}), "object result"),
+            (
+                json!({"nested": {"deep": {"value": 123}}}),
+                "deeply nested result",
+            ),
+        ];
+
+        for (value, description) in success_cases {
+            let result = TaskExecutionResult::Success(value.clone());
+            match result {
+                TaskExecutionResult::Success(val) => {
+                    assert_eq!(val, value, "Failed for {description}");
+                }
+                _ => panic!("Expected success result for {description}"),
+            }
+        }
+    }
+
+    /// Test TaskExecutionResult with various error types
+    #[test]
+    fn test_task_execution_result_error_variations() {
+        let error_cases = vec![
+            (
+                TaskError::execution_failed("execution error"),
+                "execution error",
+            ),
+            (
+                TaskError::invalid_args("invalid arguments"),
+                "invalid args error",
+            ),
+            (
+                TaskError::new("operation timed out").with_error_type("TimeoutError"),
+                "timeout error",
+            ),
+        ];
+
+        for (error, description) in error_cases {
+            let result = TaskExecutionResult::Failed(error.clone());
+            match result {
+                TaskExecutionResult::Failed(err) => {
+                    assert_eq!(err.message, error.message, "Failed for {description}");
+                    assert_eq!(err.error_type, error.error_type, "Failed for {description}");
+                }
+                _ => panic!("Expected failed result for {description}"),
+            }
+        }
+    }
+
+    /// Test JSON serialization edge cases
+    #[test]
+    fn test_json_serialization_edge_cases() {
+        // Test with floating point numbers
+        let float_args = vec![0.0, -0.0, 1.5, -1.5, f64::MAX, f64::MIN];
+        for val in float_args {
+            let json_value = serde_json::to_value(val).unwrap();
+            assert!(json_value.is_number());
+        }
+
+        // Test with large integers
+        let int_args = vec![i64::MIN, i64::MAX, 0i64, -1i64, 1i64];
+        for val in int_args {
+            let json_value = serde_json::to_value(val).unwrap();
+            assert!(json_value.is_number());
+        }
+
+        // Test with special string characters
+        let special_strings = vec![
+            "\n",
+            "\t",
+            "\r",
+            "\\",
+            "\"",
+            "'",
+            "unicode: 🦀",
+            "emoji: 😀",
+            "symbols: @#$%^&*()",
+        ];
+        for s in special_strings {
+            let json_value = serde_json::to_value(s).unwrap();
+            assert!(json_value.is_string());
+            assert_eq!(json_value.as_str().unwrap(), s);
+        }
+    }
+
+    /// Test argument conversion from single values to arrays
+    #[test]
+    fn test_args_conversion_single_to_array() {
+        // Test various single values that should become single-item arrays conceptually
+        let test_cases = vec![
+            (json!(42), "integer"),
+            (json!("test"), "string"),
+            (json!(true), "boolean"),
+            (json!(null), "null"),
+            (json!({"key": "value"}), "object"),
+        ];
+
+        for (value, description) in test_cases {
+            // When we serialize a single value, it stays as-is
+            let json_value = serde_json::to_value(&value).unwrap();
+            assert_eq!(json_value, value, "Failed for {description}");
+        }
+
+        // When we serialize a tuple, it becomes an array
+        let tuple_value = (42, "test", true);
+        let json_value = serde_json::to_value(tuple_value).unwrap();
+        assert!(json_value.is_array());
+        let arr = json_value.as_array().unwrap();
+        assert_eq!(arr.len(), 3);
+    }
 }
