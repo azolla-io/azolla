@@ -79,7 +79,7 @@ jobs:
     
     - name: Set up database environment
       run: |
-        echo "DATABASE_URL=postgres://postgres:postgres@localhost:5432/azolla_test" >> $GITHUB_ENV
+        echo "AZOLLA__DATABASE__URL=postgres://postgres:postgres@localhost:5432/azolla_test" >> $GITHUB_ENV
     
     - name: Build Rust orchestrator
       run: cargo build --verbose --jobs 2

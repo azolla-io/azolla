@@ -130,10 +130,18 @@ ignore = [
 "tests/**/*.py" = [
     "B018", # Found useless expression
 ]
+"src/azolla/_grpc/**/*.py" = [
+    "E", "W", "F", "I", "B", "C4", "UP", "RUF"  # Skip all linting for generated gRPC files
+]
 
 [tool.black]
 line-length = 100
 target-version = ['py39', 'py310', 'py311', 'py312', 'py313']
+extend-exclude = '''
+(
+  src/azolla/_grpc/.*\.py$
+)
+'''
 
 [tool.mypy]
 python_version = "3.9"
@@ -144,6 +152,9 @@ disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true
 disallow_untyped_decorators = true
+exclude = [
+    "src/azolla/_grpc/.*\\.py$"
+]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

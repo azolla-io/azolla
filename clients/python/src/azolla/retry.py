@@ -1,6 +1,6 @@
 """Retry policy implementation for Azolla tasks."""
 import math
-import random
+import secrets
 from typing import List, Optional, Type, Union, Any, Dict
 from abc import ABC, abstractmethod
 from pydantic import BaseModel, Field, field_serializer
@@ -26,8 +26,8 @@ class ExponentialBackoff(BackoffStrategy, BaseModel):
         delay = min(delay, self.max_delay)
         
         if self.jitter:
-            # Add up to 25% jitter
-            jitter_factor = 1.0 + (random.random() - 0.5) * 0.5
+            # Add up to 25% jitter using cryptographically secure randomness
+            jitter_factor = 1.0 + (secrets.SystemRandom().random() - 0.5) * 0.5
             delay *= jitter_factor
             
         return max(0, delay)

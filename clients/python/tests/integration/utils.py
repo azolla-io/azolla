@@ -175,7 +175,7 @@ class OrchestratorManager:
         
         # Set up environment
         self.env = {
-            "DATABASE_URL": "postgres://postgres:postgres@localhost:5432/azolla_test",
+            "AZOLLA__DATABASE__URL": "postgres://postgres:postgres@localhost:5432/azolla_test",
             "RUST_LOG": "info",
             "AZOLLA_CLUSTER_BIND": f"0.0.0.0:{self.port}"
         }
