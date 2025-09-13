@@ -173,6 +173,10 @@ source = ["src"]
 branch = true
 parallel = true
 concurrency = ["thread"]
+omit = [
+    "src/azolla/_grpc/*",
+    "src/azolla/_internal/*"
+]
 
 [tool.coverage.report]
 exclude_lines = [
