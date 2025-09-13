@@ -265,13 +265,41 @@ mod tests {
     fn test_config_env_overrides() {
         use std::env;
 
-        // Save original environment variables that might affect the test
-        let original_endpoint_env = env::var("AZOLLA_ORCHESTRATOR_ENDPOINT").ok();
-        let original_concurrency_env = env::var("AZOLLA_MAX_CONCURRENCY").ok();
+        // Helper struct to ensure environment variables are restored even on panic
+        struct EnvGuard {
+            vars: Vec<(String, Option<String>)>,
+        }
 
-        // Clear environment variables to ensure clean test state
-        env::remove_var("AZOLLA_ORCHESTRATOR_ENDPOINT");
-        env::remove_var("AZOLLA_MAX_CONCURRENCY");
+        impl EnvGuard {
+            fn new(var_names: &[&str]) -> Self {
+                let vars = var_names
+                    .iter()
+                    .map(|&name| (name.to_string(), env::var(name).ok()))
+                    .collect();
+
+                // Clear the variables
+                for &name in var_names {
+                    env::remove_var(name);
+                }
+
+                Self { vars }
+            }
+        }
+
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                // Restore original environment variables
+                for (name, original_value) in &self.vars {
+                    match original_value {
+                        Some(val) => env::set_var(name, val),
+                        None => env::remove_var(name),
+                    }
+                }
+            }
+        }
+
+        // Create guard that will restore env vars even if test panics
+        let _env_guard = EnvGuard::new(&["AZOLLA_ORCHESTRATOR_ENDPOINT", "AZOLLA_MAX_CONCURRENCY"]);
 
         let mut config = ShepherdConfig::default();
         let original_endpoint = config.orchestrator_endpoint.clone();
@@ -284,13 +312,7 @@ mod tests {
         assert_eq!(config.orchestrator_endpoint, original_endpoint);
         assert_eq!(config.max_concurrency, original_concurrency);
 
-        // Restore original environment variables
-        if let Some(val) = original_endpoint_env {
-            env::set_var("AZOLLA_ORCHESTRATOR_ENDPOINT", val);
-        }
-        if let Some(val) = original_concurrency_env {
-            env::set_var("AZOLLA_MAX_CONCURRENCY", val);
-        }
+        // Environment variables will be automatically restored when _env_guard drops
     }
 
     #[test]
