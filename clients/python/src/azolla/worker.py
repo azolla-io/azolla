@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Optional, Union
 
-import grpc  # type: ignore[import-untyped]
+import grpc
 from pydantic import BaseModel, Field
 
 from azolla._grpc import common_pb2, orchestrator_pb2, orchestrator_pb2_grpc
@@ -225,7 +225,7 @@ class Worker:
             ("grpc.http2.min_time_between_pings_ms", 5000),  # Min 5 seconds between pings
         ]
         self._channel = grpc.aio.insecure_channel(endpoint, options=options)
-        self._stub = orchestrator_pb2_grpc.ClusterServiceStub(self._channel)  # type: ignore[no-untyped-call]
+        self._stub = orchestrator_pb2_grpc.ClusterServiceStub(self._channel)
 
         try:
             # Create the bidirectional stream using the proper pattern
@@ -313,6 +313,8 @@ class Worker:
 
         # Create the stream call with the request generator
         logger.info("🔗 WORKER: Creating gRPC stream call")
+        if self._stub is None:
+            raise RuntimeError("gRPC stub is not initialized")
         stream_call = self._stub.Stream(self._request_generator(request_queue))
 
         # Wait a moment for the stream to establish the connection
@@ -346,8 +348,9 @@ class Worker:
 
             # Check if any task raised an exception
             for task in done:
-                if task.exception():
-                    raise task.exception()
+                exc = task.exception()
+                if exc:
+                    raise exc
 
         finally:
             # Clean up all tasks
