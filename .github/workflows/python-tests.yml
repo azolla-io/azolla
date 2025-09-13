@@ -117,10 +117,10 @@ jobs:
         cache-all-crates: true
         cache-on-failure: true
     
-    - name: Set up Python 3.11
+    - name: Set up Python 3.9
       uses: actions/setup-python@v4
       with:
-        python-version: "3.11"
+        python-version: "3.9"
     
     - name: Cache pip dependencies
       uses: actions/cache@v4
@@ -179,10 +179,10 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Set up Python 3.11
+    - name: Set up Python 3.9
       uses: actions/setup-python@v4
       with:
-        python-version: "3.11"
+        python-version: "3.9"
     
     - name: Install security tools
       run: |
@@ -220,10 +220,10 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Set up Python 3.11
+    - name: Set up Python 3.9
       uses: actions/setup-python@v4
       with:
-        python-version: "3.11"
+        python-version: "3.9"
     
     - name: Install build tools
       run: |
