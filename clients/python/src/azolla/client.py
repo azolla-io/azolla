@@ -250,7 +250,10 @@ class Client:
             if endpoint.startswith("http://"):
                 endpoint = endpoint[7:]
             elif endpoint.startswith("https://"):
-                endpoint = endpoint[8:]
+                # TLS not yet supported for Python client gRPC
+                raise ValueError(
+                    "HTTPS endpoints are not supported yet. Use plaintext host:port or http://"
+                )
 
             self._channel = grpc.aio.insecure_channel(
                 endpoint,

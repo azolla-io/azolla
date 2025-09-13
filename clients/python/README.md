@@ -299,23 +299,19 @@ pytest tests/integration/
 
 ### Testing Your Tasks
 
+Use standard pytest coroutines to test your task functions or Task classes directly.
+
 ```python
 import pytest
-from azolla.testing import TaskTester
 
 @pytest.mark.asyncio
 async def test_send_email_task():
-    """Test email task execution."""
-    tester = TaskTester(send_email)
-    
-    result = await tester.execute({
-        "to": "test@example.com",
-        "subject": "Test", 
-        "body": "Hello"
-    })
-    
-    assert result.success
-    assert result.value["sent_to"] == "test@example.com"
+    result = await send_email(
+        to="test@example.com",
+        subject="Test",
+        body="Hello",
+    )
+    assert result["sent_to"] == "test@example.com"
 ```
 
 ### Code Quality
@@ -399,3 +395,5 @@ Contributions welcome! Please see the [main Azolla repository](https://github.co
 ## License
 
 Apache License 2.0 - see [LICENSE](LICENSE) for details.
+
+Note on generated code: The Python package checks in generated gRPC stubs under `src/azolla/_grpc/` to simplify installation for end users. Regenerate them with `clients/python/scripts/generate_proto.py` when protocol files change.

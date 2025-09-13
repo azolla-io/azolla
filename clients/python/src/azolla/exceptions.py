@@ -76,3 +76,16 @@ class WorkerError(AzollaError):
     """Raised when worker encounters an error."""
 
     pass
+
+
+# Preferred aliases to avoid confusion with Python built-ins in user code.
+class AzollaConnectionError(ConnectionError):
+    """Alias for ConnectionError to avoid shadowing built-in names."""
+
+    pass
+
+
+class TaskTimeoutError(TimeoutError):
+    """Alias for TimeoutError to avoid shadowing built-in names."""
+
+    pass

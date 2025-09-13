@@ -9,6 +9,7 @@ from typing import Any
 
 from azolla import Worker
 from azolla._internal.utils import get_logger, setup_logging
+from azolla.task import Task
 
 logger = get_logger(__name__)
 
@@ -62,13 +63,12 @@ async def worker_main() -> None:
 
     # Import task modules if specified
     if args.task_modules:
-        for module_name in args.task_modules:
-            try:
-                importlib.import_module(module_name)
-                logger.info(f"Imported task module: {module_name}")
-            except ImportError as e:
-                logger.error(f"Failed to import task module {module_name}: {e}")
-                sys.exit(1)
+        try:
+            count = discover_and_register_tasks(worker, args.task_modules)
+            logger.info(f"Imported and registered {count} tasks from modules: {args.task_modules}")
+        except ImportError as e:
+            logger.error(f"Failed to import task modules {args.task_modules}: {e}")
+            sys.exit(1)
 
     if worker.task_count() == 0:
         logger.warning("No tasks registered! Worker may not process any work.")
@@ -102,3 +102,29 @@ async def worker_main() -> None:
 def worker_main_sync() -> None:
     """Synchronous entry point for CLI."""
     asyncio.run(worker_main())
+
+
+def discover_and_register_tasks(worker: Worker, module_names: list[str]) -> int:
+    """Discover and register tasks from given module names.
+
+    Rules:
+    - Register decorated functions that expose `__azolla_task_instance__`.
+    - Register existing Task instances found at module level.
+    - Do not auto-instantiate Task classes (explicitness, avoid side effects).
+    """
+    count = 0
+    for module_name in module_names:
+        module = importlib.import_module(module_name)
+        for name in dir(module):
+            obj = getattr(module, name)
+            try:
+                if hasattr(obj, "__azolla_task_instance__"):
+                    worker.register_task(obj)
+                    count += 1
+                elif isinstance(obj, Task):
+                    worker.register_task(obj)
+                    count += 1
+            except Exception:
+                # Ignore non-task attributes
+                continue
+    return count

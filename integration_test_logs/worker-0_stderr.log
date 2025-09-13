@@ -1,0 +1,43 @@
+2025-09-13 09:10:02,702 - __main__ - INFO - Starting worker service: localhost:52710, domain: default
+2025-09-13 09:10:02,702 - __main__ - INFO - 🔧 TEST_WORKER: Starting to register 5 tasks
+2025-09-13 09:10:02,702 - __main__ - INFO - 🔧 TEST_WORKER: Registering task 'echo' (EchoTask)
+2025-09-13 09:10:02,702 - azolla.worker - INFO - 📝 REGISTRY: Registering task: <__main__.EchoTask object at 0x104c37380>
+2025-09-13 09:10:02,702 - azolla.worker - INFO - ✅ REGISTRY: Registered task instance 'echo' -> EchoTask
+2025-09-13 09:10:02,702 - azolla.worker - INFO - 📝 REGISTRY: Current registered tasks: ['echo']
+2025-09-13 09:10:02,702 - __main__ - INFO - ✅ TEST_WORKER: Successfully registered task: echo
+2025-09-13 09:10:02,702 - __main__ - INFO - 🔧 TEST_WORKER: Registering task 'always_fail' (AlwaysFailTask)
+2025-09-13 09:10:02,702 - azolla.worker - INFO - 📝 REGISTRY: Registering task: <__main__.AlwaysFailTask object at 0x104c374d0>
+2025-09-13 09:10:02,702 - azolla.worker - INFO - ✅ REGISTRY: Registered task instance 'always_fail' -> AlwaysFailTask
+2025-09-13 09:10:02,702 - azolla.worker - INFO - 📝 REGISTRY: Current registered tasks: ['echo', 'always_fail']
+2025-09-13 09:10:02,702 - __main__ - INFO - ✅ TEST_WORKER: Successfully registered task: always_fail
+2025-09-13 09:10:02,702 - __main__ - INFO - 🔧 TEST_WORKER: Registering task 'flaky' (FlakyTask)
+2025-09-13 09:10:02,702 - azolla.worker - INFO - 📝 REGISTRY: Registering task: <__main__.FlakyTask object at 0x104c37620>
+2025-09-13 09:10:02,702 - azolla.worker - INFO - ✅ REGISTRY: Registered task instance 'flaky' -> FlakyTask
+2025-09-13 09:10:02,702 - azolla.worker - INFO - 📝 REGISTRY: Current registered tasks: ['echo', 'always_fail', 'flaky']
+2025-09-13 09:10:02,702 - __main__ - INFO - ✅ TEST_WORKER: Successfully registered task: flaky
+2025-09-13 09:10:02,702 - __main__ - INFO - 🔧 TEST_WORKER: Registering task 'math_add' (MathAddTask)
+2025-09-13 09:10:02,702 - azolla.worker - INFO - 📝 REGISTRY: Registering task: <__main__.MathAddTask object at 0x104c37770>
+2025-09-13 09:10:02,702 - azolla.worker - INFO - ✅ REGISTRY: Registered task instance 'math_add' -> MathAddTask
+2025-09-13 09:10:02,702 - azolla.worker - INFO - 📝 REGISTRY: Current registered tasks: ['echo', 'always_fail', 'flaky', 'math_add']
+2025-09-13 09:10:02,702 - __main__ - INFO - ✅ TEST_WORKER: Successfully registered task: math_add
+2025-09-13 09:10:02,702 - __main__ - INFO - 🔧 TEST_WORKER: Registering task 'count_args' (CountArgsTask)
+2025-09-13 09:10:02,702 - azolla.worker - INFO - 📝 REGISTRY: Registering task: <__main__.CountArgsTask object at 0x104c378c0>
+2025-09-13 09:10:02,702 - azolla.worker - INFO - ✅ REGISTRY: Registered task instance 'count_args' -> CountArgsTask
+2025-09-13 09:10:02,702 - azolla.worker - INFO - 📝 REGISTRY: Current registered tasks: ['echo', 'always_fail', 'flaky', 'math_add', 'count_args']
+2025-09-13 09:10:02,702 - __main__ - INFO - ✅ TEST_WORKER: Successfully registered task: count_args
+2025-09-13 09:10:02,702 - __main__ - INFO - 🎉 TEST_WORKER: Successfully registered 5 tasks: ['echo', 'always_fail', 'flaky', 'math_add', 'count_args']
+2025-09-13 09:10:02,702 - __main__ - INFO - Starting worker service connecting to localhost:52710
+2025-09-13 09:10:02,702 - azolla.worker - INFO - Worker starting with 5 tasks on localhost:52710 (domain: default, group: python-test-workers)
+2025-09-13 09:10:02,703 - azolla.worker - INFO - 🔗 WORKER: Starting bidirectional stream with recovery
+2025-09-13 09:10:02,703 - azolla.worker - INFO - 🔗 WORKER: Stream attempt 1/3
+2025-09-13 09:10:02,703 - azolla.worker - INFO - 🔗 WORKER: Creating gRPC stream call
+2025-09-13 09:10:02,703 - azolla.worker - INFO - 🔄 WORKER: Request generator started
+2025-09-13 09:10:02,703 - azolla.worker - INFO - 🔄 WORKER: Request generator yielding message: hello {
+  shepherd_uuid: "60dd533a-c774-4506-b8d0-dd70177416dd"
+  max_concurrency: 5
+  domain: "default"
+  shepherd_group: "python-test-workers"
+}
+
+2025-09-13 09:10:02,804 - azolla.worker - INFO - Shepherd 60dd533a-c774-4506-b8d0-dd70177416dd registered successfully
+2025-09-13 09:10:02,804 - azolla.worker - INFO - 🔄 WORKER: Starting response reader with timeout detection

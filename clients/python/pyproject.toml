@@ -53,6 +53,7 @@ dev = [
     "ruff>=0.8.0",
     "black>=24.0.0",
     "pre-commit>=4.0.0",
+    "grpcio-tools>=1.50.0",
 ]
 # Documentation
 docs = [
