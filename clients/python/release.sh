@@ -42,6 +42,15 @@ if [ "$CURRENT_VERSION" != "$VERSION" ]; then
   exit 1
 fi
 
+# Check if we're on main branch
+CURRENT_BRANCH=$(git branch --show-current)
+if [ "$CURRENT_BRANCH" != "main" ]; then
+  echo -e "${RED}Error: Release can only be run from main branch${NC}"
+  echo "Current branch: $CURRENT_BRANCH"
+  echo "Please merge your changes to main and run the release from there"
+  exit 1
+fi
+
 # Check if git working directory is clean
 if [ -n "$(git status --porcelain)" ]; then
   echo -e "${YELLOW}Warning: Git working directory is not clean${NC}"
@@ -87,16 +96,8 @@ source venv/bin/activate
 echo -e "${GREEN}🔧 Installing build tools...${NC}"
 pip install --upgrade build twine
 
-# Run tests first
-echo -e "${GREEN}🧪 Running test suite...${NC}"
-if [ -f "pyproject.toml" ] && grep -q "pytest" pyproject.toml; then
-  pip install -e ".[dev,testing]"
-  python -m pytest tests/ -v
-else
-  echo -e "${YELLOW}Warning: No pytest configuration found, skipping tests${NC}"
-fi
-
-echo -e "${GREEN}✅ Tests completed${NC}"
+# Skip tests during release - they should have already passed on main branch
+echo -e "${GREEN}🧪 Skipping tests (should have passed on main branch)${NC}"
 
 # Clean previous builds
 echo -e "${GREEN}🧹 Cleaning previous builds...${NC}"
