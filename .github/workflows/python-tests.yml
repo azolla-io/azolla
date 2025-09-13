@@ -6,6 +6,7 @@ permissions:
 
 on:
   push:
+    branches: [ "main" ]
     paths:
       - "clients/python/**"
       - ".github/workflows/python-tests.yml"
