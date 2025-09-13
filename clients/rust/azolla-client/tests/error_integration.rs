@@ -113,16 +113,13 @@ async fn test_boxed_task_error_propagation() {
 
     // Should get error result
     assert!(result.is_err());
-    match result.unwrap_err() {
-        TaskError {
-            error_type,
-            message,
-            ..
-        } => {
-            assert_eq!(error_type, "ExecutionError");
-            assert!(message.contains("Intentional test failure"));
-        }
-    }
+    let TaskError {
+        error_type,
+        message,
+        ..
+    } = result.unwrap_err();
+    assert_eq!(error_type, "ExecutionError");
+    assert!(message.contains("Intentional test failure"));
 }
 
 /// Test different error types propagate with correct metadata through BoxedTask
@@ -138,14 +135,11 @@ async fn test_error_type_propagation() {
         let result = task_impl.execute_json(args).await;
 
         assert!(result.is_err());
-        match result.unwrap_err() {
-            TaskError {
-                error_type, code, ..
-            } => {
-                assert_eq!(error_type, expected_type);
-                assert_eq!(code, Some(expected_code.to_string()));
-            }
-        }
+        let TaskError {
+            error_type, code, ..
+        } = result.unwrap_err();
+        assert_eq!(error_type, expected_type);
+        assert_eq!(code, Some(expected_code.to_string()));
     }
 }
 
@@ -173,16 +167,13 @@ async fn test_validation_error_propagation() {
         let result = validation_task.execute_json(args).await;
 
         assert!(result.is_err());
-        match result.unwrap_err() {
-            TaskError {
-                error_type,
-                message,
-                ..
-            } => {
-                assert_eq!(error_type, "InvalidArguments");
-                assert!(message.contains(expected_message));
-            }
-        }
+        let TaskError {
+            error_type,
+            message,
+            ..
+        } = result.unwrap_err();
+        assert_eq!(error_type, "InvalidArguments");
+        assert!(message.contains(expected_message));
     }
 }
 
@@ -417,16 +408,13 @@ async fn test_timeout_error_handling() {
     let result = boxed_task.execute_json(short_timeout_args).await;
     assert!(result.is_err());
 
-    match result.unwrap_err() {
-        TaskError {
-            error_type,
-            message,
-            ..
-        } => {
-            assert_eq!(error_type, "ExecutionError");
-            assert!(message.contains("timed out"));
-        }
-    }
+    let TaskError {
+        error_type,
+        message,
+        ..
+    } = result.unwrap_err();
+    assert_eq!(error_type, "ExecutionError");
+    assert!(message.contains("timed out"));
 }
 
 /// Test error recovery patterns

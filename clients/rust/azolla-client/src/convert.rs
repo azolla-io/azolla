@@ -173,14 +173,8 @@ mod tests {
         assert!(<String as FromJsonValue>::try_from(json!(true)).is_err());
 
         // Test bool
-        assert_eq!(
-            <bool as FromJsonValue>::try_from(json!(true)).unwrap(),
-            true
-        );
-        assert_eq!(
-            <bool as FromJsonValue>::try_from(json!(false)).unwrap(),
-            false
-        );
+        assert!(<bool as FromJsonValue>::try_from(json!(true)).unwrap());
+        assert!(!<bool as FromJsonValue>::try_from(json!(false)).unwrap());
         assert!(<bool as FromJsonValue>::try_from(json!("true")).is_err());
         assert!(<bool as FromJsonValue>::try_from(json!(1)).is_err());
     }

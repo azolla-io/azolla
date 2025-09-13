@@ -25,6 +25,7 @@ pub trait Task: Send + Sync {
     fn execute(&self, args: Self::Args) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>>;
 
     /// Parse JSON arguments into typed arguments (can be overridden for custom parsing)
+    #[allow(clippy::result_large_err)]
     fn parse_args(json_args: Vec<Value>) -> Result<Self::Args, TaskError> {
         match json_args.len() {
             0 => {
@@ -272,7 +273,7 @@ mod tests {
         let parsed: TupleArgs = TupleTask::parse_args(args).unwrap();
         assert_eq!(parsed.0, "hello");
         assert_eq!(parsed.1, 123);
-        assert_eq!(parsed.2, true);
+        assert!(parsed.2);
     }
 
     #[test]
@@ -415,32 +416,26 @@ mod tests {
         let result = boxed.execute_json(invalid_args).await;
         assert!(result.is_err());
 
-        match result.unwrap_err() {
-            TaskError {
-                error_type,
-                message,
-                ..
-            } => {
-                assert_eq!(error_type, "InvalidArguments");
-                assert!(message.contains("Count cannot be negative"));
-            }
-        }
+        let TaskError {
+            error_type,
+            message,
+            ..
+        } = result.unwrap_err();
+        assert_eq!(error_type, "InvalidArguments");
+        assert!(message.contains("Count cannot be negative"));
 
         // Test execution error
         let execution_error_args = vec![json!({"name": "", "count": 5})];
         let result = boxed.execute_json(execution_error_args).await;
         assert!(result.is_err());
 
-        match result.unwrap_err() {
-            TaskError {
-                error_type,
-                message,
-                ..
-            } => {
-                assert_eq!(error_type, "ExecutionError");
-                assert!(message.contains("Name cannot be empty"));
-            }
-        }
+        let TaskError {
+            error_type,
+            message,
+            ..
+        } = result.unwrap_err();
+        assert_eq!(error_type, "ExecutionError");
+        assert!(message.contains("Name cannot be empty"));
     }
 
     #[tokio::test]

@@ -1,3 +1,10 @@
+[workspace]
+members = [
+    ".",
+    "clients/rust/azolla-client",
+    "clients/rust/azolla-macros"
+]
+
 [package]
 name = "azolla"
 version = "0.1.0"

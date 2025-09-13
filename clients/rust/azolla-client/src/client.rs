@@ -404,9 +404,8 @@ mod tests {
         let shepherd_group = "high-priority-workers";
         assert_eq!(shepherd_group, "high-priority-workers");
 
-        let optional_group: Option<String> = Some("gpu-workers".to_string());
-        assert!(optional_group.is_some());
-        assert_eq!(optional_group.unwrap(), "gpu-workers");
+        let optional_group = "gpu-workers".to_string();
+        assert_eq!(optional_group, "gpu-workers");
     }
 
     /// Test JSON argument validation

@@ -361,10 +361,12 @@ mod tests {
     /// Test error propagation in Result chains
     #[test]
     fn test_error_propagation() {
+        #[allow(clippy::result_large_err)]
         fn inner_function() -> Result<String, TaskError> {
             Err(TaskError::invalid_args("Invalid input"))
         }
 
+        #[allow(clippy::result_large_err)]
         fn outer_function() -> Result<String, AzollaError> {
             let result = inner_function()?;
             Ok(result)
