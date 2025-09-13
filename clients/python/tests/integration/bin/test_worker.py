@@ -50,10 +50,15 @@ class AlwaysFailTask(Task):
         return "always_fail"
 
     async def execute(self, args: Any, context=None) -> Any:
-        logger.info(f"Always fail task executing with args: {args}")
-        raise TaskError(
+        logger.info(f"🔥 ALWAYS_FAIL: Task starting execution with args: {args}")
+        logger.info(f"🔥 ALWAYS_FAIL: About to raise TaskError...")
+        
+        error = TaskError(
             "Task designed to always fail", error_code="ALWAYS_FAIL", error_type="TestError"
         )
+        logger.info(f"🔥 ALWAYS_FAIL: Created TaskError: {error}")
+        logger.info(f"🔥 ALWAYS_FAIL: Raising TaskError now!")
+        raise error
 
 
 class FlakyTask(Task):
@@ -208,12 +213,15 @@ async def run_worker_service(orchestrator_endpoint: str, domain: str) -> None:
 
     # Register tasks with error handling
     try:
+        logger.info(f"🔧 TEST_WORKER: Starting to register {len(tasks)} tasks")
         for task in tasks:
+            task_name = task.name()
+            logger.info(f"🔧 TEST_WORKER: Registering task '{task_name}' ({task.__class__.__name__})")
             worker.register_task(task)
-            logger.debug(f"Registered task: {task.name()}")
+            logger.info(f"✅ TEST_WORKER: Successfully registered task: {task_name}")
 
         logger.info(
-            f"Successfully registered {len(tasks)} tasks: {[task.name() for task in tasks]}"
+            f"🎉 TEST_WORKER: Successfully registered {len(tasks)} tasks: {[task.name() for task in tasks]}"
         )
 
     except Exception as e:

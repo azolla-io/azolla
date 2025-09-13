@@ -117,17 +117,28 @@ class TestE2EOrchestrator:
     async def test_task_fails_after_exhausting_attempts(self):
         """Test that always_fail_task fails after exhausting all retry attempts."""
         async with integration_test_environment(PROJECT_ROOT) as (orchestrator, worker_manager):
+            logger.info("🧪 TEST: Integration test environment started")
+            logger.info(f"🧪 TEST: Orchestrator endpoint: {orchestrator.endpoint}")
+            
             # Start a worker and wait for it to be ready
-            _ = worker_manager.start_worker(
+            logger.info("🧪 TEST: Starting Python test worker...")
+            worker_process = worker_manager.start_worker(
                 domain="default", wait_for_ready=True, ready_timeout=30.0
             )
+            logger.info(f"🧪 TEST: Worker started with PID: {worker_process.pid if hasattr(worker_process, 'pid') else 'unknown'}")
 
             # Create client with retry policy using documented API
+            logger.info("🧪 TEST: Creating client...")
             client = Client(orchestrator_endpoint=orchestrator.endpoint)
 
             # Submit always_fail task with retry policy
+            logger.info("🧪 TEST: Submitting always_fail task...")
             submission = client.submit_task("always_fail", {"reason": "integration_test"})
+            logger.info("🧪 TEST: Task submission object created")
+            logger.info("🧪 TEST: Setting shepherd group to 'python-test-workers'")
             submission.shepherd_group("python-test-workers")  # Match worker group
+            
+            logger.info("🧪 TEST: Configuring retry policy (max_attempts=3)")
             submission.with_retry(
                 RetryPolicy(
                     max_attempts=3,
@@ -136,10 +147,14 @@ class TestE2EOrchestrator:
                 )
             )
 
+            logger.info("🧪 TEST: Submitting task to orchestrator...")
             handle = await submission.submit()
+            logger.info(f"🧪 TEST: Task submitted, got handle with task_id: {handle.task_id}")
 
             # Wait for result
+            logger.info("🧪 TEST: Waiting for task result (timeout=15s)...")
             result = await handle.wait(timeout=15.0)
+            logger.info(f"🧪 TEST: Got task result!")
 
             # Debug: Log the actual result to understand what's happening
             logger.info(f"Task result: {result}")

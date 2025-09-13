@@ -40,17 +40,24 @@ class TaskRegistry:
 
     def register(self, task: Union[Task, Any]) -> None:
         """Register a task implementation."""
+        logger.info(f"📝 REGISTRY: Registering task: {task}")
+        
         if hasattr(task, "__azolla_task_instance__"):
             # Decorated function
             task_instance = task.__azolla_task_instance__
             name = task_instance.name()
             self._tasks[name] = task_instance
+            logger.info(f"✅ REGISTRY: Registered decorated task '{name}' -> {task_instance.__class__.__name__}")
         elif isinstance(task, Task):
             # Task instance
             name = task.name()
             self._tasks[name] = task
+            logger.info(f"✅ REGISTRY: Registered task instance '{name}' -> {task.__class__.__name__}")
         else:
+            logger.error(f"❌ REGISTRY: Invalid task type: {type(task)}")
             raise ValueError(f"Invalid task type: {type(task)}")
+        
+        logger.info(f"📝 REGISTRY: Current registered tasks: {list(self._tasks.keys())}")
 
     def get(self, name: str) -> Optional[Task]:
         """Get task by name."""
@@ -285,11 +292,15 @@ class Worker:
         task_id = proto_task.task_id
         start_time = time.time()
 
+        logger.info(f"🔍 WORKER: Executing task '{proto_task.name}' (ID: {task_id})")
+        logger.info(f"🔍 WORKER: Available tasks: {list(self._task_registry.names())}")
+
         try:
             # Find task implementation
             task_impl = self._task_registry.get(proto_task.name)
             if task_impl is None:
-                logger.error(f"No implementation found for task: {proto_task.name}")
+                logger.error(f"❌ WORKER: No implementation found for task: {proto_task.name}")
+                logger.error(f"❌ WORKER: Available tasks are: {list(self._task_registry.names())}")
                 return common_pb2.TaskResult(
                     task_id=task_id,
                     error=common_pb2.ErrorResult(
@@ -299,14 +310,18 @@ class Worker:
                     ),
                 )
 
+            logger.info(f"✅ WORKER: Found task implementation: {task_impl.__class__.__name__}")
+
             # Parse arguments
             try:
                 if proto_task.args:
                     args = json.loads(proto_task.args)
+                    logger.info(f"🔍 WORKER: Parsed args: {args}")
                 else:
                     args = []
+                    logger.info(f"🔍 WORKER: No args provided, using empty list")
             except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse args for task {task_id}: {e}")
+                logger.error(f"❌ WORKER: Failed to parse args for task {task_id}: {e}")
                 return common_pb2.TaskResult(
                     task_id=task_id,
                     error=common_pb2.ErrorResult(
@@ -324,13 +339,16 @@ class Worker:
             )
 
             # Execute task
+            logger.info(f"🚀 WORKER: About to execute task with args: {args}")
             result = await task_impl._execute_with_casting(args, context)
             execution_time = time.time() - start_time
 
-            logger.info(f"Task {task_id} completed in {execution_time:.3f}s")
+            logger.info(f"✅ WORKER: Task {task_id} completed successfully in {execution_time:.3f}s")
+            logger.info(f"✅ WORKER: Task result: {result}")
 
             # Serialize result
             result_json = json.dumps(result) if result is not None else "null"
+            logger.info(f"✅ WORKER: Serialized result: {result_json}")
 
             return common_pb2.TaskResult(
                 task_id=task_id,
@@ -341,9 +359,10 @@ class Worker:
 
         except TaskError as e:
             execution_time = time.time() - start_time
-            logger.error(f"Task {task_id} failed after {execution_time:.3f}s: {e}")
+            logger.error(f"🔥 WORKER: Task {task_id} failed after {execution_time:.3f}s with TaskError: {e}")
+            logger.error(f"🔥 WORKER: TaskError details - type: {e.error_type}, code: {e.error_code}, message: {e.message}")
 
-            return common_pb2.TaskResult(
+            error_result = common_pb2.TaskResult(
                 task_id=task_id,
                 error=common_pb2.ErrorResult(
                     type=e.error_type,
@@ -351,6 +370,8 @@ class Worker:
                     code=e.error_code,
                 ),
             )
+            logger.error(f"🔥 WORKER: Returning error result: {error_result}")
+            return error_result
 
         except Exception as e:
             execution_time = time.time() - start_time
