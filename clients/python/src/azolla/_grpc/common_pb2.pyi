@@ -17,7 +17,14 @@ class AnyValue(_message.Message):
     double_value: float
     bool_value: bool
     json_value: str
-    def __init__(self, string_value: _Optional[str] = ..., int_value: _Optional[int] = ..., double_value: _Optional[float] = ..., bool_value: bool = ..., json_value: _Optional[str] = ...) -> None: ...
+    def __init__(
+        self,
+        string_value: _Optional[str] = ...,
+        int_value: _Optional[int] = ...,
+        double_value: _Optional[float] = ...,
+        bool_value: bool = ...,
+        json_value: _Optional[str] = ...,
+    ) -> None: ...
 
 class StructValue(_message.Message):
     __slots__ = ("json_data",)
@@ -43,7 +50,14 @@ class ErrorResult(_message.Message):
     code: str
     stacktrace: str
     data: StructValue
-    def __init__(self, type: _Optional[str] = ..., message: _Optional[str] = ..., code: _Optional[str] = ..., stacktrace: _Optional[str] = ..., data: _Optional[_Union[StructValue, _Mapping]] = ...) -> None: ...
+    def __init__(
+        self,
+        type: _Optional[str] = ...,
+        message: _Optional[str] = ...,
+        code: _Optional[str] = ...,
+        stacktrace: _Optional[str] = ...,
+        data: _Optional[_Union[StructValue, _Mapping]] = ...,
+    ) -> None: ...
 
 class TaskResult(_message.Message):
     __slots__ = ("task_id", "success", "error")
@@ -53,7 +67,12 @@ class TaskResult(_message.Message):
     task_id: str
     success: SuccessResult
     error: ErrorResult
-    def __init__(self, task_id: _Optional[str] = ..., success: _Optional[_Union[SuccessResult, _Mapping]] = ..., error: _Optional[_Union[ErrorResult, _Mapping]] = ...) -> None: ...
+    def __init__(
+        self,
+        task_id: _Optional[str] = ...,
+        success: _Optional[_Union[SuccessResult, _Mapping]] = ...,
+        error: _Optional[_Union[ErrorResult, _Mapping]] = ...,
+    ) -> None: ...
 
 class Task(_message.Message):
     __slots__ = ("task_id", "name", "args", "kwargs", "memory_limit", "cpu_limit")
@@ -69,4 +88,12 @@ class Task(_message.Message):
     kwargs: str
     memory_limit: int
     cpu_limit: int
-    def __init__(self, task_id: _Optional[str] = ..., name: _Optional[str] = ..., args: _Optional[str] = ..., kwargs: _Optional[str] = ..., memory_limit: _Optional[int] = ..., cpu_limit: _Optional[int] = ...) -> None: ...
+    def __init__(
+        self,
+        task_id: _Optional[str] = ...,
+        name: _Optional[str] = ...,
+        args: _Optional[str] = ...,
+        kwargs: _Optional[str] = ...,
+        memory_limit: _Optional[int] = ...,
+        cpu_limit: _Optional[int] = ...,
+    ) -> None: ...

@@ -1,21 +1,26 @@
 """Type definitions for Azolla client library."""
+
 from enum import Enum
 from typing import Generic, Optional, TypeVar
 
 from pydantic import BaseModel
 
-T = TypeVar('T')
+T = TypeVar("T")
+
 
 class TaskStatus(str, Enum):
     """Task execution status."""
+
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
 
+
 class TaskResult(BaseModel, Generic[T]):
     """Represents the result of task execution."""
+
     task_id: str
     status: TaskStatus
     value: Optional[T] = None
@@ -36,8 +41,10 @@ class TaskResult(BaseModel, Generic[T]):
         """Check if task failed."""
         return self.status == TaskStatus.FAILED
 
+
 class TaskContext(BaseModel):
     """Task execution context."""
+
     task_id: str
     attempt_number: int
     max_attempts: Optional[int] = None

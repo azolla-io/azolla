@@ -21,8 +21,6 @@ from azolla.types import TaskContext, TaskResult, TaskStatus
 from azolla.worker import Worker, WorkerConfig
 
 __all__ = [
-    "__version__",
-    "__version_info__",
     "AzollaError",
     "Client",
     "ClientConfig",
@@ -44,5 +42,7 @@ __all__ = [
     "Worker",
     "WorkerConfig",
     "WorkerError",
+    "__version__",
+    "__version_info__",
     "azolla_task",
 ]

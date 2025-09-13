@@ -1,11 +1,13 @@
 """Shared test fixtures and configuration."""
-import pytest
 import asyncio
-from typing import AsyncGenerator, Dict, Any
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-from azolla import Client, Worker, ClientConfig, WorkerConfig
+import pytest
+
+from azolla import Client, ClientConfig, WorkerConfig
 from azolla._grpc import orchestrator_pb2
+
 
 @pytest.fixture
 def event_loop():
@@ -18,18 +20,17 @@ def event_loop():
 async def mock_grpc_stub():
     """Provide a mock gRPC stub for testing."""
     stub = AsyncMock()
-    
     # Mock successful task creation
     stub.CreateTask.return_value = orchestrator_pb2.CreateTaskResponse(
         task_id="test-task-123"
     )
-    
+
     # Mock task completion
     stub.WaitForTask.return_value = orchestrator_pb2.WaitForTaskResponse(
         status="completed",
         result='{"status": "success", "message": "Task completed"}'
     )
-    
+
     return stub
 
 @pytest.fixture
@@ -37,11 +38,11 @@ async def mock_client(mock_grpc_stub) -> Client:
     """Provide a test client with mocked gRPC stub."""
     config = ClientConfig(endpoint="localhost:52710")
     client = Client(config)
-    
+
     # Replace the stub with our mock
     client._stub = mock_grpc_stub
     client._channel = MagicMock()
-    
+
     return client
 
 @pytest.fixture
@@ -56,7 +57,7 @@ def worker_config() -> WorkerConfig:
     )
 
 @pytest.fixture
-def sample_task_args() -> Dict[str, Any]:
+def sample_task_args() -> dict[str, Any]:
     """Provide sample task arguments for testing."""
     return {
         "name": "test",

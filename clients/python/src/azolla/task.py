@@ -1,4 +1,5 @@
 """Task base class and decorator implementation."""
+
 import functools
 import inspect
 from abc import ABC, abstractmethod
@@ -16,7 +17,7 @@ class Task(ABC):
 
     def __init_subclass__(cls) -> None:
         """set up automatic Args type detection."""
-        if hasattr(cls, 'Args'):
+        if hasattr(cls, "Args"):
             cls._args_type = cls.Args
         super().__init_subclass__()
 
@@ -26,12 +27,10 @@ class Task(ABC):
         pass
 
     async def _execute_with_casting(
-        self,
-        raw_args: Union[dict[str, Any], list[Any]],
-        context: Optional[TaskContext] = None
+        self, raw_args: Union[dict[str, Any], list[Any]], context: Optional[TaskContext] = None
     ) -> Any:
         """Internal method that handles automatic casting."""
-        if hasattr(self, '_args_type'):
+        if hasattr(self, "_args_type"):
             try:
                 typed_args = self.parse_args(raw_args)
             except Exception as e:
@@ -44,7 +43,7 @@ class Task(ABC):
     @classmethod
     def parse_args(cls, json_args: Union[list[Any], dict[str, Any]]) -> BaseModel:
         """Parse JSON arguments into typed arguments."""
-        if not hasattr(cls, '_args_type'):
+        if not hasattr(cls, "_args_type"):
             raise ValidationError("Task has no Args type defined")
 
         try:
@@ -60,14 +59,15 @@ class Task(ABC):
                 # dict - treat as keyword arguments
                 return cls._args_type.model_validate(json_args)
         except PydanticValidationError as e:
-            raise ValidationError(f"Argument validation failed: {e}")
+            raise ValidationError(f"Argument validation failed: {e}") from e
 
     def name(self) -> str:
         """Task name for registration."""
         class_name = self.__class__.__name__
-        if class_name.endswith('Task'):
+        if class_name.endswith("Task"):
             return class_name[:-4].lower()
         return class_name.lower()
+
 
 def azolla_task(func):
     """Decorator that converts async functions into Task classes."""
@@ -103,11 +103,7 @@ def azolla_task(func):
         Args = args_model
         _original_func = staticmethod(original_func)  # Store as staticmethod to avoid self issues
 
-        async def execute(
-            self,
-            args: args_model,
-            context: Optional[TaskContext] = None
-        ) -> Any:
+        async def execute(self, args: args_model, context: Optional[TaskContext] = None) -> Any:
             # Convert args back to function parameters
             kwargs = args.model_dump()
             return await self._original_func(**kwargs)

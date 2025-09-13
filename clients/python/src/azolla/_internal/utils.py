@@ -1,4 +1,5 @@
 """Internal utility functions."""
+
 import logging
 
 
@@ -9,6 +10,7 @@ def setup_logging(level: str = "INFO") -> None:
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
 
 def get_logger(name: str) -> logging.Logger:
     """Get a logger with the given name."""

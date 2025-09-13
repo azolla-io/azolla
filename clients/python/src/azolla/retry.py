@@ -1,4 +1,5 @@
 """Retry policy implementation for Azolla tasks."""
+
 import secrets
 from abc import ABC, abstractmethod
 from typing import Optional, Union
@@ -14,8 +15,10 @@ class BackoffStrategy(ABC):
         """Get delay in seconds for the given attempt number."""
         pass
 
+
 class ExponentialBackoff(BackoffStrategy, BaseModel):
     """Exponential backoff with jitter."""
+
     initial: float = Field(default=1.0, gt=0)
     multiplier: float = Field(default=2.0, gt=1.0)
     max_delay: float = Field(default=300.0, gt=0)
@@ -33,8 +36,10 @@ class ExponentialBackoff(BackoffStrategy, BaseModel):
 
         return max(0, delay)
 
+
 class LinearBackoff(BackoffStrategy, BaseModel):
     """Linear backoff strategy."""
+
     initial: float = Field(default=1.0, gt=0)
     increment: float = Field(default=1.0, gt=0)
     max_delay: float = Field(default=300.0, gt=0)
@@ -44,16 +49,20 @@ class LinearBackoff(BackoffStrategy, BaseModel):
         delay = self.initial + (self.increment * (attempt - 1))
         return min(delay, self.max_delay)
 
+
 class FixedBackoff(BackoffStrategy, BaseModel):
     """Fixed delay backoff strategy."""
+
     delay: float = Field(default=1.0, gt=0)
 
     def get_delay(self, attempt: int) -> float:
         """Return fixed delay."""
         return self.delay
 
+
 class RetryPolicy(BaseModel):
     """Configuration for task retry behavior."""
+
     max_attempts: int = Field(default=3, ge=1)
     backoff: BackoffStrategy = Field(default_factory=ExponentialBackoff)
     retry_on: list[Union[str, type[Exception]]] = Field(default_factory=list)
@@ -61,7 +70,7 @@ class RetryPolicy(BaseModel):
 
     model_config = {"arbitrary_types_allowed": True}
 
-    @field_serializer('retry_on')
+    @field_serializer("retry_on")
     def serialize_retry_on(self, value: list[Union[str, type[Exception]]]) -> list[str]:
         """Serialize retry_on list, converting class types to their names."""
         result = []
@@ -75,10 +84,7 @@ class RetryPolicy(BaseModel):
         return result
 
     def should_retry(
-        self,
-        attempt: int,
-        error: Exception,
-        error_code: Optional[str] = None
+        self, attempt: int, error: Exception, error_code: Optional[str] = None
     ) -> bool:
         """Determine if task should be retried."""
         # Check if we've exceeded max attempts
@@ -92,14 +98,15 @@ class RetryPolicy(BaseModel):
         # Check if error type should be retried
         if self.retry_on:
             error_matches = any(
-                (isinstance(retry_type, str) and retry_type == error.__class__.__name__) or
-                (isinstance(retry_type, type) and isinstance(error, retry_type))
+                (isinstance(retry_type, str) and retry_type == error.__class__.__name__)
+                or (isinstance(retry_type, type) and isinstance(error, retry_type))
                 for retry_type in self.retry_on
             )
             return error_matches
 
         # Default: retry on retryable task errors
         from azolla.exceptions import TaskError
+
         if isinstance(error, TaskError):
             return error.retryable
 

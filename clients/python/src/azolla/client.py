@@ -1,4 +1,5 @@
 """Client implementation for Azolla task submission."""
+
 import asyncio
 import json
 from collections.abc import Awaitable
@@ -16,15 +17,17 @@ from azolla.types import TaskResult, TaskStatus
 
 class ClientConfig(BaseModel):
     """Configuration for the Azolla client."""
+
     endpoint: str = Field(default="http://localhost:52710")
     domain: str = Field(default="default")
     timeout: float = Field(default=30.0, gt=0)
     max_message_size: int = Field(default=4 * 1024 * 1024)  # 4MB
 
+
 class TaskSubmissionBuilder:
     """Builder for task submissions with retry policies."""
 
-    def __init__(self, client: 'Client', task_name: str) -> None:
+    def __init__(self, client: "Client", task_name: str) -> None:
         self._client = client
         self._task_name = task_name
         self._args: Any = None
@@ -32,31 +35,31 @@ class TaskSubmissionBuilder:
         self._shepherd_group: Optional[str] = None
         self._flow_instance_id: Optional[str] = None
 
-    def args(self, args: Any) -> 'TaskSubmissionBuilder':
+    def args(self, args: Any) -> "TaskSubmissionBuilder":
         """set task arguments."""
         self._args = args
         return self
 
-    def retry_policy(self, policy: RetryPolicy) -> 'TaskSubmissionBuilder':
+    def retry_policy(self, policy: RetryPolicy) -> "TaskSubmissionBuilder":
         """set retry policy for this task."""
         self._retry_policy = policy
         return self
 
-    def with_retry(self, policy: RetryPolicy) -> 'TaskSubmissionBuilder':
+    def with_retry(self, policy: RetryPolicy) -> "TaskSubmissionBuilder":
         """set retry policy for this task (alias for retry_policy)."""
         return self.retry_policy(policy)
 
-    def shepherd_group(self, group: str) -> 'TaskSubmissionBuilder':
+    def shepherd_group(self, group: str) -> "TaskSubmissionBuilder":
         """set shepherd group for targeted execution."""
         self._shepherd_group = group
         return self
 
-    def flow_instance_id(self, flow_id: str) -> 'TaskSubmissionBuilder':
+    def flow_instance_id(self, flow_id: str) -> "TaskSubmissionBuilder":
         """set flow instance ID if task is part of a flow."""
         self._flow_instance_id = flow_id
         return self
 
-    async def submit(self) -> 'TaskHandle':
+    async def submit(self) -> "TaskHandle":
         """Submit the task and get a handle."""
         # Ensure connection is established
         await self._client._ensure_connection()
@@ -90,24 +93,21 @@ class TaskSubmissionBuilder:
 
             # Submit task
             response = await self._client._stub.CreateTask(
-                request,
-                timeout=self._client._config.timeout
+                request, timeout=self._client._config.timeout
             )
 
-            return TaskHandle(
-                task_id=response.task_id,
-                client=self._client
-            )
+            return TaskHandle(task_id=response.task_id, client=self._client)
 
         except grpc.RpcError as e:
             raise ConnectionError(f"Failed to submit task: {e.details()}") from e
         except (json.JSONDecodeError, TypeError) as e:
             raise SerializationError(f"Failed to serialize task arguments: {e}") from e
 
+
 class TaskHandle:
     """Handle to a submitted task."""
 
-    def __init__(self, task_id: str, client: 'Client') -> None:
+    def __init__(self, task_id: str, client: "Client") -> None:
         self.task_id = task_id
         self._client = client
 
@@ -124,7 +124,7 @@ class TaskHandle:
                     task_id=self.task_id,
                     status=TaskStatus.FAILED,
                     error="Task wait timeout exceeded",
-                    error_code="TIMEOUT"
+                    error_code="TIMEOUT",
                 )
 
             try:
@@ -141,7 +141,7 @@ class TaskHandle:
                     task_id=self.task_id,
                     status=TaskStatus.FAILED,
                     error=str(e),
-                    error_code="CLIENT_ERROR"
+                    error_code="CLIENT_ERROR",
                 )
 
     async def try_result(self) -> Optional[TaskResult[Any]]:
@@ -156,8 +156,7 @@ class TaskHandle:
             )
 
             response = await self._client._stub.WaitForTask(
-                request,
-                timeout=self._client._config.timeout
+                request, timeout=self._client._config.timeout
             )
 
             if response.status.lower() == "completed":
@@ -170,9 +169,7 @@ class TaskHandle:
                         result_value = response.result
 
                 return TaskResult(
-                    task_id=self.task_id,
-                    status=TaskStatus.COMPLETED,
-                    value=result_value
+                    task_id=self.task_id, status=TaskStatus.COMPLETED, value=result_value
                 )
 
             elif response.status.lower() == "failed":
@@ -181,7 +178,7 @@ class TaskHandle:
                     task_id=self.task_id,
                     status=TaskStatus.FAILED,
                     error=error_msg,
-                    error_code="EXECUTION_ERROR"
+                    error_code="EXECUTION_ERROR",
                 )
 
             elif response.status.lower() in ["pending", "running"]:
@@ -192,20 +189,24 @@ class TaskHandle:
                     task_id=self.task_id,
                     status=TaskStatus.FAILED,
                     error=f"Unknown task status: {response.status}",
-                    error_code="UNKNOWN_STATUS"
+                    error_code="UNKNOWN_STATUS",
                 )
 
         except grpc.RpcError as e:
             raise ConnectionError(f"Failed to get task result: {e.details()}") from e
 
+
 class Client:
     """Main client for interacting with Azolla orchestrator."""
 
-    def __init__(self, config: Optional[ClientConfig] = None,
-                 orchestrator_endpoint: Optional[str] = None,
-                 domain: Optional[str] = None,
-                 timeout: Optional[float] = None,
-                 **kwargs) -> None:
+    def __init__(
+        self,
+        config: Optional[ClientConfig] = None,
+        orchestrator_endpoint: Optional[str] = None,
+        domain: Optional[str] = None,
+        timeout: Optional[float] = None,
+        **kwargs,
+    ) -> None:
         # Support both documented API and config-based API
         if config is not None:
             self._config = config
@@ -225,7 +226,7 @@ class Client:
         self._stub: Optional[orchestrator_pb2_grpc.ClientServiceStub] = None
 
     @classmethod
-    async def connect(cls, endpoint: str, **kwargs) -> 'Client':
+    async def connect(cls, endpoint: str, **kwargs) -> "Client":
         """Connect to Azolla orchestrator with default config."""
         config = ClientConfig(endpoint=endpoint, **kwargs)
         client = cls(config)
@@ -233,7 +234,7 @@ class Client:
         return client
 
     @staticmethod
-    def builder() -> 'ClientBuilder':
+    def builder() -> "ClientBuilder":
         """Create a client builder."""
         return ClientBuilder()
 
@@ -250,29 +251,27 @@ class Client:
             self._channel = grpc.aio.insecure_channel(
                 endpoint,
                 options=[
-                    ('grpc.max_send_message_length', self._config.max_message_size),
-                    ('grpc.max_receive_message_length', self._config.max_message_size),
-                ]
+                    ("grpc.max_send_message_length", self._config.max_message_size),
+                    ("grpc.max_receive_message_length", self._config.max_message_size),
+                ],
             )
             self._stub = orchestrator_pb2_grpc.ClientServiceStub(self._channel)
 
     def submit_task(
-        self,
-        task: Union[str, Callable[..., Awaitable[Any]]],
-        args: Any = None
+        self, task: Union[str, Callable[..., Awaitable[Any]]], args: Any = None
     ) -> TaskSubmissionBuilder:
         """Submit a task for execution."""
         if isinstance(task, str):
             task_name = task
-        elif hasattr(task, '__azolla_task_instance__'):
+        elif hasattr(task, "__azolla_task_instance__"):
             # Decorated function
             task_name = task.__azolla_task_instance__.name()
-        elif hasattr(task, 'name'):
+        elif hasattr(task, "name"):
             # Task instance
             task_name = task.name()
         else:
             # Try to get name from function
-            task_name = getattr(task, '__name__', str(task))
+            task_name = getattr(task, "__name__", str(task))
 
         builder = TaskSubmissionBuilder(self, task_name)
         if args is not None:
@@ -286,7 +285,7 @@ class Client:
             self._channel = None
             self._stub = None
 
-    async def __aenter__(self) -> 'Client':
+    async def __aenter__(self) -> "Client":
         """Async context manager entry."""
         await self._ensure_connection()
         return self
@@ -295,28 +294,29 @@ class Client:
         """Async context manager exit."""
         await self.close()
 
+
 class ClientBuilder:
     """Builder for client configuration."""
 
     def __init__(self) -> None:
         self._config = ClientConfig()
 
-    def endpoint(self, endpoint: str) -> 'ClientBuilder':
+    def endpoint(self, endpoint: str) -> "ClientBuilder":
         """set orchestrator endpoint."""
         self._config.endpoint = endpoint
         return self
 
-    def domain(self, domain: str) -> 'ClientBuilder':
+    def domain(self, domain: str) -> "ClientBuilder":
         """set domain."""
         self._config.domain = domain
         return self
 
-    def timeout(self, timeout: float) -> 'ClientBuilder':
+    def timeout(self, timeout: float) -> "ClientBuilder":
         """set request timeout."""
         self._config.timeout = timeout
         return self
 
-    def max_message_size(self, size: int) -> 'ClientBuilder':
+    def max_message_size(self, size: int) -> "ClientBuilder":
         """set maximum gRPC message size."""
         self._config.max_message_size = size
         return self

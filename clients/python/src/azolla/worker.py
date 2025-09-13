@@ -1,4 +1,5 @@
 """Worker implementation for Azolla task execution."""
+
 import asyncio
 import json
 import logging
@@ -17,8 +18,10 @@ from azolla.types import TaskContext
 
 logger = logging.getLogger(__name__)
 
+
 class WorkerConfig(BaseModel):
     """Configuration for the Azolla worker."""
+
     orchestrator_endpoint: str = Field(default="localhost:52710")
     domain: str = Field(default="default")
     shepherd_group: str = Field(default="python-workers")
@@ -26,6 +29,7 @@ class WorkerConfig(BaseModel):
     heartbeat_interval: float = Field(default=30.0, gt=0)
     reconnect_delay: float = Field(default=1.0, gt=0)
     max_reconnect_delay: float = Field(default=60.0, gt=0)
+
 
 class TaskRegistry:
     """Registry for task implementations."""
@@ -35,7 +39,7 @@ class TaskRegistry:
 
     def register(self, task: Union[Task, Any]) -> None:
         """Register a task implementation."""
-        if hasattr(task, '__azolla_task_instance__'):
+        if hasattr(task, "__azolla_task_instance__"):
             # Decorated function
             task_instance = task.__azolla_task_instance__
             name = task_instance.name()
@@ -58,6 +62,7 @@ class TaskRegistry:
     def count(self) -> int:
         """Get number of registered tasks."""
         return len(self._tasks)
+
 
 class LoadTracker:
     """Thread-safe load tracking with RAII guard."""
@@ -83,6 +88,7 @@ class LoadTracker:
             async with self._lock:
                 self._current_load = max(0, self._current_load - 1)
 
+
 class Worker:
     """Worker for executing Azolla tasks."""
 
@@ -100,7 +106,7 @@ class Worker:
         self._stub: Optional[orchestrator_pb2_grpc.ClusterServiceStub] = None
 
     @classmethod
-    def builder() -> 'WorkerBuilder':
+    def builder() -> "WorkerBuilder":
         """Create a worker builder."""
         return WorkerBuilder()
 
@@ -154,19 +160,17 @@ class Worker:
                 logger.info(f"Reconnecting in {reconnect_delay:.2f}s...")
 
                 try:
-                    await asyncio.wait_for(
-                        self._shutdown_event.wait(),
-                        timeout=reconnect_delay
-                    )
+                    await asyncio.wait_for(self._shutdown_event.wait(), timeout=reconnect_delay)
                     break  # Shutdown requested during wait
                 except asyncio.TimeoutError:
                     pass  # Continue to reconnect
 
                 # Exponential backoff with jitter
-                jitter = 1.0 + (reconnect_delay * 0.1 * (2 * asyncio.get_event_loop().time() % 1 - 1))
+                jitter = 1.0 + (
+                    reconnect_delay * 0.1 * (2 * asyncio.get_event_loop().time() % 1 - 1)
+                )
                 reconnect_delay = min(
-                    reconnect_delay * 1.5 * jitter,
-                    self._config.max_reconnect_delay
+                    reconnect_delay * 1.5 * jitter, self._config.max_reconnect_delay
                 )
 
         self._running = False
@@ -205,9 +209,7 @@ class Worker:
             self._ready_event.set()
 
             # Start heartbeat task
-            heartbeat_task = asyncio.create_task(
-                self._heartbeat_loop(request_queue)
-            )
+            heartbeat_task = asyncio.create_task(self._heartbeat_loop(request_queue))
 
             try:
                 # Process messages
@@ -235,11 +237,7 @@ class Worker:
             except asyncio.TimeoutError:
                 continue
 
-    async def _process_messages(
-        self,
-        response_stream,
-        request_queue: asyncio.Queue
-    ) -> None:
+    async def _process_messages(self, response_stream, request_queue: asyncio.Queue) -> None:
         """Process incoming messages from orchestrator."""
         async for message in response_stream:
             if self._shutdown_event.is_set():
@@ -252,29 +250,20 @@ class Worker:
             else:
                 logger.warning("Received message with unknown type")
 
-    async def _handle_task(
-        self,
-        proto_task: common_pb2.Task,
-        request_queue: asyncio.Queue
-    ) -> None:
+    async def _handle_task(self, proto_task: common_pb2.Task, request_queue: asyncio.Queue) -> None:
         """Handle incoming task from orchestrator."""
         logger.info(f"Received task: {proto_task.name} ({proto_task.task_id})")
 
         # Send acknowledgment
-        ack_msg = orchestrator_pb2.ClientMsg(
-            ack=orchestrator_pb2.Ack(task_id=proto_task.task_id)
-        )
+        ack_msg = orchestrator_pb2.ClientMsg(ack=orchestrator_pb2.Ack(task_id=proto_task.task_id))
         await request_queue.put(ack_msg)
 
         # Execute task asynchronously
-        asyncio.create_task(
-            self._execute_task_wrapper(proto_task, request_queue)
-        )
+        # Store reference to prevent task from being garbage collected
+        asyncio.create_task(self._execute_task_wrapper(proto_task, request_queue))  # noqa: RUF006
 
     async def _execute_task_wrapper(
-        self,
-        proto_task: common_pb2.Task,
-        request_queue: asyncio.Queue
+        self, proto_task: common_pb2.Task, request_queue: asyncio.Queue
     ) -> None:
         """Wrapper for task execution with load tracking."""
         async with self._load_tracker.track_task():
@@ -300,7 +289,7 @@ class Worker:
                         type="TaskNotFound",
                         message=f"No implementation found for task: {proto_task.name}",
                         code="TASK_NOT_FOUND",
-                    )
+                    ),
                 )
 
             # Parse arguments
@@ -317,14 +306,14 @@ class Worker:
                         type="ArgumentParseError",
                         message=f"Failed to parse task arguments: {e}",
                         code="ARG_PARSE_ERROR",
-                    )
+                    ),
                 )
 
             # Create task context
             context = TaskContext(
                 task_id=task_id,
                 attempt_number=1,  # TODO: Get from retry info
-                max_attempts=None  # TODO: Get from retry policy
+                max_attempts=None,  # TODO: Get from retry policy
             )
 
             # Execute task
@@ -340,7 +329,7 @@ class Worker:
                 task_id=task_id,
                 success=common_pb2.SuccessResult(
                     result=common_pb2.AnyValue(json_value=result_json)
-                )
+                ),
             )
 
         except TaskError as e:
@@ -353,7 +342,7 @@ class Worker:
                     type=e.error_type,
                     message=e.message,
                     code=e.error_code,
-                )
+                ),
             )
 
         except Exception as e:
@@ -366,14 +355,10 @@ class Worker:
                     type="UnexpectedError",
                     message=str(e),
                     code="UNEXPECTED_ERROR",
-                )
+                ),
             )
 
-    async def _handle_ping(
-        self,
-        ping: orchestrator_pb2.Ping,
-        request_queue: asyncio.Queue
-    ) -> None:
+    async def _handle_ping(self, ping: orchestrator_pb2.Ping, request_queue: asyncio.Queue) -> None:
         """Handle ping from orchestrator."""
         # Pings are handled automatically by gRPC layer
         # Could add custom ping handling here if needed
@@ -384,8 +369,7 @@ class Worker:
         while not self._shutdown_event.is_set():
             try:
                 await asyncio.wait_for(
-                    self._shutdown_event.wait(),
-                    timeout=self._config.heartbeat_interval
+                    self._shutdown_event.wait(), timeout=self._config.heartbeat_interval
                 )
                 break  # Shutdown requested
             except asyncio.TimeoutError:
@@ -417,6 +401,7 @@ class Worker:
         """Wait for shutdown signal."""
         await self._shutdown_event.wait()
 
+
 class WorkerBuilder:
     """Builder for worker configuration."""
 
@@ -424,32 +409,32 @@ class WorkerBuilder:
         self._config = WorkerConfig()
         self._tasks: list[Union[Task, Any]] = []
 
-    def orchestrator(self, endpoint: str) -> 'WorkerBuilder':
+    def orchestrator(self, endpoint: str) -> "WorkerBuilder":
         """set orchestrator endpoint."""
         self._config.orchestrator_endpoint = endpoint
         return self
 
-    def domain(self, domain: str) -> 'WorkerBuilder':
+    def domain(self, domain: str) -> "WorkerBuilder":
         """set domain."""
         self._config.domain = domain
         return self
 
-    def shepherd_group(self, group: str) -> 'WorkerBuilder':
+    def shepherd_group(self, group: str) -> "WorkerBuilder":
         """set shepherd group."""
         self._config.shepherd_group = group
         return self
 
-    def max_concurrency(self, concurrency: int) -> 'WorkerBuilder':
+    def max_concurrency(self, concurrency: int) -> "WorkerBuilder":
         """set max concurrency."""
         self._config.max_concurrency = concurrency
         return self
 
-    def heartbeat_interval(self, interval: float) -> 'WorkerBuilder':
+    def heartbeat_interval(self, interval: float) -> "WorkerBuilder":
         """set heartbeat interval in seconds."""
         self._config.heartbeat_interval = interval
         return self
 
-    def register_task(self, task: Union[Task, Any]) -> 'WorkerBuilder':
+    def register_task(self, task: Union[Task, Any]) -> "WorkerBuilder":
         """Register a task implementation."""
         self._tasks.append(task)
         return self
