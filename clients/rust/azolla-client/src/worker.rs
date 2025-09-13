@@ -232,7 +232,7 @@ impl Worker {
             // Move the guard into the async task to ensure it lives for the task duration
             let _guard = load_guard;
             
-            let result = Self::execute_task_impl(tasks, task).await;
+            let result = Self::execute_task_impl_internal(tasks, task).await;
             
             // Send result
             let result_msg = ClientMsg {
@@ -250,7 +250,16 @@ impl Worker {
     }
     
     /// Execute a task implementation
-    async fn execute_task_impl(
+    #[cfg(test)]
+    pub async fn execute_task_impl(
+        tasks: HashMap<String, Arc<dyn BoxedTask>>,
+        proto_task: ProtoTask,
+    ) -> ProtoTaskResult {
+        Self::execute_task_impl_internal(tasks, proto_task).await
+    }
+
+    /// Internal task execution implementation
+    async fn execute_task_impl_internal(
         tasks: HashMap<String, Arc<dyn BoxedTask>>,
         proto_task: ProtoTask,
     ) -> ProtoTaskResult {
@@ -658,9 +667,330 @@ mod tests {
         let builder = Worker::builder()
             .register_task(SuccessTask)
             .register_task(PanickingTask);
-        
+
         assert_eq!(builder.tasks.len(), 2);
         assert!(builder.tasks.contains_key("success_task"));
         assert!(builder.tasks.contains_key("panicking_task"));
+    }
+
+    /// Test the purpose of Worker reconnection: ensure worker handles network failures gracefully
+    #[tokio::test]
+    async fn test_worker_reconnection_behavior() {
+        let config = WorkerConfig {
+            orchestrator_endpoint: "localhost:99999".to_string(), // Non-existent port
+            domain: "test-domain".to_string(),
+            shepherd_group: "test-group".to_string(),
+            max_concurrency: 5,
+            heartbeat_interval: Duration::from_millis(50),
+        };
+
+        let worker = Worker {
+            config,
+            tasks: HashMap::new(),
+            shepherd_uuid: "test-reconnect-uuid".to_string(),
+            current_load: Arc::new(AtomicU32::new(0)),
+            shutdown_signal: Arc::new(AtomicBool::new(false)),
+        };
+
+        let start = std::time::Instant::now();
+
+        // Set shutdown signal after short delay to stop reconnection attempts
+        let shutdown_signal = worker.shutdown_signal.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            shutdown_signal.store(true, Ordering::Relaxed);
+        });
+
+        let result = worker.run().await;
+        let elapsed = start.elapsed();
+
+        assert!(result.is_ok()); // Should terminate gracefully on shutdown
+        assert!(elapsed >= Duration::from_millis(50)); // Should have tried to connect at least once
+        assert!(elapsed < Duration::from_secs(5)); // Should not hang indefinitely
+    }
+
+    /// Test the expected behavior: heartbeat continues during task execution
+    #[tokio::test]
+    async fn test_heartbeat_loop_functionality() {
+        let (tx, mut rx) = mpsc::channel(10);
+        let current_load = Arc::new(AtomicU32::new(3));
+        let shutdown_signal = Arc::new(AtomicBool::new(false));
+
+        // Start heartbeat loop
+        let heartbeat_handle = tokio::spawn(Worker::heartbeat_loop(
+            tx,
+            Duration::from_millis(25), // Fast heartbeat for testing
+            current_load.clone(),
+            shutdown_signal.clone()
+        ));
+
+        // Let heartbeat run for a bit
+        tokio::time::sleep(Duration::from_millis(80)).await;
+
+        // Change load during execution
+        current_load.store(7, Ordering::Relaxed);
+        tokio::time::sleep(Duration::from_millis(30)).await;
+
+        // Signal shutdown
+        shutdown_signal.store(true, Ordering::Relaxed);
+
+        // Give it time to process shutdown
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        // Collect status messages
+        let mut status_messages = Vec::new();
+        while let Ok(msg) = rx.try_recv() {
+            if let Some(crate::proto::orchestrator::client_msg::Kind::Status(status)) = msg.kind {
+                status_messages.push((status.current_load, status.available_capacity));
+            }
+        }
+
+        heartbeat_handle.abort();
+
+        // Should have received multiple heartbeat messages
+        assert!(status_messages.len() >= 2, "Should have received multiple heartbeat messages, got {}", status_messages.len());
+
+        // Should reflect the load changes
+        let has_load_3 = status_messages.iter().any(|(load, capacity)| *load == 3 && *capacity == 97);
+        let has_load_7 = status_messages.iter().any(|(load, capacity)| *load == 7 && *capacity == 93);
+
+        assert!(has_load_3 || has_load_7, "Should have captured load changes");
+    }
+
+    /// Test heartbeat with high load scenarios
+    #[tokio::test]
+    async fn test_heartbeat_high_load_scenarios() {
+        let (tx, mut rx) = mpsc::channel(10);
+        let current_load = Arc::new(AtomicU32::new(95)); // High load
+        let shutdown_signal = Arc::new(AtomicBool::new(false));
+
+        let heartbeat_handle = tokio::spawn(Worker::heartbeat_loop(
+            tx,
+            Duration::from_millis(20),
+            current_load.clone(),
+            shutdown_signal.clone()
+        ));
+
+        tokio::time::sleep(Duration::from_millis(60)).await;
+
+        // Test max load
+        current_load.store(100, Ordering::Relaxed);
+        tokio::time::sleep(Duration::from_millis(25)).await;
+
+        shutdown_signal.store(true, Ordering::Relaxed);
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        let mut found_high_load = false;
+        let mut found_max_load = false;
+
+        while let Ok(msg) = rx.try_recv() {
+            if let Some(crate::proto::orchestrator::client_msg::Kind::Status(status)) = msg.kind {
+                if status.current_load == 95 && status.available_capacity == 5 {
+                    found_high_load = true;
+                }
+                if status.current_load == 100 && status.available_capacity == 0 {
+                    found_max_load = true;
+                }
+            }
+        }
+
+        heartbeat_handle.abort();
+
+        // Should handle high load scenarios correctly
+        assert!(found_high_load || found_max_load, "Should have found high load scenarios");
+    }
+
+    /// Test worker connection error handling
+    #[tokio::test]
+    async fn test_worker_connection_error_handling() {
+        let config = WorkerConfig {
+            orchestrator_endpoint: "invalid-hostname:99999".to_string(),
+            ..Default::default()
+        };
+
+        let worker = Worker {
+            config,
+            tasks: HashMap::new(),
+            shepherd_uuid: "test-error-uuid".to_string(),
+            current_load: Arc::new(AtomicU32::new(0)),
+            shutdown_signal: Arc::new(AtomicBool::new(false)),
+        };
+
+        // Test that connection attempts return errors appropriately
+        let connect_result = worker.connect().await;
+        assert!(connect_result.is_err());
+
+        match connect_result.unwrap_err() {
+            AzollaError::ConnectionError(_) => { /* Expected */ },
+            _ => panic!("Expected ConnectionError for invalid hostname"),
+        }
+    }
+
+    /// Test task argument parsing edge cases
+    #[test]
+    fn test_parse_task_args_edge_cases() {
+        // Test empty string
+        let result = Worker::parse_task_args("").unwrap();
+        assert!(result.is_empty());
+
+        // Test empty array
+        let result = Worker::parse_task_args("[]").unwrap();
+        assert!(result.is_empty());
+
+        // Test single value
+        let result = Worker::parse_task_args("[42]").unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], serde_json::json!(42));
+
+        // Test multiple values
+        let result = Worker::parse_task_args(r#"["hello", 123, true, null]"#).unwrap();
+        assert_eq!(result.len(), 4);
+        assert_eq!(result[0], serde_json::json!("hello"));
+        assert_eq!(result[1], serde_json::json!(123));
+        assert_eq!(result[2], serde_json::json!(true));
+        assert_eq!(result[3], serde_json::json!(null));
+
+        // Test invalid JSON
+        let result = Worker::parse_task_args("invalid json");
+        assert!(result.is_err());
+
+        // Test malformed JSON
+        let result = Worker::parse_task_args("[1, 2, 3");
+        assert!(result.is_err());
+    }
+
+    /// Test task execution with unknown task
+    #[tokio::test]
+    async fn test_execute_task_unknown_task() {
+        let tasks = HashMap::new(); // Empty task registry
+
+        let proto_task = crate::proto::common::Task {
+            task_id: "unknown-task-test".to_string(),
+            name: "unknown_task".to_string(),
+            args: "[]".to_string(),
+            kwargs: "{}".to_string(),
+            memory_limit: Some(0),
+            cpu_limit: Some(0),
+        };
+
+        let result = Worker::execute_task_impl_internal(tasks, proto_task).await;
+
+        // Should return error result for unknown task
+        match result.result_type {
+            Some(crate::proto::common::task_result::ResultType::Error(error)) => {
+                assert_eq!(error.r#type, "TaskNotFound");
+                assert!(error.message.contains("No implementation found"));
+                assert_eq!(error.code, "TASK_NOT_FOUND");
+            }
+            _ => panic!("Expected error result for unknown task"),
+        }
+    }
+
+    /// Test task execution with invalid arguments
+    #[tokio::test]
+    async fn test_execute_task_invalid_args() {
+        let mut tasks = HashMap::new();
+        tasks.insert("success_task".to_string(), Arc::new(SuccessTask) as Arc<dyn BoxedTask>);
+
+        let proto_task = crate::proto::common::Task {
+            task_id: "invalid-args-test".to_string(),
+            name: "success_task".to_string(),
+            args: "invalid json".to_string(), // Invalid JSON
+            kwargs: "{}".to_string(),
+            memory_limit: Some(0),
+            cpu_limit: Some(0),
+        };
+
+        let result = Worker::execute_task_impl_internal(tasks, proto_task).await;
+
+        // Should return error result for invalid arguments
+        match result.result_type {
+            Some(crate::proto::common::task_result::ResultType::Error(error)) => {
+                assert_eq!(error.r#type, "ArgumentParseError");
+                assert!(error.message.contains("Failed to parse task arguments"));
+                assert_eq!(error.code, "ARG_PARSE_ERROR");
+            }
+            _ => panic!("Expected error result for invalid arguments"),
+        }
+    }
+
+    /// Test worker shutdown functionality
+    #[test]
+    fn test_worker_shutdown() {
+        let worker = Worker {
+            config: WorkerConfig::default(),
+            tasks: HashMap::new(),
+            shepherd_uuid: "shutdown-test".to_string(),
+            current_load: Arc::new(AtomicU32::new(0)),
+            shutdown_signal: Arc::new(AtomicBool::new(false)),
+        };
+
+        // Initially not shutdown
+        assert!(!worker.shutdown_signal.load(Ordering::Relaxed));
+
+        // Signal shutdown
+        worker.shutdown();
+
+        // Should be shutdown
+        assert!(worker.shutdown_signal.load(Ordering::Relaxed));
+    }
+
+    /// Test worker task count
+    #[test]
+    fn test_worker_task_count() {
+        let mut tasks = HashMap::new();
+        tasks.insert("task1".to_string(), Arc::new(SuccessTask) as Arc<dyn BoxedTask>);
+        tasks.insert("task2".to_string(), Arc::new(PanickingTask) as Arc<dyn BoxedTask>);
+
+        let worker = Worker {
+            config: WorkerConfig::default(),
+            tasks,
+            shepherd_uuid: "task-count-test".to_string(),
+            current_load: Arc::new(AtomicU32::new(0)),
+            shutdown_signal: Arc::new(AtomicBool::new(false)),
+        };
+
+        assert_eq!(worker.task_count(), 2);
+    }
+
+    /// Test worker builder discover_tasks placeholder
+    #[test]
+    fn test_worker_builder_discover_tasks() {
+        let builder = Worker::builder().discover_tasks();
+
+        // discover_tasks is currently a placeholder, so it should just return the builder unchanged
+        // In the future, this would automatically register tasks found via proc macro
+        assert_eq!(builder.tasks.len(), 0); // No tasks discovered yet (placeholder implementation)
+    }
+
+    /// Test load guard with multiple concurrent operations
+    #[tokio::test]
+    async fn test_load_guard_concurrent_operations() {
+        let counter = Arc::new(AtomicU32::new(0));
+        let mut handles = Vec::new();
+
+        // Start 5 concurrent "tasks" that each hold a load guard
+        for i in 0..5 {
+            let counter_clone = counter.clone();
+            let handle = tokio::spawn(async move {
+                let _guard = LoadGuard::new(counter_clone);
+                tokio::time::sleep(Duration::from_millis(10 * i + 5)).await;
+                // Guard drops here
+            });
+            handles.push(handle);
+        }
+
+        // Check that load increases
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        let mid_load = counter.load(Ordering::Relaxed);
+        assert!(mid_load > 0 && mid_load <= 5, "Load should be between 1 and 5, got {mid_load}");
+
+        // Wait for all tasks to complete
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        // Final load should be 0
+        assert_eq!(counter.load(Ordering::Relaxed), 0);
     }
 }
