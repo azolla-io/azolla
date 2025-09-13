@@ -58,13 +58,13 @@ __azolla_internal__ = []
 
 # Examples
 [[example]]
-name = "client_example"
-path = "examples/client_example.rs"
+name = "basic_client_example"
+path = "examples/rust/basic_client_example.rs"
 
 [[example]]
-name = "worker_example"
-path = "examples/worker_example.rs"
+name = "basic_worker_example"
+path = "examples/rust/basic_worker_example.rs"
 
 [[example]]
 name = "proc_macro_tasks"
-path = "examples/proc_macro_tasks.rs"
+path = "examples/rust/proc_macro_tasks.rs"

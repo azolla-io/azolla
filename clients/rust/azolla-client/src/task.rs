@@ -31,17 +31,23 @@ pub trait Task: Send + Sync {
                 // No arguments - try to deserialize from null or empty
                 serde_json::from_value(json!(null))
                     .or_else(|_| serde_json::from_value(json!({})))
-                    .map_err(|e| TaskError::invalid_args(&format!("No arguments provided and type doesn't support empty: {e}")))
+                    .map_err(|e| {
+                        TaskError::invalid_args(&format!(
+                            "No arguments provided and type doesn't support empty: {e}"
+                        ))
+                    })
             }
             1 => {
-                // Single argument - deserialize directly  
-                serde_json::from_value(json_args[0].clone())
-                    .map_err(|e| TaskError::invalid_args(&format!("Failed to parse single argument: {e}")))
+                // Single argument - deserialize directly
+                serde_json::from_value(json_args[0].clone()).map_err(|e| {
+                    TaskError::invalid_args(&format!("Failed to parse single argument: {e}"))
+                })
             }
             _ => {
                 // Multiple arguments - deserialize as array
-                serde_json::from_value(json!(json_args))
-                    .map_err(|e| TaskError::invalid_args(&format!("Failed to parse multiple arguments: {e}")))
+                serde_json::from_value(json!(json_args)).map_err(|e| {
+                    TaskError::invalid_args(&format!("Failed to parse multiple arguments: {e}"))
+                })
             }
         }
     }
@@ -53,7 +59,10 @@ pub trait BoxedTask: Send + Sync {
     fn name(&self) -> &'static str;
 
     /// Execute the task with JSON arguments
-    fn execute_json(&self, args: Vec<Value>) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>>;
+    fn execute_json(
+        &self,
+        args: Vec<Value>,
+    ) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>>;
 }
 
 /// Implementation of BoxedTask for any Task
@@ -62,7 +71,10 @@ impl<T: Task + 'static> BoxedTask for T {
         Task::name(self)
     }
 
-    fn execute_json(&self, args: Vec<Value>) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+    fn execute_json(
+        &self,
+        args: Vec<Value>,
+    ) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
         Box::pin(async move {
             let typed_args = T::parse_args(args)?;
             let future = self.execute(typed_args);

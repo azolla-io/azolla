@@ -213,17 +213,20 @@ impl TaskHandle {
                     // Parse the actual task result
                     let result_value: serde_json::Value = serde_json::from_str(
                         &response.result.unwrap_or_else(|| "null".to_string()),
-                    ).map_err(AzollaError::Serialization)?;
+                    )
+                    .map_err(AzollaError::Serialization)?;
                     return Ok(TaskExecutionResult::Success(result_value));
                 }
                 "failed" => {
                     // Parse the actual task error
-                    let error_msg = response.error.unwrap_or_else(|| "Task execution failed with unknown error".to_string());
-                    
+                    let error_msg = response
+                        .error
+                        .unwrap_or_else(|| "Task execution failed with unknown error".to_string());
+
                     // Try to parse as structured TaskError, fallback to generic error
                     let task_error = serde_json::from_str::<TaskError>(&error_msg)
                         .unwrap_or_else(|_| TaskError::execution_failed(&error_msg));
-                    
+
                     return Ok(TaskExecutionResult::Failed(task_error));
                 }
                 _ => {
@@ -254,19 +257,21 @@ impl TaskHandle {
         match response.status.as_str() {
             "completed" => {
                 // Parse the actual task result
-                let result_value: serde_json::Value = serde_json::from_str(
-                    &response.result.unwrap_or_else(|| "null".to_string()),
-                ).map_err(AzollaError::Serialization)?;
+                let result_value: serde_json::Value =
+                    serde_json::from_str(&response.result.unwrap_or_else(|| "null".to_string()))
+                        .map_err(AzollaError::Serialization)?;
                 Ok(Some(TaskExecutionResult::Success(result_value)))
             }
             "failed" => {
                 // Parse the actual task error
-                let error_msg = response.error.unwrap_or_else(|| "Task execution failed with unknown error".to_string());
-                
+                let error_msg = response
+                    .error
+                    .unwrap_or_else(|| "Task execution failed with unknown error".to_string());
+
                 // Try to parse as structured TaskError, fallback to generic error
                 let task_error = serde_json::from_str::<TaskError>(&error_msg)
                     .unwrap_or_else(|_| TaskError::execution_failed(&error_msg));
-                
+
                 Ok(Some(TaskExecutionResult::Failed(task_error)))
             }
             _ => Ok(None), // Still running
@@ -284,8 +289,8 @@ pub enum TaskExecutionResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
     use serde_json::json;
+    use std::time::Duration;
 
     /// Test the purpose of ClientConfig: ensure default configuration is sensible
     #[test]
@@ -301,9 +306,9 @@ mod tests {
     fn test_client_builder_configuration() {
         let builder = ClientBuilder::default()
             .endpoint("http://example.com:8080")
-            .domain("test-domain") 
+            .domain("test-domain")
             .timeout(Duration::from_secs(60));
-            
+
         assert_eq!(builder.config.endpoint, "http://example.com:8080");
         assert_eq!(builder.config.domain, "test-domain");
         assert_eq!(builder.config.timeout, Duration::from_secs(60));
@@ -317,7 +322,7 @@ mod tests {
             .domain("production")
             .timeout(Duration::from_secs(120))
             .config;
-            
+
         assert_eq!(config.endpoint, "https://prod.example.com:9443");
         assert_eq!(config.domain, "production");
         assert_eq!(config.timeout, Duration::from_secs(120));
@@ -330,12 +335,12 @@ mod tests {
         let single_value = 42;
         let json_value = serde_json::to_value(single_value).unwrap();
         assert_eq!(json_value, json!(42));
-        
+
         // Test tuple (multiple values)
         let args = (42, "test".to_string(), true);
         let json_value = serde_json::to_value(args).unwrap();
         assert!(json_value.is_array());
-        
+
         let arr = json_value.as_array().unwrap();
         assert_eq!(arr.len(), 3);
         assert_eq!(arr[0], json!(42));
@@ -349,7 +354,7 @@ mod tests {
         let args = vec![1, 2, 3, 4, 5];
         let json_value = serde_json::to_value(args).unwrap();
         assert!(json_value.is_array());
-        
+
         let arr = json_value.as_array().unwrap();
         assert_eq!(arr.len(), 5);
         assert_eq!(arr[2], json!(3));
@@ -364,17 +369,17 @@ mod tests {
             values: Vec<i32>,
             metadata: std::collections::HashMap<String, String>,
         }
-        
+
         let mut metadata = std::collections::HashMap::new();
         metadata.insert("version".to_string(), "1.0".to_string());
         metadata.insert("author".to_string(), "test".to_string());
-        
+
         let data = ComplexData {
             name: "test-data".to_string(),
             values: vec![10, 20, 30],
             metadata,
         };
-        
+
         let json_value = serde_json::to_value(data).unwrap();
         assert!(json_value.is_object());
         assert_eq!(json_value["name"], "test-data");
@@ -386,7 +391,7 @@ mod tests {
     fn test_task_submission_retry_policy_serialization() {
         let retry_policy = crate::retry_policy::RetryPolicy::default();
         let serialized = serde_json::to_string(&retry_policy).unwrap();
-        
+
         // Verify it can be serialized and is not empty
         assert!(!serialized.is_empty());
         assert!(serialized.contains("max_attempts"));
@@ -398,7 +403,7 @@ mod tests {
         // Test shepherd group assignment
         let shepherd_group = "high-priority-workers";
         assert_eq!(shepherd_group, "high-priority-workers");
-        
+
         let optional_group: Option<String> = Some("gpu-workers".to_string());
         assert!(optional_group.is_some());
         assert_eq!(optional_group.unwrap(), "gpu-workers");
@@ -410,11 +415,11 @@ mod tests {
         // Test valid JSON array
         let valid_args = json!([1, "hello", true]);
         assert!(valid_args.is_array());
-        
+
         // Test single value becomes single-item array conceptually
         let single_val = json!(42);
         assert!(single_val.is_number());
-        
+
         // Test complex nested structure
         let complex_args = json!([{"key": "value"}, [1, 2, 3], null]);
         assert!(complex_args.is_array());
@@ -435,10 +440,10 @@ mod tests {
             timeout: Duration::from_millis(100),
         };
         assert!(config.endpoint.is_empty());
-        
+
         // Test very short timeout
         assert_eq!(config.timeout, Duration::from_millis(100));
-        
+
         // Test long domain name
         let long_domain = "a".repeat(100);
         let config_long = ClientConfig {
@@ -456,10 +461,10 @@ mod tests {
         let short_timeout = Duration::from_millis(1);
         let medium_timeout = Duration::from_secs(30);
         let long_timeout = Duration::from_secs(300);
-        
+
         assert!(short_timeout < medium_timeout);
         assert!(medium_timeout < long_timeout);
-        
+
         // Test timeout comparison
         assert_eq!(Duration::from_millis(1000), Duration::from_secs(1));
     }
@@ -469,19 +474,19 @@ mod tests {
     fn test_task_execution_result() {
         let success_result = TaskExecutionResult::Success(json!({"status": "ok"}));
         let error_result = TaskExecutionResult::Failed(TaskError::execution_failed("test error"));
-        
+
         match success_result {
             TaskExecutionResult::Success(val) => {
                 assert_eq!(val["status"], "ok");
             }
             _ => panic!("Expected success result"),
         }
-        
+
         match error_result {
             TaskExecutionResult::Failed(err) => {
                 assert!(err.to_string().contains("test error"));
             }
-            _ => panic!("Expected failed result"), 
+            _ => panic!("Expected failed result"),
         }
     }
 }
