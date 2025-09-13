@@ -334,6 +334,29 @@ mypy src
 bandit -r src/
 ```
 
+## Release Process
+
+To release a new version to PyPI:
+
+1. **Ensure all tests pass** on your feature branch
+2. **Merge to main branch** and ensure CI passes
+3. **Update version** in `src/azolla/_version.py`
+4. **Run release script** from main branch:
+   ```bash
+   ./release.sh 0.1.3  # Replace with your version
+   ```
+
+The release script will:
+- ✅ Verify you're on main branch (where tests have passed)
+- ✅ Update proto files from main project
+- ✅ Build and verify the package
+- ✅ Test publish to TestPyPI (if configured)
+- ✅ Publish to production PyPI
+- ✅ Create a git tag
+- ✅ Verify installation works
+
+**Note**: The release script only runs from main branch to ensure all tests have passed before release.
+
 ## API Reference
 
 ### Core Classes
