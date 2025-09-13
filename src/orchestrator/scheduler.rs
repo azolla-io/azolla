@@ -2438,6 +2438,40 @@ mod tests {
                 .await
                 .unwrap();
 
+            // Wait for tasks to be marked as failed with retries
+            let mut attempts = 0;
+            let max_attempts = 50;
+
+            loop {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+
+                let mut all_tasks_failed = true;
+                for &task_id in &task_ids {
+                    let task = scheduler.get_task_for_test(task_id).await.unwrap().unwrap();
+                    if task.status != TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT {
+                        all_tasks_failed = false;
+                        break;
+                    }
+                }
+
+                if all_tasks_failed {
+                    break;
+                }
+
+                attempts += 1;
+                if attempts >= max_attempts {
+                    // Debug: Print status of all tasks before failing
+                    for &task_id in &task_ids {
+                        let task = scheduler.get_task_for_test(task_id).await.unwrap().unwrap();
+                        eprintln!(
+                            "DEBUG: Task {} has status {} (expected {})",
+                            task_id, task.status, TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT
+                        );
+                    }
+                    panic!("Tasks were not marked as failed with retries within expected time");
+                }
+            }
+
             // Verify tasks were marked for retry
             for &task_id in &task_ids {
                 let task = scheduler.get_task_for_test(task_id).await.unwrap().unwrap();

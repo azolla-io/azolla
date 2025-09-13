@@ -150,28 +150,31 @@ mod tests {
         assert!(<i32 as FromJsonValue>::try_from(json!("not a number")).is_err());
         assert!(<i32 as FromJsonValue>::try_from(json!(42.5)).is_err());
         assert!(<i32 as FromJsonValue>::try_from(json!(true)).is_err());
-        
+
         // Test u32
         assert_eq!(<u32 as FromJsonValue>::try_from(json!(42)).unwrap(), 42);
         assert_eq!(<u32 as FromJsonValue>::try_from(json!(0)).unwrap(), 0);
         assert!(<u32 as FromJsonValue>::try_from(json!(-123)).is_err()); // Negative should fail
         assert!(<u32 as FromJsonValue>::try_from(json!("not a number")).is_err());
-        
+
         // Test f64
         assert_eq!(<f64 as FromJsonValue>::try_from(json!(42.5)).unwrap(), 42.5);
         assert_eq!(<f64 as FromJsonValue>::try_from(json!(42)).unwrap(), 42.0);
         assert_eq!(<f64 as FromJsonValue>::try_from(json!(0.0)).unwrap(), 0.0);
         assert!(<f64 as FromJsonValue>::try_from(json!("not a number")).is_err());
-        
+
         // Test String
-        assert_eq!(<String as FromJsonValue>::try_from(json!("hello")).unwrap(), "hello");
+        assert_eq!(
+            <String as FromJsonValue>::try_from(json!("hello")).unwrap(),
+            "hello"
+        );
         assert_eq!(<String as FromJsonValue>::try_from(json!("")).unwrap(), "");
         assert!(<String as FromJsonValue>::try_from(json!(42)).is_err());
         assert!(<String as FromJsonValue>::try_from(json!(true)).is_err());
-        
+
         // Test bool
-        assert_eq!(<bool as FromJsonValue>::try_from(json!(true)).unwrap(), true);
-        assert_eq!(<bool as FromJsonValue>::try_from(json!(false)).unwrap(), false);
+        assert!(<bool as FromJsonValue>::try_from(json!(true)).unwrap());
+        assert!(!<bool as FromJsonValue>::try_from(json!(false)).unwrap());
         assert!(<bool as FromJsonValue>::try_from(json!("true")).is_err());
         assert!(<bool as FromJsonValue>::try_from(json!(1)).is_err());
     }
@@ -180,19 +183,40 @@ mod tests {
     #[test]
     fn test_from_json_value_option() {
         // Test Option<i32>
-        assert_eq!(<Option<i32> as FromJsonValue>::try_from(json!(null)).unwrap(), None);
-        assert_eq!(<Option<i32> as FromJsonValue>::try_from(json!(42)).unwrap(), Some(42));
+        assert_eq!(
+            <Option<i32> as FromJsonValue>::try_from(json!(null)).unwrap(),
+            None
+        );
+        assert_eq!(
+            <Option<i32> as FromJsonValue>::try_from(json!(42)).unwrap(),
+            Some(42)
+        );
         assert!(<Option<i32> as FromJsonValue>::try_from(json!("invalid")).is_err());
-        
+
         // Test Option<String>
-        assert_eq!(<Option<String> as FromJsonValue>::try_from(json!(null)).unwrap(), None);
-        assert_eq!(<Option<String> as FromJsonValue>::try_from(json!("hello")).unwrap(), Some("hello".to_string()));
+        assert_eq!(
+            <Option<String> as FromJsonValue>::try_from(json!(null)).unwrap(),
+            None
+        );
+        assert_eq!(
+            <Option<String> as FromJsonValue>::try_from(json!("hello")).unwrap(),
+            Some("hello".to_string())
+        );
         assert!(<Option<String> as FromJsonValue>::try_from(json!(42)).is_err());
-        
+
         // Test Option<bool>
-        assert_eq!(<Option<bool> as FromJsonValue>::try_from(json!(null)).unwrap(), None);
-        assert_eq!(<Option<bool> as FromJsonValue>::try_from(json!(true)).unwrap(), Some(true));
-        assert_eq!(<Option<bool> as FromJsonValue>::try_from(json!(false)).unwrap(), Some(false));
+        assert_eq!(
+            <Option<bool> as FromJsonValue>::try_from(json!(null)).unwrap(),
+            None
+        );
+        assert_eq!(
+            <Option<bool> as FromJsonValue>::try_from(json!(true)).unwrap(),
+            Some(true)
+        );
+        assert_eq!(
+            <Option<bool> as FromJsonValue>::try_from(json!(false)).unwrap(),
+            Some(false)
+        );
     }
 
     /// Test Vec<T> conversions
@@ -201,19 +225,24 @@ mod tests {
         // Test Vec<i32>
         let result = <Vec<i32> as FromJsonValue>::try_from(json!([1, 2, 3])).unwrap();
         assert_eq!(result, vec![1, 2, 3]);
-        
+
         let empty_result = <Vec<i32> as FromJsonValue>::try_from(json!([])).unwrap();
         assert_eq!(empty_result, Vec::<i32>::new());
-        
+
         assert!(<Vec<i32> as FromJsonValue>::try_from(json!("not an array")).is_err());
         assert!(<Vec<i32> as FromJsonValue>::try_from(json!([1, "invalid", 3])).is_err());
-        
+
         // Test Vec<String>
-        let string_result = <Vec<String> as FromJsonValue>::try_from(json!(["hello", "world"])).unwrap();
-        assert_eq!(string_result, vec!["hello".to_string(), "world".to_string()]);
-        
+        let string_result =
+            <Vec<String> as FromJsonValue>::try_from(json!(["hello", "world"])).unwrap();
+        assert_eq!(
+            string_result,
+            vec!["hello".to_string(), "world".to_string()]
+        );
+
         // Test Vec<Option<i32>>
-        let optional_result = <Vec<Option<i32>> as FromJsonValue>::try_from(json!([1, null, 3])).unwrap();
+        let optional_result =
+            <Vec<Option<i32>> as FromJsonValue>::try_from(json!([1, null, 3])).unwrap();
         assert_eq!(optional_result, vec![Some(1), None, Some(3)]);
     }
 
@@ -231,7 +260,7 @@ mod tests {
         let error = ConversionError::type_mismatch("i32", &json!("string"));
         assert!(error.to_string().contains("expected i32"));
         assert!(error.to_string().contains("got"));
-        
+
         let other_error = ConversionError::Other("Custom error".to_string());
         assert_eq!(other_error.to_string(), "Conversion error: Custom error");
     }
@@ -241,39 +270,69 @@ mod tests {
     fn test_conversion_error_messages() {
         // Test various type mismatches
         let int_error = <i32 as FromJsonValue>::try_from(json!("not_an_int")).unwrap_err();
-        assert!(int_error.to_string().contains("expected i32") || int_error.to_string().contains("type"));
-        
+        assert!(
+            int_error.to_string().contains("expected i32")
+                || int_error.to_string().contains("type")
+        );
+
         let string_error = <String as FromJsonValue>::try_from(json!(42)).unwrap_err();
-        assert!(string_error.to_string().contains("expected String") || string_error.to_string().contains("type"));
-        
+        assert!(
+            string_error.to_string().contains("expected String")
+                || string_error.to_string().contains("type")
+        );
+
         let bool_error = <bool as FromJsonValue>::try_from(json!("not_bool")).unwrap_err();
-        assert!(bool_error.to_string().contains("expected bool") || bool_error.to_string().contains("type"));
-        
+        assert!(
+            bool_error.to_string().contains("expected bool")
+                || bool_error.to_string().contains("type")
+        );
+
         let array_error = <Vec<i32> as FromJsonValue>::try_from(json!("not_array")).unwrap_err();
-        assert!(array_error.to_string().contains("expected Array") || array_error.to_string().contains("type"));
+        assert!(
+            array_error.to_string().contains("expected Array")
+                || array_error.to_string().contains("type")
+        );
     }
 
     /// Test numeric edge cases and overflow
     #[test]
     fn test_numeric_edge_cases() {
         // Test i32 bounds
-        assert_eq!(<i32 as FromJsonValue>::try_from(json!(i32::MAX)).unwrap(), i32::MAX);
-        assert_eq!(<i32 as FromJsonValue>::try_from(json!(i32::MIN)).unwrap(), i32::MIN);
-        
+        assert_eq!(
+            <i32 as FromJsonValue>::try_from(json!(i32::MAX)).unwrap(),
+            i32::MAX
+        );
+        assert_eq!(
+            <i32 as FromJsonValue>::try_from(json!(i32::MIN)).unwrap(),
+            i32::MIN
+        );
+
         // Test u32 bounds
-        assert_eq!(<u32 as FromJsonValue>::try_from(json!(u32::MAX)).unwrap(), u32::MAX);
+        assert_eq!(
+            <u32 as FromJsonValue>::try_from(json!(u32::MAX)).unwrap(),
+            u32::MAX
+        );
         assert_eq!(<u32 as FromJsonValue>::try_from(json!(0)).unwrap(), 0);
-        
+
         // Test overflow cases
         assert!(<i32 as FromJsonValue>::try_from(json!(i64::MAX)).is_err());
         assert!(<u32 as FromJsonValue>::try_from(json!(u64::MAX)).is_err());
-        
+
         // Test floating point edge cases (note: JSON can't represent infinity/NaN directly)
         // JSON serializes infinity and NaN as null, so these would fail conversion
         // Instead test with large finite numbers
-        assert_eq!(<f64 as FromJsonValue>::try_from(json!(1e308)).unwrap(), 1e308);
-        assert_eq!(<f64 as FromJsonValue>::try_from(json!(-1e308)).unwrap(), -1e308);
-        assert_eq!(<f64 as FromJsonValue>::try_from(json!(f64::MIN)).unwrap(), f64::MIN);
+        assert_eq!(
+            <f64 as FromJsonValue>::try_from(json!(1e308)).unwrap(),
+            1e308
+        );
+        assert_eq!(
+            <f64 as FromJsonValue>::try_from(json!(-1e308)).unwrap(),
+            -1e308
+        );
+        assert_eq!(
+            <f64 as FromJsonValue>::try_from(json!(f64::MIN)).unwrap(),
+            f64::MIN
+        );
     }
 
     /// Test special string cases
@@ -281,17 +340,26 @@ mod tests {
     fn test_string_edge_cases() {
         // Test empty string
         assert_eq!(<String as FromJsonValue>::try_from(json!("")).unwrap(), "");
-        
+
         // Test unicode strings
-        assert_eq!(<String as FromJsonValue>::try_from(json!("🚀 Hello 世界")).unwrap(), "🚀 Hello 世界");
-        
+        assert_eq!(
+            <String as FromJsonValue>::try_from(json!("🚀 Hello 世界")).unwrap(),
+            "🚀 Hello 世界"
+        );
+
         // Test strings with special characters
         let special = "Line 1\nLine 2\tTabbed\r\nWindows line ending";
-        assert_eq!(<String as FromJsonValue>::try_from(json!(special)).unwrap(), special);
-        
+        assert_eq!(
+            <String as FromJsonValue>::try_from(json!(special)).unwrap(),
+            special
+        );
+
         // Test very long string
         let long_string = "a".repeat(1000);
-        assert_eq!(<String as FromJsonValue>::try_from(json!(long_string.clone())).unwrap(), long_string);
+        assert_eq!(
+            <String as FromJsonValue>::try_from(json!(long_string.clone())).unwrap(),
+            long_string
+        );
     }
 
     /// Test complex nested structures
@@ -300,12 +368,10 @@ mod tests {
         // Test Vec<Option<Vec<i32>>>
         let complex_data = json!([[1, 2], null, [3, 4, 5], []]);
         let result = <Vec<Option<Vec<i32>>> as FromJsonValue>::try_from(complex_data).unwrap();
-        assert_eq!(result, vec![
-            Some(vec![1, 2]),
-            None,
-            Some(vec![3, 4, 5]),
-            Some(vec![])
-        ]);
+        assert_eq!(
+            result,
+            vec![Some(vec![1, 2]), None, Some(vec![3, 4, 5]), Some(vec![])]
+        );
     }
 
     /// Test error propagation in nested conversions
@@ -315,7 +381,7 @@ mod tests {
         let invalid_nested = json!([[1, 2], ["invalid", 4]]);
         let result = <Vec<Vec<i32>> as FromJsonValue>::try_from(invalid_nested);
         assert!(result.is_err());
-        
+
         // Test that Option conversion errors bubble up
         let invalid_option = json!(["not", "numbers"]);
         let result = <Option<Vec<i32>> as FromJsonValue>::try_from(invalid_option);
@@ -330,11 +396,20 @@ mod tests {
         assert!(<String as FromJsonValue>::try_from(json!(null)).is_err());
         assert!(<bool as FromJsonValue>::try_from(json!(null)).is_err());
         assert!(<Vec<i32> as FromJsonValue>::try_from(json!(null)).is_err());
-        
+
         // Only Option should succeed with null
-        assert_eq!(<Option<i32> as FromJsonValue>::try_from(json!(null)).unwrap(), None);
-        assert_eq!(<Option<String> as FromJsonValue>::try_from(json!(null)).unwrap(), None);
-        assert_eq!(<Option<Vec<i32>> as FromJsonValue>::try_from(json!(null)).unwrap(), None);
+        assert_eq!(
+            <Option<i32> as FromJsonValue>::try_from(json!(null)).unwrap(),
+            None
+        );
+        assert_eq!(
+            <Option<String> as FromJsonValue>::try_from(json!(null)).unwrap(),
+            None
+        );
+        assert_eq!(
+            <Option<Vec<i32>> as FromJsonValue>::try_from(json!(null)).unwrap(),
+            None
+        );
     }
 
     /// Test array with mixed valid/invalid elements
@@ -344,7 +419,7 @@ mod tests {
         let mixed_array = json!([1, 2, "invalid", 4]);
         let result = <Vec<i32> as FromJsonValue>::try_from(mixed_array);
         assert!(result.is_err());
-        
+
         // Test array with valid elements succeeds
         let valid_array = json!([1, 2, 3, 4]);
         let result = <Vec<i32> as FromJsonValue>::try_from(valid_array).unwrap();
@@ -361,7 +436,7 @@ mod tests {
             let result = T::try_from(value).unwrap();
             assert_eq!(result, expected);
         }
-        
+
         test_conversion(json!(42), 42i32);
         test_conversion(json!("hello"), "hello".to_string());
         test_conversion(json!(true), true);
@@ -380,13 +455,22 @@ mod tests {
     #[test]
     fn test_integer_type_boundaries() {
         // Test i64 bounds
-        assert_eq!(<i64 as FromJsonValue>::try_from(json!(i64::MAX)).unwrap(), i64::MAX);
-        assert_eq!(<i64 as FromJsonValue>::try_from(json!(i64::MIN)).unwrap(), i64::MIN);
-        
-        // Test u64 bounds 
-        assert_eq!(<u64 as FromJsonValue>::try_from(json!(u64::MAX)).unwrap(), u64::MAX);
+        assert_eq!(
+            <i64 as FromJsonValue>::try_from(json!(i64::MAX)).unwrap(),
+            i64::MAX
+        );
+        assert_eq!(
+            <i64 as FromJsonValue>::try_from(json!(i64::MIN)).unwrap(),
+            i64::MIN
+        );
+
+        // Test u64 bounds
+        assert_eq!(
+            <u64 as FromJsonValue>::try_from(json!(u64::MAX)).unwrap(),
+            u64::MAX
+        );
         assert_eq!(<u64 as FromJsonValue>::try_from(json!(0u64)).unwrap(), 0u64);
-        
+
         // Test negative numbers with unsigned types
         assert!(<u64 as FromJsonValue>::try_from(json!(-1)).is_err());
     }
