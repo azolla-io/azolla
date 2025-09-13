@@ -204,6 +204,7 @@ async def run_worker_service(orchestrator_endpoint: str, domain: str) -> None:
         domain=domain,
         shepherd_group="python-test-workers",
         max_concurrency=5,
+        heartbeat_interval=1.0,  # Send heartbeats every 1 second instead of 30 seconds
     )
 
     worker = Worker(config)

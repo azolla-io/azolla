@@ -115,7 +115,27 @@ class TestE2EOrchestrator:
 
     @pytest.mark.asyncio
     async def test_task_fails_after_exhausting_attempts(self):
-        """Test that always_fail_task fails after exhausting all retry attempts."""
+        """
+        Test that always_fail_task fails after exhausting all retry attempts.
+
+        NOTE: GRPC INCOMPATIBILITY STATUS
+        This test currently fails because of a known incompatibility between Python grpcio
+        and Rust tonic gRPC implementations. The Python worker connects successfully but
+        the connection drops immediately after registration due to RST_STREAM handling
+        differences, preventing task execution.
+
+        WORKAROUND IMPLEMENTED:
+        The worker now includes timeout/retry mechanisms that prevent indefinite hanging:
+        - Test completes in ~0.4s instead of hanging indefinitely
+        - Connection drops are detected within 5 seconds
+        - Exponential backoff retry (3 attempts) provides resilience
+
+        However, the task still completes with success=True, value={} instead of properly
+        failing, because the orchestrator doesn't receive a failure result when the
+        connection drops.
+
+        TODO: Consider implementing HTTP/REST fallback or upgrading to compatible gRPC versions.
+        """
         async with integration_test_environment(PROJECT_ROOT) as (orchestrator, worker_manager):
             logger.info("🧪 TEST: Integration test environment started")
             logger.info(f"🧪 TEST: Orchestrator endpoint: {orchestrator.endpoint}")
