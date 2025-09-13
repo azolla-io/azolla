@@ -51,13 +51,13 @@ class AlwaysFailTask(Task):
 
     async def execute(self, args: Any, context=None) -> Any:
         logger.info(f"🔥 ALWAYS_FAIL: Task starting execution with args: {args}")
-        logger.info(f"🔥 ALWAYS_FAIL: About to raise TaskError...")
-        
+        logger.info("🔥 ALWAYS_FAIL: About to raise TaskError...")
+
         error = TaskError(
             "Task designed to always fail", error_code="ALWAYS_FAIL", error_type="TestError"
         )
         logger.info(f"🔥 ALWAYS_FAIL: Created TaskError: {error}")
-        logger.info(f"🔥 ALWAYS_FAIL: Raising TaskError now!")
+        logger.info("🔥 ALWAYS_FAIL: Raising TaskError now!")
         raise error
 
 
@@ -217,7 +217,9 @@ async def run_worker_service(orchestrator_endpoint: str, domain: str) -> None:
         logger.info(f"🔧 TEST_WORKER: Starting to register {len(tasks)} tasks")
         for task in tasks:
             task_name = task.name()
-            logger.info(f"🔧 TEST_WORKER: Registering task '{task_name}' ({task.__class__.__name__})")
+            logger.info(
+                f"🔧 TEST_WORKER: Registering task '{task_name}' ({task.__class__.__name__})"
+            )
             worker.register_task(task)
             logger.info(f"✅ TEST_WORKER: Successfully registered task: {task_name}")
 

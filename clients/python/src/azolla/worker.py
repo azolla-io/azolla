@@ -41,22 +41,26 @@ class TaskRegistry:
     def register(self, task: Union[Task, Any]) -> None:
         """Register a task implementation."""
         logger.info(f"📝 REGISTRY: Registering task: {task}")
-        
+
         if hasattr(task, "__azolla_task_instance__"):
             # Decorated function
             task_instance = task.__azolla_task_instance__
             name = task_instance.name()
             self._tasks[name] = task_instance
-            logger.info(f"✅ REGISTRY: Registered decorated task '{name}' -> {task_instance.__class__.__name__}")
+            logger.info(
+                f"✅ REGISTRY: Registered decorated task '{name}' -> {task_instance.__class__.__name__}"
+            )
         elif isinstance(task, Task):
             # Task instance
             name = task.name()
             self._tasks[name] = task
-            logger.info(f"✅ REGISTRY: Registered task instance '{name}' -> {task.__class__.__name__}")
+            logger.info(
+                f"✅ REGISTRY: Registered task instance '{name}' -> {task.__class__.__name__}"
+            )
         else:
             logger.error(f"❌ REGISTRY: Invalid task type: {type(task)}")
             raise ValueError(f"Invalid task type: {type(task)}")
-        
+
         logger.info(f"📝 REGISTRY: Current registered tasks: {list(self._tasks.keys())}")
 
     def get(self, name: str) -> Optional[Task]:
@@ -214,11 +218,11 @@ class Worker:
         # Create gRPC channel with proper options for bidirectional streaming
         endpoint = self._config.orchestrator_endpoint
         options = [
-            ('grpc.keepalive_time_ms', 10000),  # Send keepalive every 10 seconds
-            ('grpc.keepalive_timeout_ms', 1000),  # Wait 1 second for keepalive response
-            ('grpc.keepalive_permit_without_calls', True),  # Allow keepalive without calls
-            ('grpc.http2.max_pings_without_data', 0),  # Allow pings without data
-            ('grpc.http2.min_time_between_pings_ms', 5000),  # Min 5 seconds between pings
+            ("grpc.keepalive_time_ms", 10000),  # Send keepalive every 10 seconds
+            ("grpc.keepalive_timeout_ms", 1000),  # Wait 1 second for keepalive response
+            ("grpc.keepalive_permit_without_calls", True),  # Allow keepalive without calls
+            ("grpc.http2.max_pings_without_data", 0),  # Allow pings without data
+            ("grpc.http2.min_time_between_pings_ms", 5000),  # Min 5 seconds between pings
         ]
         self._channel = grpc.aio.insecure_channel(endpoint, options=options)
         self._stub = orchestrator_pb2_grpc.ClusterServiceStub(self._channel)  # type: ignore[no-untyped-call]
@@ -281,17 +285,14 @@ class Worker:
                     logger.info(f"🔗 WORKER: Retrying in {retry_delay:.1f}s...")
 
                     try:
-                        await asyncio.wait_for(
-                            self._shutdown_event.wait(),
-                            timeout=retry_delay
-                        )
+                        await asyncio.wait_for(self._shutdown_event.wait(), timeout=retry_delay)
                         # Shutdown requested during wait
                         break
                     except asyncio.TimeoutError:
                         # Continue to retry
                         continue
                 else:
-                    logger.error(f"🔗 WORKER: All stream attempts failed, giving up")
+                    logger.error("🔗 WORKER: All stream attempts failed, giving up")
                     raise
 
     async def _attempt_stream_connection(self) -> None:
@@ -332,8 +333,7 @@ class Worker:
         try:
             # Wait for either task to complete or fail
             done, pending = await asyncio.wait(
-                [response_task, heartbeat_task],
-                return_when=asyncio.FIRST_EXCEPTION
+                [response_task, heartbeat_task], return_when=asyncio.FIRST_EXCEPTION
             )
 
             # Cancel any remaining tasks
@@ -404,8 +404,7 @@ class Worker:
                 try:
                     # Use asyncio.wait_for to timeout if stream is stuck
                     message = await asyncio.wait_for(
-                        self._get_next_message(stream_call),
-                        timeout=stream_timeout
+                        self._get_next_message(stream_call), timeout=stream_timeout
                     )
 
                     if message is None:  # Stream ended normally
@@ -418,7 +417,9 @@ class Worker:
                     if message.HasField("task"):
                         logger.info(f"🔄 WORKER: Processing task: {message.task.name}")
                         # Create a task to handle this message without blocking the stream
-                        asyncio.create_task(self._handle_task_async(message.task))
+                        task = asyncio.create_task(self._handle_task_async(message.task))
+                        # Store reference to prevent garbage collection
+                        task.add_done_callback(lambda t: None)
                     elif message.HasField("ping"):
                         logger.info("🔄 WORKER: Processing ping")
                         # Pings don't need async handling
@@ -428,9 +429,11 @@ class Worker:
 
                 except asyncio.TimeoutError:
                     elapsed = asyncio.get_event_loop().time() - last_activity
-                    logger.warning(f"🔄 WORKER: Stream timeout after {elapsed:.1f}s - likely stuck due to tonic/h2 incompatibility")
+                    logger.warning(
+                        f"🔄 WORKER: Stream timeout after {elapsed:.1f}s - likely stuck due to tonic/h2 incompatibility"
+                    )
                     # Raise exception to trigger reconnection
-                    raise grpc.RpcError("Stream timeout - triggering reconnection")
+                    raise grpc.RpcError("Stream timeout - triggering reconnection") from None
 
         except grpc.RpcError as e:
             logger.error(f"🔄 WORKER: gRPC error in response reader: {e}")
@@ -450,13 +453,13 @@ class Worker:
         GRPC ASYNC ITERATOR FIX:
         This method properly handles Python's async iterator interface for gRPC streams.
         The original implementation incorrectly used stream_call.__anext__() which doesn't
-        exist on StreamStreamCall objects. The correct approach is to use aiter() and
-        anext() functions to properly iterate over the async stream.
+        exist on StreamStreamCall objects. For Python 3.9 compatibility, we use the
+        __aiter__ and __anext__ methods directly instead of the newer aiter/anext functions.
         """
         try:
-            # Use the proper async iterator interface (not stream_call.__anext__())
-            async_iter = aiter(stream_call)
-            return await anext(async_iter)
+            # Use async iterator interface compatible with Python 3.9+
+            async_iter = stream_call.__aiter__()
+            return await async_iter.__anext__()
         except StopAsyncIteration:
             return None
 
@@ -477,7 +480,9 @@ class Worker:
             logger.info(f"🔄 WORKER: Task result: {result}")
 
         except Exception as e:
-            logger.error(f"🔄 WORKER: Error executing task {proto_task.task_id}: {e}", exc_info=True)
+            logger.error(
+                f"🔄 WORKER: Error executing task {proto_task.task_id}: {e}", exc_info=True
+            )
 
     async def _process_messages_concurrent(
         self, stream_call: Any, request_queue: asyncio.Queue[orchestrator_pb2.ClientMsg]
@@ -576,7 +581,7 @@ class Worker:
                     logger.info(f"🔍 WORKER: Parsed args: {args}")
                 else:
                     args = []
-                    logger.info(f"🔍 WORKER: No args provided, using empty list")
+                    logger.info("🔍 WORKER: No args provided, using empty list")
             except json.JSONDecodeError as e:
                 logger.error(f"❌ WORKER: Failed to parse args for task {task_id}: {e}")
                 return common_pb2.TaskResult(
@@ -600,7 +605,9 @@ class Worker:
             result = await task_impl._execute_with_casting(args, context)
             execution_time = time.time() - start_time
 
-            logger.info(f"✅ WORKER: Task {task_id} completed successfully in {execution_time:.3f}s")
+            logger.info(
+                f"✅ WORKER: Task {task_id} completed successfully in {execution_time:.3f}s"
+            )
             logger.info(f"✅ WORKER: Task result: {result}")
 
             # Serialize result
@@ -616,8 +623,12 @@ class Worker:
 
         except TaskError as e:
             execution_time = time.time() - start_time
-            logger.error(f"🔥 WORKER: Task {task_id} failed after {execution_time:.3f}s with TaskError: {e}")
-            logger.error(f"🔥 WORKER: TaskError details - type: {e.error_type}, code: {e.error_code}, message: {e.message}")
+            logger.error(
+                f"🔥 WORKER: Task {task_id} failed after {execution_time:.3f}s with TaskError: {e}"
+            )
+            logger.error(
+                f"🔥 WORKER: TaskError details - type: {e.error_type}, code: {e.error_code}, message: {e.message}"
+            )
 
             error_result = common_pb2.TaskResult(
                 task_id=task_id,

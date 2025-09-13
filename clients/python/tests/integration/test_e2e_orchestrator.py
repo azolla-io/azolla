@@ -139,13 +139,15 @@ class TestE2EOrchestrator:
         async with integration_test_environment(PROJECT_ROOT) as (orchestrator, worker_manager):
             logger.info("🧪 TEST: Integration test environment started")
             logger.info(f"🧪 TEST: Orchestrator endpoint: {orchestrator.endpoint}")
-            
+
             # Start a worker and wait for it to be ready
             logger.info("🧪 TEST: Starting Python test worker...")
             worker_process = worker_manager.start_worker(
                 domain="default", wait_for_ready=True, ready_timeout=30.0
             )
-            logger.info(f"🧪 TEST: Worker started with PID: {worker_process.pid if hasattr(worker_process, 'pid') else 'unknown'}")
+            logger.info(
+                f"🧪 TEST: Worker started with PID: {worker_process.pid if hasattr(worker_process, 'pid') else 'unknown'}"
+            )
 
             # Create client with retry policy using documented API
             logger.info("🧪 TEST: Creating client...")
@@ -157,7 +159,7 @@ class TestE2EOrchestrator:
             logger.info("🧪 TEST: Task submission object created")
             logger.info("🧪 TEST: Setting shepherd group to 'python-test-workers'")
             submission.shepherd_group("python-test-workers")  # Match worker group
-            
+
             logger.info("🧪 TEST: Configuring retry policy (max_attempts=3)")
             submission.with_retry(
                 RetryPolicy(
