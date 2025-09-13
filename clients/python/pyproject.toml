@@ -172,7 +172,7 @@ markers = [
 source = ["src"]
 branch = true
 parallel = true
-concurrency = ["thread", "greenlet"]
+concurrency = ["thread"]
 
 [tool.coverage.report]
 exclude_lines = [
