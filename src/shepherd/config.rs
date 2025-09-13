@@ -263,14 +263,34 @@ mod tests {
 
     #[test]
     fn test_config_env_overrides() {
+        use std::env;
+
+        // Save original environment variables that might affect the test
+        let original_endpoint_env = env::var("AZOLLA_ORCHESTRATOR_ENDPOINT").ok();
+        let original_concurrency_env = env::var("AZOLLA_MAX_CONCURRENCY").ok();
+
+        // Clear environment variables to ensure clean test state
+        env::remove_var("AZOLLA_ORCHESTRATOR_ENDPOINT");
+        env::remove_var("AZOLLA_MAX_CONCURRENCY");
+
         let mut config = ShepherdConfig::default();
         let original_endpoint = config.orchestrator_endpoint.clone();
+        let original_concurrency = config.max_concurrency;
 
         // Test that apply_env_overrides doesn't panic
         config.apply_env_overrides();
 
-        // Since we don't set env vars in test, config should remain unchanged
+        // Since we cleared env vars, config should remain unchanged
         assert_eq!(config.orchestrator_endpoint, original_endpoint);
+        assert_eq!(config.max_concurrency, original_concurrency);
+
+        // Restore original environment variables
+        if let Some(val) = original_endpoint_env {
+            env::set_var("AZOLLA_ORCHESTRATOR_ENDPOINT", val);
+        }
+        if let Some(val) = original_concurrency_env {
+            env::set_var("AZOLLA_MAX_CONCURRENCY", val);
+        }
     }
 
     #[test]
