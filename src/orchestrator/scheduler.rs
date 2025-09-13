@@ -923,9 +923,10 @@ mod tests {
             let mut cfg = Config::new();
             cfg.host = Some("localhost".to_string());
             cfg.port = Some(5432);
-            cfg.dbname = Some("test".to_string());
-            cfg.user = Some("test".to_string());
-            cfg.password = Some("test".to_string());
+            // Use CI-compatible database settings
+            cfg.dbname = Some("azolla_test".to_string());
+            cfg.user = Some("postgres".to_string());
+            cfg.password = Some("postgres".to_string());
             cfg.create_pool(None, tokio_postgres::NoTls).unwrap()
         })
     }
