@@ -155,7 +155,7 @@ disallow_incomplete_defs = true
 check_untyped_defs = true
 disallow_untyped_decorators = true
 exclude = [
-    "src/azolla/_grpc/.*\\.py$"
+    "src/azolla/_grpc/.*\\.(py|pyi)$"
 ]
 
 [tool.pytest.ini_options]
