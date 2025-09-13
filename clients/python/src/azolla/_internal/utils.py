@@ -1,6 +1,6 @@
 """Internal utility functions."""
 import logging
-from typing import Optional
+
 
 def setup_logging(level: str = "INFO") -> None:
     """Set up logging configuration."""

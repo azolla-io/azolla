@@ -21,34 +21,28 @@ from azolla.types import TaskContext, TaskResult, TaskStatus
 from azolla.worker import Worker, WorkerConfig
 
 __all__ = [
-    # Version info
     "__version__",
     "__version_info__",
-    # Core classes
+    "AzollaError",
     "Client",
     "ClientConfig",
-    "Task",
-    "TaskContext",
-    "TaskHandle",
-    "Worker",
-    "WorkerConfig",
-    # Decorators
-    "azolla_task",
-    # Exceptions
-    "AzollaError",
     "ConnectionError",
-    "ResourceError",
-    "SerializationError",
-    "TaskError",
-    "TimeoutError",
-    "ValidationError",
-    "WorkerError",
-    # Retry policies
     "ExponentialBackoff",
     "FixedBackoff",
     "LinearBackoff",
+    "ResourceError",
     "RetryPolicy",
-    # Types
+    "SerializationError",
+    "Task",
+    "TaskContext",
+    "TaskError",
+    "TaskHandle",
     "TaskResult",
     "TaskStatus",
+    "TimeoutError",
+    "ValidationError",
+    "Worker",
+    "WorkerConfig",
+    "WorkerError",
+    "azolla_task",
 ]

@@ -1,5 +1,6 @@
 """Exception hierarchy for Azolla client library."""
-from typing import Any, Optional, Dict
+from typing import Any, Optional
+
 
 class AzollaError(Exception):
     """Base exception for all Azolla-related errors."""
@@ -15,19 +16,19 @@ class ConnectionError(AzollaError):
 class TaskError(AzollaError):
     """Base exception for task execution errors."""
     def __init__(
-        self, 
-        message: str, 
+        self,
+        message: str,
         error_code: str = "TASK_ERROR",
         error_type: Optional[str] = None,
         retryable: bool = True,
         **extra_data: Any
     ) -> None:
         super().__init__(message, **extra_data)
-        self.error_code = error_code  
+        self.error_code = error_code
         self.error_type = error_type or self.__class__.__name__
         self.retryable = retryable
-        
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             "message": self.message,
