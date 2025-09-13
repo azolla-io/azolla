@@ -6,7 +6,7 @@ from collections.abc import Awaitable
 from datetime import datetime
 from typing import Any, Callable, Optional, Union
 
-import grpc
+import grpc  # type: ignore[import-untyped]
 from pydantic import BaseModel, Field
 
 from azolla._grpc import orchestrator_pb2, orchestrator_pb2_grpc
@@ -259,7 +259,7 @@ class Client:
                     ("grpc.max_receive_message_length", self._config.max_message_size),
                 ],
             )
-            self._stub = orchestrator_pb2_grpc.ClientServiceStub(self._channel)
+            self._stub = orchestrator_pb2_grpc.ClientServiceStub(self._channel)  # type: ignore[no-untyped-call]
 
     def submit_task(
         self, task: Union[str, Callable[..., Awaitable[Any]]], args: Any = None
