@@ -136,7 +136,7 @@ async def main():
 asyncio.run(main())
 ```
 
-**[📖 Full Rust Client Guide](docs/client_library.md) | [🐍 Python Guide](examples/python/) | [🦀 More Examples](examples/)**
+**[📖 Full Documentation](clients/) | [🦀 Rust Client Guide](clients/rust/README.md) | [🐍 Python Client Guide](clients/python/README.md)**
 
 ---
 
@@ -202,8 +202,10 @@ docker-compose up --build
 
 ### Client Libraries
 
-- **🦀 Rust**: `azolla-client = { version = "0.1.0", features = ["macros"] }` - Type-safe with proc macro support
-- **🐍 Python**: `pip install azolla` - Modern async/await with type hints and retry policies
+- **🦀 Rust**: `azolla-client = { version = "0.1.0", features = ["macros"] }` - Type-safe with proc macro support  
+  **[📖 Rust Documentation](clients/rust/README.md)**
+- **🐍 Python**: `pip install azolla` - Modern async/await with type hints and retry policies  
+  **[📖 Python Documentation](clients/python/README.md)**
 - **🟨 JavaScript**: Coming soon - `npm install azolla-client`
 - **🌐 Any Language**: Use gRPC directly
 
