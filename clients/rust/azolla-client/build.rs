@@ -7,8 +7,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_client(true)
         .compile(
             &[
-                &format!("{}/orchestrator.proto", proto_dir),
-                &format!("{}/common.proto", proto_dir)
+                &format!("{proto_dir}/orchestrator.proto"),
+                &format!("{proto_dir}/common.proto")
             ],
             &[proto_dir],
         )?;

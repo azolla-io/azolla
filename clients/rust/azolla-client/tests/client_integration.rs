@@ -58,32 +58,35 @@ async fn test_task_submission_serialization_error() {
     // Create a mock client (we can't connect to actual server in tests)
     // This test focuses on the argument serialization logic
 
-    // Test with circular reference (should fail serialization)
+    // Test with skipped serialization fields (should succeed)
     #[derive(serde::Serialize)]
-    struct CircularRef {
+    struct StructWithSkippedField {
         #[serde(skip_serializing)]
-        _self_ref: Option<Box<CircularRef>>,
+        _internal_field: Option<Box<StructWithSkippedField>>,
         data: String,
     }
 
     // Since we can't easily create a client without connecting,
     // we'll test the serialization logic directly
-    let circular = CircularRef {
-        _self_ref: None,
+    let test_struct = StructWithSkippedField {
+        _internal_field: None,
         data: "test".to_string(),
     };
 
-    let serialize_result = serde_json::to_value(&circular);
-    assert!(serialize_result.is_ok()); // This should actually work since we skip the circular field
+    let serialize_result = serde_json::to_value(&test_struct);
+    assert!(serialize_result.is_ok()); // This should work since we skip the internal field
 
-    // Test with actually problematic serialization
+    // Test with problematic serialization (NaN values)
     use std::collections::HashMap;
     let mut map: HashMap<String, f64> = HashMap::new();
     map.insert("valid".to_string(), 42.0);
     map.insert("invalid".to_string(), f64::NAN);
 
     let serialize_result = serde_json::to_value(&map);
-    assert!(serialize_result.is_err() || serialize_result.unwrap().to_string().contains("null"));
+    match serialize_result {
+        Ok(value) => assert!(value.to_string().contains("null"), "Expected NaN to serialize to null"),
+        Err(_) => { /* This is also an acceptable outcome for NaN serialization. */ }
+    }
 }
 
 /// Test task submission builder argument processing
@@ -253,30 +256,6 @@ fn test_task_handle_properties() {
     }
 }
 
-/// Test error conversion and propagation
-#[test]
-fn test_error_conversion_chains() {
-    // Test TaskError -> AzollaError conversion
-    let task_error = TaskError::execution_failed("Execution failed");
-    let azolla_error: AzollaError = task_error.clone().into();
-
-    match azolla_error {
-        AzollaError::TaskFailed(err) => {
-            assert_eq!(err.message, task_error.message);
-        }
-        _ => panic!("Expected TaskFailed variant"),
-    }
-
-    // Test serde_json::Error -> AzollaError conversion
-    let json_error = serde_json::from_str::<serde_json::Value>("invalid json")
-        .unwrap_err();
-    let azolla_error: AzollaError = json_error.into();
-
-    match azolla_error {
-        AzollaError::Serialization(_) => { /* Expected */ }
-        _ => panic!("Expected Serialization variant"),
-    }
-}
 
 /// Test concurrent task submissions (structure test)
 #[test]

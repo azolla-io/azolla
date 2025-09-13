@@ -734,8 +734,8 @@ mod tests {
         // Signal shutdown
         shutdown_signal.store(true, Ordering::Relaxed);
 
-        // Give it time to process shutdown
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        // Await graceful shutdown of the heartbeat loop
+        heartbeat_handle.await.expect("Heartbeat loop panicked");
 
         // Collect status messages
         let mut status_messages = Vec::new();
@@ -744,8 +744,6 @@ mod tests {
                 status_messages.push((status.current_load, status.available_capacity));
             }
         }
-
-        heartbeat_handle.abort();
 
         // Should have received multiple heartbeat messages
         assert!(status_messages.len() >= 2, "Should have received multiple heartbeat messages, got {}", status_messages.len());
@@ -778,7 +776,9 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(25)).await;
 
         shutdown_signal.store(true, Ordering::Relaxed);
-        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        // Await graceful shutdown of the heartbeat loop
+        heartbeat_handle.await.expect("Heartbeat loop panicked");
 
         let mut found_high_load = false;
         let mut found_max_load = false;
@@ -793,8 +793,6 @@ mod tests {
                 }
             }
         }
-
-        heartbeat_handle.abort();
 
         // Should handle high load scenarios correctly
         assert!(found_high_load || found_max_load, "Should have found high load scenarios");
