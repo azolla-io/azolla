@@ -1,9 +1,8 @@
+use azolla_client::client::{Client, ClientConfig, TaskExecutionResult};
+use azolla_client::error::{AzollaError, TaskError};
 /// Test the purpose of Client: comprehensive integration testing of client functionality
 /// Test the expected behavior: client should handle connection failures, timeouts, and task submission/waiting gracefully
-
 use azolla_client::*;
-use azolla_client::error::{AzollaError, TaskError};
-use azolla_client::client::{Client, ClientConfig, TaskExecutionResult};
 use serde_json::json;
 use std::time::Duration;
 
@@ -14,7 +13,7 @@ async fn test_client_connection_failure() {
     assert!(result.is_err());
 
     match result.err().unwrap() {
-        AzollaError::Connection(_) => { /* Expected */ },
+        AzollaError::Connection(_) => { /* Expected */ }
         _ => panic!("Expected connection error"),
     }
 }
@@ -29,7 +28,7 @@ async fn test_client_builder_invalid_endpoint() {
 
     assert!(result.is_err());
     match result.err().unwrap() {
-        AzollaError::Connection(_) => { /* Expected */ },
+        AzollaError::Connection(_) => { /* Expected */ }
         _ => panic!("Expected connection error for malformed URL"),
     }
 }
@@ -47,7 +46,7 @@ async fn test_client_with_custom_config() {
     assert!(result.is_err());
 
     match result.err().unwrap() {
-        AzollaError::Connection(_) => { /* Expected */ },
+        AzollaError::Connection(_) => { /* Expected */ }
         _ => panic!("Expected connection error"),
     }
 }
@@ -84,7 +83,10 @@ async fn test_task_submission_serialization_error() {
 
     let serialize_result = serde_json::to_value(&map);
     match serialize_result {
-        Ok(value) => assert!(value.to_string().contains("null"), "Expected NaN to serialize to null"),
+        Ok(value) => assert!(
+            value.to_string().contains("null"),
+            "Expected NaN to serialize to null"
+        ),
         Err(_) => { /* This is also an acceptable outcome for NaN serialization. */ }
     }
 }
@@ -228,8 +230,14 @@ fn test_retry_policy_serialization_in_submission() {
 
     // Test that it can be deserialized back
     let deserialized: RetryPolicy = serde_json::from_str(&serialized).unwrap();
-    assert_eq!(retry_policy.stop.max_attempts, deserialized.stop.max_attempts);
-    assert_eq!(retry_policy.retry.include_errors, deserialized.retry.include_errors);
+    assert_eq!(
+        retry_policy.stop.max_attempts,
+        deserialized.stop.max_attempts
+    );
+    assert_eq!(
+        retry_policy.retry.include_errors,
+        deserialized.retry.include_errors
+    );
 }
 
 /// Test task handle creation and properties
@@ -255,7 +263,6 @@ fn test_task_handle_properties() {
         assert!(task_id.len() < 256); // Reasonable length limit
     }
 }
-
 
 /// Test concurrent task submissions (structure test)
 #[test]
@@ -297,19 +304,21 @@ fn test_shepherd_group_configuration() {
 
     // Test that shepherd group names are valid identifiers
     let valid_group = "production-workers-v2";
-    assert!(valid_group.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_'));
+    assert!(valid_group
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_'));
 }
 
 /// Test timeout behavior structure
 #[test]
 fn test_timeout_configuration_ranges() {
     let timeout_ranges = vec![
-        Duration::from_millis(100),    // Very short
-        Duration::from_millis(500),    // Short
-        Duration::from_secs(1),        // Default-ish
-        Duration::from_secs(30),       // Medium
-        Duration::from_secs(300),      // Long
-        Duration::from_secs(3600),     // Very long
+        Duration::from_millis(100), // Very short
+        Duration::from_millis(500), // Short
+        Duration::from_secs(1),     // Default-ish
+        Duration::from_secs(30),    // Medium
+        Duration::from_secs(300),   // Long
+        Duration::from_secs(3600),  // Very long
     ];
 
     for timeout in timeout_ranges {

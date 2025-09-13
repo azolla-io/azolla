@@ -31,17 +31,23 @@ pub trait Task: Send + Sync {
                 // No arguments - try to deserialize from null or empty
                 serde_json::from_value(json!(null))
                     .or_else(|_| serde_json::from_value(json!({})))
-                    .map_err(|e| TaskError::invalid_args(&format!("No arguments provided and type doesn't support empty: {e}")))
+                    .map_err(|e| {
+                        TaskError::invalid_args(&format!(
+                            "No arguments provided and type doesn't support empty: {e}"
+                        ))
+                    })
             }
             1 => {
-                // Single argument - deserialize directly  
-                serde_json::from_value(json_args[0].clone())
-                    .map_err(|e| TaskError::invalid_args(&format!("Failed to parse single argument: {e}")))
+                // Single argument - deserialize directly
+                serde_json::from_value(json_args[0].clone()).map_err(|e| {
+                    TaskError::invalid_args(&format!("Failed to parse single argument: {e}"))
+                })
             }
             _ => {
                 // Multiple arguments - deserialize as array
-                serde_json::from_value(json!(json_args))
-                    .map_err(|e| TaskError::invalid_args(&format!("Failed to parse multiple arguments: {e}")))
+                serde_json::from_value(json!(json_args)).map_err(|e| {
+                    TaskError::invalid_args(&format!("Failed to parse multiple arguments: {e}"))
+                })
             }
         }
     }
@@ -53,7 +59,10 @@ pub trait BoxedTask: Send + Sync {
     fn name(&self) -> &'static str;
 
     /// Execute the task with JSON arguments
-    fn execute_json(&self, args: Vec<Value>) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>>;
+    fn execute_json(
+        &self,
+        args: Vec<Value>,
+    ) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>>;
 }
 
 /// Implementation of BoxedTask for any Task
@@ -62,7 +71,10 @@ impl<T: Task + 'static> BoxedTask for T {
         Task::name(self)
     }
 
-    fn execute_json(&self, args: Vec<Value>) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+    fn execute_json(
+        &self,
+        args: Vec<Value>,
+    ) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
         Box::pin(async move {
             let typed_args = T::parse_args(args)?;
             let future = self.execute(typed_args);
@@ -125,7 +137,10 @@ mod tests {
             "simple_task"
         }
 
-        fn execute(&self, args: Self::Args) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+        fn execute(
+            &self,
+            args: Self::Args,
+        ) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
             Box::pin(async move {
                 Ok(json!({
                     "name": args.name,
@@ -143,10 +158,11 @@ mod tests {
             "tuple_task"
         }
 
-        fn execute(&self, args: Self::Args) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
-            Box::pin(async move {
-                Ok(json!([args.0, args.1, args.2]))
-            })
+        fn execute(
+            &self,
+            args: Self::Args,
+        ) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+            Box::pin(async move { Ok(json!([args.0, args.1, args.2])) })
         }
     }
 
@@ -157,10 +173,11 @@ mod tests {
             "no_args_task"
         }
 
-        fn execute(&self, _args: Self::Args) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
-            Box::pin(async move {
-                Ok(json!({"status": "executed_without_args"}))
-            })
+        fn execute(
+            &self,
+            _args: Self::Args,
+        ) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+            Box::pin(async move { Ok(json!({"status": "executed_without_args"})) })
         }
     }
 
@@ -171,7 +188,10 @@ mod tests {
             "optional_task"
         }
 
-        fn execute(&self, args: Self::Args) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+        fn execute(
+            &self,
+            args: Self::Args,
+        ) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
             Box::pin(async move {
                 Ok(json!({
                     "required": args.required,
@@ -188,7 +208,10 @@ mod tests {
             "complex_task"
         }
 
-        fn execute(&self, args: Self::Args) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+        fn execute(
+            &self,
+            args: Self::Args,
+        ) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
             Box::pin(async move {
                 Ok(json!({
                     "id": args.id,
@@ -206,7 +229,10 @@ mod tests {
             "error_task"
         }
 
-        fn execute(&self, args: Self::Args) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+        fn execute(
+            &self,
+            args: Self::Args,
+        ) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
             Box::pin(async move {
                 if args.count < 0 {
                     Err(TaskError::invalid_args("Count cannot be negative"))
@@ -256,7 +282,7 @@ mod tests {
 
         // Should either succeed with empty args or fail with descriptive error
         match result {
-            Ok(_) => { /* Success case for unit types */ },
+            Ok(_) => { /* Success case for unit types */ }
             Err(e) => {
                 assert_eq!(e.error_type, "InvalidArguments");
                 assert!(e.message.contains("No arguments provided"));
@@ -390,7 +416,11 @@ mod tests {
         assert!(result.is_err());
 
         match result.unwrap_err() {
-            TaskError { error_type, message, .. } => {
+            TaskError {
+                error_type,
+                message,
+                ..
+            } => {
                 assert_eq!(error_type, "InvalidArguments");
                 assert!(message.contains("Count cannot be negative"));
             }
@@ -402,7 +432,11 @@ mod tests {
         assert!(result.is_err());
 
         match result.unwrap_err() {
-            TaskError { error_type, message, .. } => {
+            TaskError {
+                error_type,
+                message,
+                ..
+            } => {
                 assert_eq!(error_type, "ExecutionError");
                 assert!(message.contains("Name cannot be empty"));
             }
@@ -449,7 +483,11 @@ mod tests {
         let args = ComplexArgs {
             id: 987654321,
             metadata,
-            tags: vec!["complex".to_string(), "test".to_string(), "production".to_string()],
+            tags: vec![
+                "complex".to_string(),
+                "test".to_string(),
+                "production".to_string(),
+            ],
         };
 
         let result = complex_task.execute(args).await.unwrap();
@@ -498,7 +536,7 @@ mod tests {
         // This should work for unit type or fail gracefully
         let result = NoArgsTask::parse_args(empty_tuple_args);
         match result {
-            Ok(_) => { /* Unit type parsed successfully */ },
+            Ok(_) => { /* Unit type parsed successfully */ }
             Err(e) => {
                 assert!(e.message.contains("No arguments provided"));
             }

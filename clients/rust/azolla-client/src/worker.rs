@@ -1,16 +1,21 @@
 use crate::error::AzollaError;
+use crate::proto::common::{
+    AnyValue, ErrorResult, SuccessResult, Task as ProtoTask, TaskResult as ProtoTaskResult,
+};
 use crate::proto::orchestrator::cluster_service_client::ClusterServiceClient;
-use crate::proto::orchestrator::{ClientMsg, ServerMsg, Hello, Ack, Status, Ping};
-use crate::proto::common::{Task as ProtoTask, TaskResult as ProtoTaskResult, SuccessResult, ErrorResult, AnyValue};
+use crate::proto::orchestrator::{Ack, ClientMsg, Hello, Ping, ServerMsg, Status};
 use crate::task::{BoxedTask, Task};
+use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::{Arc, atomic::{AtomicU32, AtomicBool, Ordering}};
+use std::sync::{
+    atomic::{AtomicBool, AtomicU32, Ordering},
+    Arc,
+};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::time::interval;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::Channel;
-use serde_json::Value;
 use uuid::Uuid;
 
 /// RAII guard for managing load counter
@@ -98,22 +103,20 @@ impl Worker {
                         log::info!("Shutdown requested, stopping worker");
                         break;
                     }
-                    
+
                     log::error!("Worker connection failed: {e}");
                     log::info!("Reconnecting in {reconnect_delay:?}...");
-                    
+
                     tokio::time::sleep(reconnect_delay).await;
-                    
+
                     // Exponential backoff with jitter
                     let jitter = 1.0 + (reconnect_delay.as_millis() as f64 % 100.0) / 1000.0;
-                    reconnect_delay = std::cmp::min(
-                        reconnect_delay.mul_f64(1.5 * jitter),
-                        MAX_RECONNECT_DELAY
-                    );
+                    reconnect_delay =
+                        std::cmp::min(reconnect_delay.mul_f64(1.5 * jitter), MAX_RECONNECT_DELAY);
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -121,15 +124,14 @@ impl Worker {
     async fn run_connection(&self) -> Result<(), AzollaError> {
         // Connect to orchestrator
         let mut client = self.connect().await?;
-        
+
         // Create bidirectional stream
         let (tx, rx) = mpsc::channel(1000);
         let request_stream = ReceiverStream::new(rx);
-        
+
         // Start the stream
-        let response_stream = client.stream(request_stream).await?
-            .into_inner();
-        
+        let response_stream = client.stream(request_stream).await?.into_inner();
+
         // Send hello message
         let hello_msg = ClientMsg {
             kind: Some(crate::proto::orchestrator::client_msg::Kind::Hello(Hello {
@@ -139,52 +141,61 @@ impl Worker {
                 shepherd_group: self.config.shepherd_group.clone(),
             })),
         };
-        
-        tx.send(hello_msg).await.map_err(|e| 
-            AzollaError::WorkerError(format!("Failed to send hello message: {e}"))
-        )?;
-        
+
+        tx.send(hello_msg)
+            .await
+            .map_err(|e| AzollaError::WorkerError(format!("Failed to send hello message: {e}")))?;
+
         log::info!("Shepherd {} registered successfully", self.shepherd_uuid);
-        
+
         // Reset reconnect delay on successful connection
         // (This would be handled by the main loop)
-        
+
         // Start heartbeat task
         let heartbeat_tx = tx.clone();
         let heartbeat_interval = self.config.heartbeat_interval;
         let current_load = self.current_load.clone();
         let shutdown_signal = self.shutdown_signal.clone();
-        
+
         let heartbeat_handle = tokio::spawn(async move {
-            Self::heartbeat_loop(heartbeat_tx, heartbeat_interval, current_load, shutdown_signal).await
+            Self::heartbeat_loop(
+                heartbeat_tx,
+                heartbeat_interval,
+                current_load,
+                shutdown_signal,
+            )
+            .await
         });
-        
+
         // Main message processing loop
         let result = self.process_messages(response_stream, tx).await;
-        
+
         // Cancel heartbeat task
         heartbeat_handle.abort();
-        
+
         result
     }
-    
+
     /// Connect to the orchestrator
     async fn connect(&self) -> Result<ClusterServiceClient<Channel>, AzollaError> {
         let endpoint = format!("http://{}", self.config.orchestrator_endpoint);
-        let client = ClusterServiceClient::connect(endpoint).await
-            .map_err(|e| AzollaError::ConnectionError(format!("Failed to connect to orchestrator: {e}")))?;
+        let client = ClusterServiceClient::connect(endpoint).await.map_err(|e| {
+            AzollaError::ConnectionError(format!("Failed to connect to orchestrator: {e}"))
+        })?;
         Ok(client)
     }
-    
+
     /// Process incoming messages from orchestrator
     async fn process_messages(
         &self,
         mut response_stream: tonic::Streaming<ServerMsg>,
         tx: mpsc::Sender<ClientMsg>,
     ) -> Result<(), AzollaError> {
-        while let Some(message) = response_stream.message().await
-            .map_err(|e| AzollaError::WorkerError(format!("Stream error: {e}")))? {
-                
+        while let Some(message) = response_stream
+            .message()
+            .await
+            .map_err(|e| AzollaError::WorkerError(format!("Stream error: {e}")))?
+        {
             match message.kind {
                 Some(crate::proto::orchestrator::server_msg::Kind::Task(task)) => {
                     self.handle_task(task, tx.clone()).await?;
@@ -196,59 +207,65 @@ impl Worker {
                     log::warn!("Received message with no kind");
                 }
             }
-            
+
             if self.shutdown_signal.load(Ordering::Relaxed) {
                 break;
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Handle incoming task from orchestrator
-    async fn handle_task(&self, task: ProtoTask, tx: mpsc::Sender<ClientMsg>) -> Result<(), AzollaError> {
+    async fn handle_task(
+        &self,
+        task: ProtoTask,
+        tx: mpsc::Sender<ClientMsg>,
+    ) -> Result<(), AzollaError> {
         log::info!("Received task: {} ({})", task.name, task.task_id);
-        
+
         // Send acknowledgment
         let ack_msg = ClientMsg {
             kind: Some(crate::proto::orchestrator::client_msg::Kind::Ack(Ack {
                 task_id: task.task_id.clone(),
             })),
         };
-        
+
         if let Err(e) = tx.send(ack_msg).await {
             log::error!("Failed to send ack for task {}: {e}", task.task_id);
             return Err(AzollaError::WorkerError(format!("Failed to send ack: {e}")));
         }
-        
+
         // Execute task asynchronously
         let tasks = self.tasks.clone();
         let task_id = task.task_id.clone();
-        
+
         // Create load guard to ensure counter is properly managed even on panic
         let load_guard = LoadGuard::new(self.current_load.clone());
-        
+
         tokio::spawn(async move {
             // Move the guard into the async task to ensure it lives for the task duration
             let _guard = load_guard;
-            
+
             let result = Self::execute_task_impl_internal(tasks, task).await;
-            
+
             // Send result
             let result_msg = ClientMsg {
-                kind: Some(crate::proto::orchestrator::client_msg::Kind::TaskResult(result)),
+                kind: Some(crate::proto::orchestrator::client_msg::Kind::TaskResult(
+                    result,
+                )),
             };
-            
+
             if let Err(e) = tx.send(result_msg).await {
                 log::error!("Failed to send result for task {task_id}: {e}");
             }
-            
+
             // Load counter automatically decremented when _guard is dropped
         });
-        
+
         Ok(())
     }
-    
+
     /// Execute a task implementation
     #[cfg(test)]
     pub async fn execute_task_impl(
@@ -264,7 +281,7 @@ impl Worker {
         proto_task: ProtoTask,
     ) -> ProtoTaskResult {
         let task_id = proto_task.task_id.clone();
-        
+
         // Find the task implementation
         let task_impl = match tasks.get(&proto_task.name) {
             Some(task) => task.clone(),
@@ -272,17 +289,22 @@ impl Worker {
                 log::error!("No implementation found for task: {}", proto_task.name);
                 return ProtoTaskResult {
                     task_id,
-                    result_type: Some(crate::proto::common::task_result::ResultType::Error(ErrorResult {
-                        r#type: "TaskNotFound".to_string(),
-                        message: format!("No implementation found for task: {}", proto_task.name),
-                        code: "TASK_NOT_FOUND".to_string(),
-                        stacktrace: "".to_string(),
-                        data: None,
-                    })),
+                    result_type: Some(crate::proto::common::task_result::ResultType::Error(
+                        ErrorResult {
+                            r#type: "TaskNotFound".to_string(),
+                            message: format!(
+                                "No implementation found for task: {}",
+                                proto_task.name
+                            ),
+                            code: "TASK_NOT_FOUND".to_string(),
+                            stacktrace: "".to_string(),
+                            data: None,
+                        },
+                    )),
                 };
             }
         };
-        
+
         // Parse arguments
         let args = match Self::parse_task_args(&proto_task.args) {
             Ok(args) => args,
@@ -290,53 +312,59 @@ impl Worker {
                 log::error!("Failed to parse args for task {task_id}: {e}");
                 return ProtoTaskResult {
                     task_id,
-                    result_type: Some(crate::proto::common::task_result::ResultType::Error(ErrorResult {
-                        r#type: "ArgumentParseError".to_string(),
-                        message: format!("Failed to parse task arguments: {e}"),
-                        code: "ARG_PARSE_ERROR".to_string(),
-                        stacktrace: "".to_string(),
-                        data: None,
-                    })),
+                    result_type: Some(crate::proto::common::task_result::ResultType::Error(
+                        ErrorResult {
+                            r#type: "ArgumentParseError".to_string(),
+                            message: format!("Failed to parse task arguments: {e}"),
+                            code: "ARG_PARSE_ERROR".to_string(),
+                            stacktrace: "".to_string(),
+                            data: None,
+                        },
+                    )),
                 };
             }
         };
-        
+
         // Note: Argument validation is now handled automatically by the type system
-        
+
         // Execute the task
         let start_time = Instant::now();
         let execution_result = task_impl.execute_json(args).await;
         let execution_time = start_time.elapsed();
-        
+
         log::info!("Task {task_id} completed in {execution_time:?}");
-        
+
         match execution_result {
-            Ok(result) => {
-                ProtoTaskResult {
-                    task_id,
-                    result_type: Some(crate::proto::common::task_result::ResultType::Success(SuccessResult {
+            Ok(result) => ProtoTaskResult {
+                task_id,
+                result_type: Some(crate::proto::common::task_result::ResultType::Success(
+                    SuccessResult {
                         result: Some(AnyValue {
-                            value: Some(crate::proto::common::any_value::Value::JsonValue(result.to_string())),
+                            value: Some(crate::proto::common::any_value::Value::JsonValue(
+                                result.to_string(),
+                            )),
                         }),
-                    })),
-                }
-            }
+                    },
+                )),
+            },
             Err(e) => {
                 log::error!("Task {task_id} failed: {e}");
                 ProtoTaskResult {
                     task_id,
-                    result_type: Some(crate::proto::common::task_result::ResultType::Error(ErrorResult {
-                        r#type: e.error_type().unwrap_or("TaskExecutionError".to_string()),
-                        message: e.to_string(),
-                        code: e.error_code().unwrap_or("EXECUTION_ERROR".to_string()),
-                        stacktrace: "".to_string(),
-                        data: None,
-                    })),
+                    result_type: Some(crate::proto::common::task_result::ResultType::Error(
+                        ErrorResult {
+                            r#type: e.error_type().unwrap_or("TaskExecutionError".to_string()),
+                            message: e.to_string(),
+                            code: e.error_code().unwrap_or("EXECUTION_ERROR".to_string()),
+                            stacktrace: "".to_string(),
+                            data: None,
+                        },
+                    )),
                 }
             }
         }
     }
-    
+
     /// Parse task arguments from JSON string
     fn parse_task_args(args_json: &str) -> Result<Vec<Value>, serde_json::Error> {
         if args_json.is_empty() {
@@ -344,14 +372,18 @@ impl Worker {
         }
         serde_json::from_str(args_json)
     }
-    
+
     /// Handle ping message from orchestrator
-    async fn handle_ping(&self, _ping: Ping, _tx: mpsc::Sender<ClientMsg>) -> Result<(), AzollaError> {
+    async fn handle_ping(
+        &self,
+        _ping: Ping,
+        _tx: mpsc::Sender<ClientMsg>,
+    ) -> Result<(), AzollaError> {
         // Pings are handled automatically by the gRPC layer
         // We could add custom ping handling here if needed
         Ok(())
     }
-    
+
     /// Heartbeat loop for status reporting
     async fn heartbeat_loop(
         tx: mpsc::Sender<ClientMsg>,
@@ -360,25 +392,27 @@ impl Worker {
         shutdown_signal: Arc<AtomicBool>,
     ) {
         let mut interval = interval(interval_duration);
-        
+
         while !shutdown_signal.load(Ordering::Relaxed) {
             interval.tick().await;
-            
+
             let current = current_load.load(Ordering::Relaxed);
             let status_msg = ClientMsg {
-                kind: Some(crate::proto::orchestrator::client_msg::Kind::Status(Status {
-                    current_load: current,
-                    available_capacity: 100u32.saturating_sub(current),
-                })),
+                kind: Some(crate::proto::orchestrator::client_msg::Kind::Status(
+                    Status {
+                        current_load: current,
+                        available_capacity: 100u32.saturating_sub(current),
+                    },
+                )),
             };
-            
+
             if let Err(e) = tx.send(status_msg).await {
                 log::error!("Failed to send status update: {e}");
                 break;
             }
         }
     }
-    
+
     /// Signal shutdown to the worker
     pub fn shutdown(&self) {
         self.shutdown_signal.store(true, Ordering::Relaxed);
@@ -420,7 +454,8 @@ impl WorkerBuilder {
     /// Register a task implementation
     pub fn register_task<T: Task + 'static>(mut self, task: T) -> Self {
         let name = task.name().to_string();
-        self.tasks.insert(name, Arc::new(task) as Arc<dyn BoxedTask>);
+        self.tasks
+            .insert(name, Arc::new(task) as Arc<dyn BoxedTask>);
         self
     }
 
@@ -449,25 +484,25 @@ impl WorkerBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicU32, Ordering};
-    use tokio::sync::mpsc;
+    use crate::TaskResult;
     use serde_json::json;
     use std::future::Future;
     use std::pin::Pin;
-    use crate::TaskResult;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
 
     /// Test the purpose of LoadGuard: ensure load counter is managed correctly even on panic
     #[test]
     fn test_load_guard_increments_on_create() {
         let counter = Arc::new(AtomicU32::new(0));
         assert_eq!(counter.load(Ordering::Relaxed), 0);
-        
+
         {
             let _guard = LoadGuard::new(counter.clone());
             assert_eq!(counter.load(Ordering::Relaxed), 1);
         } // _guard drops here
-        
+
         assert_eq!(counter.load(Ordering::Relaxed), 0);
     }
 
@@ -475,13 +510,13 @@ mod tests {
     #[test]
     fn test_load_guard_handles_panic() {
         let counter = Arc::new(AtomicU32::new(0));
-        
+
         let result = std::panic::catch_unwind(|| {
             let _guard = LoadGuard::new(counter.clone());
             assert_eq!(counter.load(Ordering::Relaxed), 1);
             panic!("Simulated panic in task!");
         });
-        
+
         assert!(result.is_err());
         // Critical test: counter should be back to 0 even after panic
         assert_eq!(counter.load(Ordering::Relaxed), 0);
@@ -491,53 +526,57 @@ mod tests {
     #[test]
     fn test_multiple_load_guards() {
         let counter = Arc::new(AtomicU32::new(0));
-        
+
         {
             let _guard1 = LoadGuard::new(counter.clone());
             assert_eq!(counter.load(Ordering::Relaxed), 1);
-            
+
             {
                 let _guard2 = LoadGuard::new(counter.clone());
                 assert_eq!(counter.load(Ordering::Relaxed), 2);
             }
-            
+
             assert_eq!(counter.load(Ordering::Relaxed), 1);
         }
-        
+
         assert_eq!(counter.load(Ordering::Relaxed), 0);
     }
 
     // Mock task that panics for testing
     struct PanickingTask;
-    
+
     impl Task for PanickingTask {
         type Args = ();
 
         fn name(&self) -> &'static str {
             "panicking_task"
         }
-        
-        fn execute(&self, _args: Self::Args) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+
+        fn execute(
+            &self,
+            _args: Self::Args,
+        ) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
             Box::pin(async {
                 panic!("Task intentionally panicked for testing!");
             })
         }
     }
 
-    // Mock task that succeeds for testing  
+    // Mock task that succeeds for testing
     struct SuccessTask;
-    
+
     impl Task for SuccessTask {
         type Args = ();
 
         fn name(&self) -> &'static str {
             "success_task"
         }
-        
-        fn execute(&self, _args: Self::Args) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
-            Box::pin(async {
-                Ok(json!({"status": "success"}))
-            })
+
+        fn execute(
+            &self,
+            _args: Self::Args,
+        ) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+            Box::pin(async { Ok(json!({"status": "success"})) })
         }
     }
 
@@ -546,8 +585,11 @@ mod tests {
     async fn test_task_execution_panic_safety() {
         let config = WorkerConfig::default();
         let mut tasks = HashMap::new();
-        tasks.insert("panicking_task".to_string(), Arc::new(PanickingTask) as Arc<dyn BoxedTask>);
-        
+        tasks.insert(
+            "panicking_task".to_string(),
+            Arc::new(PanickingTask) as Arc<dyn BoxedTask>,
+        );
+
         let worker = Worker {
             config,
             tasks,
@@ -571,17 +613,26 @@ mod tests {
 
         // Handle the task - this should not panic the worker itself
         let result = worker.handle_task(proto_task, tx).await;
-        assert!(result.is_ok(), "handle_incoming_task should not fail even with panicking tasks");
+        assert!(
+            result.is_ok(),
+            "handle_incoming_task should not fail even with panicking tasks"
+        );
 
         // Give the spawned task time to complete/panic
         tokio::time::sleep(Duration::from_millis(100)).await;
-        
+
         // Critical assertion: load should be back to 0 even though the task panicked
-        assert_eq!(worker.current_load.load(Ordering::Relaxed), 0, "Load counter should be reset even after task panic");
+        assert_eq!(
+            worker.current_load.load(Ordering::Relaxed),
+            0,
+            "Load counter should be reset even after task panic"
+        );
 
         // Verify we get an error result message
         if let Ok(msg) = rx.try_recv() {
-            if let Some(crate::proto::orchestrator::client_msg::Kind::TaskResult(task_result)) = msg.kind {
+            if let Some(crate::proto::orchestrator::client_msg::Kind::TaskResult(task_result)) =
+                msg.kind
+            {
                 assert!(task_result.result_type.is_some());
                 // Should be an error result due to panic
             }
@@ -593,8 +644,11 @@ mod tests {
     async fn test_task_execution_success_load_management() {
         let config = WorkerConfig::default();
         let mut tasks = HashMap::new();
-        tasks.insert("success_task".to_string(), Arc::new(SuccessTask) as Arc<dyn BoxedTask>);
-        
+        tasks.insert(
+            "success_task".to_string(),
+            Arc::new(SuccessTask) as Arc<dyn BoxedTask>,
+        );
+
         let worker = Worker {
             config,
             tasks,
@@ -622,13 +676,15 @@ mod tests {
 
         // Give the task time to complete
         tokio::time::sleep(Duration::from_millis(100)).await;
-        
+
         // Load should be back to 0 after successful completion
         assert_eq!(worker.current_load.load(Ordering::Relaxed), 0);
 
         // Verify we get a success result message
         if let Ok(msg) = rx.try_recv() {
-            if let Some(crate::proto::orchestrator::client_msg::Kind::TaskResult(task_result)) = msg.kind {
+            if let Some(crate::proto::orchestrator::client_msg::Kind::TaskResult(task_result)) =
+                msg.kind
+            {
                 assert!(task_result.result_type.is_some());
             }
         }
@@ -653,9 +709,12 @@ mod tests {
             .domain("test-domain")
             .shepherd_group("test-group")
             .max_concurrency(5);
-        
+
         // We can verify the builder accepts our configuration
-        assert_eq!(builder.config.orchestrator_endpoint, "test-orchestrator:8080");
+        assert_eq!(
+            builder.config.orchestrator_endpoint,
+            "test-orchestrator:8080"
+        );
         assert_eq!(builder.config.domain, "test-domain");
         assert_eq!(builder.config.shepherd_group, "test-group");
         assert_eq!(builder.config.max_concurrency, 5);
@@ -721,7 +780,7 @@ mod tests {
             tx,
             Duration::from_millis(25), // Fast heartbeat for testing
             current_load.clone(),
-            shutdown_signal.clone()
+            shutdown_signal.clone(),
         ));
 
         // Let heartbeat run for a bit
@@ -746,13 +805,24 @@ mod tests {
         }
 
         // Should have received multiple heartbeat messages
-        assert!(status_messages.len() >= 2, "Should have received multiple heartbeat messages, got {}", status_messages.len());
+        assert!(
+            status_messages.len() >= 2,
+            "Should have received multiple heartbeat messages, got {}",
+            status_messages.len()
+        );
 
         // Should reflect the load changes
-        let has_load_3 = status_messages.iter().any(|(load, capacity)| *load == 3 && *capacity == 97);
-        let has_load_7 = status_messages.iter().any(|(load, capacity)| *load == 7 && *capacity == 93);
+        let has_load_3 = status_messages
+            .iter()
+            .any(|(load, capacity)| *load == 3 && *capacity == 97);
+        let has_load_7 = status_messages
+            .iter()
+            .any(|(load, capacity)| *load == 7 && *capacity == 93);
 
-        assert!(has_load_3 || has_load_7, "Should have captured load changes");
+        assert!(
+            has_load_3 || has_load_7,
+            "Should have captured load changes"
+        );
     }
 
     /// Test heartbeat with high load scenarios
@@ -766,7 +836,7 @@ mod tests {
             tx,
             Duration::from_millis(20),
             current_load.clone(),
-            shutdown_signal.clone()
+            shutdown_signal.clone(),
         ));
 
         tokio::time::sleep(Duration::from_millis(60)).await;
@@ -795,7 +865,10 @@ mod tests {
         }
 
         // Should handle high load scenarios correctly
-        assert!(found_high_load || found_max_load, "Should have found high load scenarios");
+        assert!(
+            found_high_load || found_max_load,
+            "Should have found high load scenarios"
+        );
     }
 
     /// Test worker connection error handling
@@ -819,7 +892,7 @@ mod tests {
         assert!(connect_result.is_err());
 
         match connect_result.unwrap_err() {
-            AzollaError::ConnectionError(_) => { /* Expected */ },
+            AzollaError::ConnectionError(_) => { /* Expected */ }
             _ => panic!("Expected ConnectionError for invalid hostname"),
         }
     }
@@ -888,7 +961,10 @@ mod tests {
     #[tokio::test]
     async fn test_execute_task_invalid_args() {
         let mut tasks = HashMap::new();
-        tasks.insert("success_task".to_string(), Arc::new(SuccessTask) as Arc<dyn BoxedTask>);
+        tasks.insert(
+            "success_task".to_string(),
+            Arc::new(SuccessTask) as Arc<dyn BoxedTask>,
+        );
 
         let proto_task = crate::proto::common::Task {
             task_id: "invalid-args-test".to_string(),
@@ -937,8 +1013,14 @@ mod tests {
     #[test]
     fn test_worker_task_count() {
         let mut tasks = HashMap::new();
-        tasks.insert("task1".to_string(), Arc::new(SuccessTask) as Arc<dyn BoxedTask>);
-        tasks.insert("task2".to_string(), Arc::new(PanickingTask) as Arc<dyn BoxedTask>);
+        tasks.insert(
+            "task1".to_string(),
+            Arc::new(SuccessTask) as Arc<dyn BoxedTask>,
+        );
+        tasks.insert(
+            "task2".to_string(),
+            Arc::new(PanickingTask) as Arc<dyn BoxedTask>,
+        );
 
         let worker = Worker {
             config: WorkerConfig::default(),
@@ -981,7 +1063,10 @@ mod tests {
         // Check that load increases
         tokio::time::sleep(Duration::from_millis(5)).await;
         let mid_load = counter.load(Ordering::Relaxed);
-        assert!(mid_load > 0 && mid_load <= 5, "Load should be between 1 and 5, got {mid_load}");
+        assert!(
+            mid_load > 0 && mid_load <= 5,
+            "Load should be between 1 and 5, got {mid_load}"
+        );
 
         // Wait for all tasks to complete
         for handle in handles {

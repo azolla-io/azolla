@@ -1,8 +1,7 @@
 /// Test the purpose of error handling: ensure errors propagate correctly through the entire stack
 /// Test the expected behavior: errors from tasks, workers, and clients should be handled consistently
-
 use azolla_client::error::{AzollaError, TaskError};
-use azolla_client::task::{Task, TaskResult, BoxedTask};
+use azolla_client::task::{BoxedTask, Task, TaskResult};
 use serde_json::json;
 use std::future::Future;
 use std::pin::Pin;
@@ -24,9 +23,7 @@ impl Task for FailingTask {
     }
 
     fn execute(&self, _: Self::Args) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
-        Box::pin(async {
-            Err(TaskError::execution_failed("Intentional test failure"))
-        })
+        Box::pin(async { Err(TaskError::execution_failed("Intentional test failure")) })
     }
 }
 
@@ -37,7 +34,10 @@ impl Task for TimeoutTask {
         "timeout_task"
     }
 
-    fn execute(&self, duration_ms: Self::Args) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+    fn execute(
+        &self,
+        duration_ms: Self::Args,
+    ) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
         Box::pin(async move {
             tokio::time::sleep(Duration::from_millis(duration_ms)).await;
             Err(TaskError::execution_failed("Task timed out"))
@@ -114,7 +114,11 @@ async fn test_boxed_task_error_propagation() {
     // Should get error result
     assert!(result.is_err());
     match result.unwrap_err() {
-        TaskError { error_type, message, .. } => {
+        TaskError {
+            error_type,
+            message,
+            ..
+        } => {
             assert_eq!(error_type, "ExecutionError");
             assert!(message.contains("Intentional test failure"));
         }
@@ -135,7 +139,9 @@ async fn test_error_type_propagation() {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            TaskError { error_type, code, .. } => {
+            TaskError {
+                error_type, code, ..
+            } => {
                 assert_eq!(error_type, expected_type);
                 assert_eq!(code, Some(expected_code.to_string()));
             }
@@ -149,9 +155,18 @@ async fn test_validation_error_propagation() {
     let validation_task: Arc<dyn BoxedTask> = Arc::new(ValidationErrorTask);
 
     let validation_cases = vec![
-        (vec![json!({"email": "invalid-email", "age": 25})], "Invalid email format"),
-        (vec![json!({"email": "test@example.com", "age": -5})], "Age must be between 0 and 150"),
-        (vec![json!({"email": "test@example.com", "age": 200})], "Age must be between 0 and 150"),
+        (
+            vec![json!({"email": "invalid-email", "age": 25})],
+            "Invalid email format",
+        ),
+        (
+            vec![json!({"email": "test@example.com", "age": -5})],
+            "Age must be between 0 and 150",
+        ),
+        (
+            vec![json!({"email": "test@example.com", "age": 200})],
+            "Age must be between 0 and 150",
+        ),
     ];
 
     for (args, expected_message) in validation_cases {
@@ -159,7 +174,11 @@ async fn test_validation_error_propagation() {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            TaskError { error_type, message, .. } => {
+            TaskError {
+                error_type,
+                message,
+                ..
+            } => {
                 assert_eq!(error_type, "InvalidArguments");
                 assert!(message.contains(expected_message));
             }
@@ -184,8 +203,14 @@ async fn test_validation_success_case() {
 #[test]
 fn test_argument_parsing_errors() {
     let invalid_arg_cases = vec![
-        (vec![json!("not_an_object")], "Failed to parse single argument"),
-        (vec![json!({"invalid": "structure"})], "Failed to parse single argument"),
+        (
+            vec![json!("not_an_object")],
+            "Failed to parse single argument",
+        ),
+        (
+            vec![json!({"invalid": "structure"})],
+            "Failed to parse single argument",
+        ),
         (vec![], "No arguments provided"),
     ];
 
@@ -318,7 +343,10 @@ fn test_error_with_complex_data() {
 
     assert_eq!(deserialized.data, Some(error_data));
     assert_eq!(deserialized.code, Some("VAL_001".to_string()));
-    assert_eq!(deserialized.stacktrace, Some("at validation.rs:123".to_string()));
+    assert_eq!(
+        deserialized.stacktrace,
+        Some("at validation.rs:123".to_string())
+    );
 }
 
 /// Test error propagation in async contexts
@@ -390,7 +418,11 @@ async fn test_timeout_error_handling() {
     assert!(result.is_err());
 
     match result.unwrap_err() {
-        TaskError { error_type, message, .. } => {
+        TaskError {
+            error_type,
+            message,
+            ..
+        } => {
             assert_eq!(error_type, "ExecutionError");
             assert!(message.contains("timed out"));
         }
