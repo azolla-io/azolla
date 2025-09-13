@@ -176,7 +176,7 @@ class TestE2EOrchestrator:
             # Wait for result
             logger.info("🧪 TEST: Waiting for task result (timeout=15s)...")
             result = await handle.wait(timeout=15.0)
-            logger.info(f"🧪 TEST: Got task result!")
+            logger.info("🧪 TEST: Got task result!")
 
             # Debug: Log the actual result to understand what's happening
             logger.info(f"Task result: {result}")
