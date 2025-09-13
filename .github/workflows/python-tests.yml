@@ -24,8 +24,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  python-comprehensive-tests:
-    name: Python Comprehensive Tests
+  test-and-coverage:
+    name: Python Test and Coverage
     runs-on: ubuntu-latest
     
     services:
@@ -136,8 +136,8 @@ jobs:
       uses: codecov/codecov-action@v3
       with:
         file: ./clients/python/coverage.xml
-        flags: python-comprehensive
-        name: Python Comprehensive Tests
+        flags: python-test-and-coverage
+        name: Python Test and Coverage
 
   python-security:
     name: Python Security Checks
