@@ -114,7 +114,6 @@ class TestE2EOrchestrator:
             logger.info("✅ Flaky task succeeded after retry")
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="TODO: Fix orchestrator communication with Python workers")
     async def test_task_fails_after_exhausting_attempts(self):
         """Test that always_fail_task fails after exhausting all retry attempts."""
         async with integration_test_environment(PROJECT_ROOT) as (orchestrator, worker_manager):
@@ -142,8 +141,15 @@ class TestE2EOrchestrator:
             # Wait for result
             result = await handle.wait(timeout=15.0)
 
+            # Debug: Log the actual result to understand what's happening
+            logger.info(f"Task result: {result}")
+            logger.info(f"Result status: {result.status}")
+            logger.info(f"Result success: {result.success}")
+            logger.info(f"Result value: {result.value}")
+            logger.info(f"Result error: {result.error}")
+
             # Verify result
-            assert not result.success, "Task should have failed"
+            assert not result.success, f"Task should have failed, but got: {result}"
             # TODO: Fix orchestrator communication with Python workers
             # assert result.error is not None, "Error message should be present"
             # assert "always fail" in result.error.lower(), f"Unexpected error: {result.error}"
