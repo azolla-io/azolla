@@ -158,6 +158,8 @@ markers = [
 [tool.coverage.run]
 source = ["src"]
 branch = true
+parallel = true
+concurrency = ["thread", "greenlet"]
 
 [tool.coverage.report]
 exclude_lines = [
@@ -172,3 +174,8 @@ exclude_lines = [
     "class .*\\bProtocol\\):",
     "@(abc\\.)?abstractmethod",
 ]
+show_missing = true
+skip_covered = false
+
+[tool.coverage.html]
+directory = "htmlcov"
