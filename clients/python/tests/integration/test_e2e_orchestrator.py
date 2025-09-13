@@ -404,7 +404,7 @@ class TestSingleTaskExecution:
             cwd=worker_script.parent,
         )
 
-        stdout, stderr = await process.communicate()
+        stdout, _ = await process.communicate()
 
         # The task should fail
         assert process.returncode == 1, "Process should have failed"

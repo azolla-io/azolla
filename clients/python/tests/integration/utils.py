@@ -224,7 +224,7 @@ class OrchestratorManager:
         logger.info(f"Waiting for orchestrator to be ready on {self.endpoint}")
 
         if not await wait_for_port("localhost", self.port, timeout=timeout):
-            stdout, stderr = self.process_manager.get_output()
+            _, stderr = self.process_manager.get_output()
             error_msg = f"Orchestrator failed to start on port {self.port} within {timeout}s"
             if stderr:
                 error_msg += f"\nSTDERR:\n{stderr}"
