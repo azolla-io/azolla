@@ -13,3 +13,24 @@ repos:
         language: system
         types: [rust]
         pass_filenames: false
+      - id: python-ruff-check
+        name: ruff check
+        entry: bash -c 'cd clients/python && ruff check src tests'
+        language: system
+        files: ^clients/python/.*\.py$
+        exclude: ^clients/python/src/azolla/_grpc/.*\.py$
+        pass_filenames: false
+      - id: python-black-check
+        name: black check
+        entry: bash -c 'cd clients/python && black --check src tests'
+        language: system
+        files: ^clients/python/.*\.py$
+        exclude: ^clients/python/src/azolla/_grpc/.*\.py$
+        pass_filenames: false
+      - id: python-mypy-check
+        name: mypy check
+        entry: bash -c 'cd clients/python && mypy src'
+        language: system
+        files: ^clients/python/src/.*\.py$
+        exclude: ^clients/python/src/azolla/_grpc/.*\.py$
+        pass_filenames: false

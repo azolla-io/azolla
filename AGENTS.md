@@ -257,9 +257,15 @@ This command performs an intelligent git commit by analyzing changes and followi
 1. **Analyze current state**: Run `git status` and `git diff` to understand all changes
 2. **Remove unnecessary comments**: Make sure no new comments are added for simple logic or self-explanatory code.
 3. **Stage relevant files**: Add untracked and modified files that should be committed
-4. **Linting**: Run `cargo fmt` and `cargo clippy`, accept formatting changes and fix violations.
+4. **Linting**: Run linting commands for all relevant languages:
+   - **Rust**: Run `cargo fmt` and `cargo clippy`, accept formatting changes and fix violations
+   - **Python**: For Python client changes, run:
+     - `ruff check src tests --fix` (fix auto-fixable issues)
+     - `black src tests` (format code)
+     - `ruff check src tests` (verify all issues resolved)
+     - Run these from the `clients/python/` directory
 5. **Generate commit message**: Create a commit message with a concise one-sentence title describing the main change. No other information should be added to the commit message.
-6. **Create commit**: Create the commit, handle all pre-commit failures, and push.
+6. **Create commit**: Create the commit, never use the `--no-verify` option to bypass hooks and handle all pre-commit failures.
 
 ### Git Commit Message Standards
 

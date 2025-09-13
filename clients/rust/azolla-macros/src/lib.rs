@@ -26,7 +26,7 @@ pub fn azolla_task(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // Extract parameter information
     let mut param_types = Vec::new();
     let mut param_names = Vec::new();
-    
+
     for input in input_fn.sig.inputs.iter() {
         if let FnArg::Typed(pat_type) = input {
             if let Pat::Ident(pat_ident) = pat_type.pat.as_ref() {
@@ -39,24 +39,24 @@ pub fn azolla_task(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // Generate wrapper struct name
     let fn_name_pascal = to_pascal_case(&fn_name_str);
     let wrapper_struct_name = syn::Ident::new(&format!("{}Task", fn_name_pascal), fn_name.span());
-    
+
     // Generate the Args type and unpacking logic
     let (args_type, arg_unpacking) = match param_types.len() {
         0 => {
             // No parameters
             (quote! { () }, quote! { let _ = args; })
-        },
+        }
         1 => {
             // Single parameter
             let param_type = &param_types[0];
             let param_name = &param_names[0];
             (quote! { #param_type }, quote! { let #param_name = args; })
-        },
+        }
         _ => {
             // Multiple parameters - use tuple
             (
                 quote! { (#(#param_types),*) },
-                quote! { let (#(#param_names),*) = args; }
+                quote! { let (#(#param_names),*) = args; },
             )
         }
     };
@@ -65,10 +65,10 @@ pub fn azolla_task(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let expanded = quote! {
         // Keep the original function
         #input_fn
-        
+
         // Generate wrapper struct
         #fn_vis struct #wrapper_struct_name;
-        
+
         // Generate the Task implementation
         impl ::azolla_client::task::Task for #wrapper_struct_name {
             type Args = #args_type;
@@ -76,15 +76,15 @@ pub fn azolla_task(_attr: TokenStream, item: TokenStream) -> TokenStream {
             fn name(&self) -> &'static str {
                 #fn_name_str
             }
-            
+
             fn execute(&self, args: Self::Args) -> ::std::pin::Pin<::std::boxed::Box<dyn ::std::future::Future<Output = ::azolla_client::task::TaskResult> + ::std::marker::Send + '_>> {
                 ::std::boxed::Box::pin(async move {
                     // Unpack arguments
                     #arg_unpacking
-                    
+
                     // Call original function
                     let result = #fn_name(#(#param_names),*).await;
-                    
+
                     // Convert result to JSON
                     match result {
                         Ok(value) => {
@@ -100,6 +100,6 @@ pub fn azolla_task(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
     };
-    
+
     TokenStream::from(expanded)
 }

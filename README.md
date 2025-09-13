@@ -98,15 +98,45 @@ async fn main() -> Result<(), azolla_client::AzollaError> {
 
 **Python Example:**
 ```python
-# Python client (coming soon)
-import azolla
+import asyncio
+from azolla import Client, azolla_task, Worker
+from azolla.retry import RetryPolicy, ExponentialBackoff
 
-client = azolla.Client("localhost:52710")
-result = client.submit_task("greet_user", args=["Alice", 25])
-print(result)  # {"greeting": "Hello Alice! You are 25 years old.", ...}
+# Define a task with the decorator
+@azolla_task
+async def greet_user(name: str, age: int) -> dict:
+    return {
+        "greeting": f"Hello {name}! You are {age} years old.",
+        "timestamp": "2025-01-15T10:30:00Z"
+    }
+
+# Submit the task from a client
+async def main():
+    async with Client.connect("http://localhost:52710") as client:
+        # Submit task with retry policy
+        handle = await (
+            client.submit_task(greet_user, {
+                "name": "Alice", 
+                "age": 25
+            })
+            .retry_policy(RetryPolicy(
+                max_attempts=3,
+                backoff=ExponentialBackoff(initial=1.0)
+            ))
+            .submit()
+        )
+        
+        # Wait for result
+        result = await handle.wait()
+        if result.success:
+            print(f"✅ {result.value}")
+        else:
+            print(f"❌ {result.error}")
+
+asyncio.run(main())
 ```
 
-**[📖 Full Rust Client Guide](docs/client_library.md) | [🐍 Python Guide](examples/python/) | [🦀 More Examples](examples/)**
+**[📖 Full Documentation](clients/) | [🦀 Rust Client Guide](clients/rust/README.md) | [🐍 Python Client Guide](clients/python/README.md)**
 
 ---
 
@@ -172,8 +202,10 @@ docker-compose up --build
 
 ### Client Libraries
 
-- **🦀 Rust**: `azolla-client = { version = "0.1.0", features = ["macros"] }` - Type-safe with proc macro support
-- **🐍 Python**: Coming soon - `pip install azolla-client`
+- **🦀 Rust**: `azolla-client = { version = "0.1.0", features = ["macros"] }` - Type-safe with proc macro support  
+  **[📖 Rust Documentation](clients/rust/README.md)**
+- **🐍 Python**: `pip install azolla` - Modern async/await with type hints and retry policies  
+  **[📖 Python Documentation](clients/python/README.md)**
 - **🟨 JavaScript**: Coming soon - `npm install azolla-client`
 - **🌐 Any Language**: Use gRPC directly
 
