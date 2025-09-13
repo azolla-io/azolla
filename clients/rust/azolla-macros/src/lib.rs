@@ -90,7 +90,7 @@ pub fn azolla_task(_attr: TokenStream, item: TokenStream) -> TokenStream {
                         Ok(value) => {
                             let json_value = ::serde_json::to_value(value)
                                 .map_err(|e| ::azolla_client::error::TaskError::execution_failed(
-                                    &::std::format!("Failed to serialize result: {}", e)
+                                    &::std::format!("Failed to serialize result: {e}")
                                 ))?;
                             Ok(json_value)
                         },
@@ -102,4 +102,57 @@ pub fn azolla_task(_attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     TokenStream::from(expanded)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_to_pascal_case_simple() {
+        assert_eq!(to_pascal_case("hello"), "Hello");
+        assert_eq!(to_pascal_case("world"), "World");
+    }
+
+    #[test]
+    fn test_to_pascal_case_snake_case() {
+        assert_eq!(to_pascal_case("hello_world"), "HelloWorld");
+        assert_eq!(to_pascal_case("test_function_name"), "TestFunctionName");
+        assert_eq!(to_pascal_case("a_b_c"), "ABC");
+    }
+
+    #[test]
+    fn test_to_pascal_case_empty_string() {
+        assert_eq!(to_pascal_case(""), "");
+    }
+
+    #[test]
+    fn test_to_pascal_case_single_char() {
+        assert_eq!(to_pascal_case("a"), "A");
+        assert_eq!(to_pascal_case("z"), "Z");
+    }
+
+    #[test]
+    fn test_to_pascal_case_already_capitalized() {
+        assert_eq!(to_pascal_case("Hello"), "Hello");
+        assert_eq!(to_pascal_case("Hello_World"), "HelloWorld");
+    }
+
+    #[test]
+    fn test_to_pascal_case_with_numbers() {
+        assert_eq!(to_pascal_case("test_123"), "Test123");
+        assert_eq!(to_pascal_case("func_v2"), "FuncV2");
+    }
+
+    #[test]
+    fn test_to_pascal_case_trailing_underscore() {
+        assert_eq!(to_pascal_case("hello_"), "Hello");
+        assert_eq!(to_pascal_case("test_func_"), "TestFunc");
+    }
+
+    #[test]
+    fn test_to_pascal_case_multiple_underscores() {
+        assert_eq!(to_pascal_case("hello__world"), "HelloWorld");
+        assert_eq!(to_pascal_case("a___b"), "AB");
+    }
 }

@@ -330,3 +330,83 @@ fn test_timeout_configuration_ranges() {
     assert!(Duration::from_millis(100) < Duration::from_secs(1));
     assert!(Duration::from_secs(1) < Duration::from_secs(30));
 }
+
+/// Test client builder method chaining and configuration
+#[test]
+fn test_client_builder_comprehensive() {
+    let builder = Client::builder()
+        .endpoint("http://localhost:8080")
+        .domain("test_domain")
+        .timeout(Duration::from_secs(60));
+
+    // Verify builder methods work by testing the configuration isn't broken
+    // Note: We can't test build() without a server, but we can verify the builder compiles
+    drop(builder); // The fact that this compiles and we can call the methods is the test
+}
+
+/// Test additional JSON argument processing edge cases
+#[test]
+fn test_json_args_edge_cases() {
+    // Test null values
+    let null_arg = json!(null);
+    assert!(null_arg.is_null());
+
+    // Test nested objects
+    let nested = json!({
+        "level1": {
+            "level2": {
+                "value": 42
+            }
+        }
+    });
+    assert!(nested.is_object());
+
+    // Test very large numbers
+    let large_number = json!(i64::MAX);
+    assert!(large_number.is_number());
+
+    // Test special string values
+    let special_strings = vec![
+        "",     // empty string
+        "null", // string that looks like null
+        "true", // string that looks like boolean
+        "42",   // string that looks like number
+        "\n\t", // whitespace
+        "🦀",   // emoji
+    ];
+
+    for s in special_strings {
+        let json_val = json!(s);
+        assert!(json_val.is_string());
+        assert_eq!(json_val.as_str().unwrap(), s);
+    }
+}
+
+/// Test TaskExecutionResult error enum variants
+#[test]
+fn test_task_execution_result_error_variants() {
+    use azolla_client::client::TaskExecutionResult;
+
+    // Test different error types
+    let execution_error = TaskError::execution_failed("execution failed");
+    let invalid_args_error = TaskError::invalid_args("invalid arguments");
+
+    let result1 = TaskExecutionResult::Failed(execution_error.clone());
+    let result2 = TaskExecutionResult::Failed(invalid_args_error.clone());
+
+    match result1 {
+        TaskExecutionResult::Failed(err) => {
+            assert_eq!(err.message, execution_error.message);
+            assert_eq!(err.error_type, execution_error.error_type);
+        }
+        _ => panic!("Expected failed result"),
+    }
+
+    match result2 {
+        TaskExecutionResult::Failed(err) => {
+            assert_eq!(err.message, invalid_args_error.message);
+            assert_eq!(err.error_type, invalid_args_error.error_type);
+        }
+        _ => panic!("Expected failed result"),
+    }
+}
