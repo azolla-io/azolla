@@ -6,7 +6,7 @@ from collections.abc import Awaitable
 from datetime import datetime
 from typing import Any, Callable, Optional, Union
 
-import grpc
+import grpc  # type: ignore[import-untyped]
 from pydantic import BaseModel, Field
 
 from azolla._grpc import orchestrator_pb2, orchestrator_pb2_grpc
@@ -92,6 +92,8 @@ class TaskSubmissionBuilder:
             )
 
             # Submit task
+            if self._client._stub is None:
+                raise ConnectionError("Client not connected")
             response = await self._client._stub.CreateTask(
                 request, timeout=self._client._config.timeout
             )
@@ -155,6 +157,8 @@ class TaskHandle:
                 domain=self._client._config.domain,
             )
 
+            if self._client._stub is None:
+                raise ConnectionError("Client not connected")
             response = await self._client._stub.WaitForTask(
                 request, timeout=self._client._config.timeout
             )
@@ -205,14 +209,14 @@ class Client:
         orchestrator_endpoint: Optional[str] = None,
         domain: Optional[str] = None,
         timeout: Optional[float] = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         # Support both documented API and config-based API
         if config is not None:
             self._config = config
         elif orchestrator_endpoint is not None:
             # Create config from documented constructor parameters
-            config_params = {"endpoint": orchestrator_endpoint}
+            config_params: dict[str, Any] = {"endpoint": orchestrator_endpoint}
             if domain is not None:
                 config_params["domain"] = domain
             if timeout is not None:
@@ -223,10 +227,10 @@ class Client:
             raise ValueError("Either 'config' or 'orchestrator_endpoint' must be provided")
 
         self._channel: Optional[grpc.aio.Channel] = None
-        self._stub: Optional[orchestrator_pb2_grpc.ClientServiceStub] = None
+        self._stub: Optional[Any] = None
 
     @classmethod
-    async def connect(cls, endpoint: str, **kwargs) -> "Client":
+    async def connect(cls, endpoint: str, **kwargs: Any) -> "Client":
         """Connect to Azolla orchestrator with default config."""
         config = ClientConfig(endpoint=endpoint, **kwargs)
         client = cls(config)
@@ -255,7 +259,7 @@ class Client:
                     ("grpc.max_receive_message_length", self._config.max_message_size),
                 ],
             )
-            self._stub = orchestrator_pb2_grpc.ClientServiceStub(self._channel)
+            self._stub = orchestrator_pb2_grpc.ClientServiceStub(self._channel)  # type: ignore[no-untyped-call]
 
     def submit_task(
         self, task: Union[str, Callable[..., Awaitable[Any]]], args: Any = None
@@ -290,7 +294,7 @@ class Client:
         await self._ensure_connection()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Async context manager exit."""
         await self.close()
 

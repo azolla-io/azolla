@@ -101,7 +101,7 @@ jobs:
     
     - name: Type check with mypy
       working-directory: clients/python
-      run: mypy src || echo "⚠️ MyPy found typing issues (non-blocking)"
+      run: mypy src
     
     - name: Run comprehensive tests with coverage
       working-directory: clients/python

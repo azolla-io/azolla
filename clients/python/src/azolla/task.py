@@ -3,7 +3,7 @@
 import functools
 import inspect
 from abc import ABC, abstractmethod
-from typing import Any, Optional, Union, get_type_hints
+from typing import Any, Callable, Optional, Union, get_type_hints
 
 from pydantic import BaseModel, create_model
 from pydantic import ValidationError as PydanticValidationError
@@ -14,6 +14,8 @@ from azolla.types import TaskContext
 
 class Task(ABC):
     """Base class for all tasks with automatic argument casting."""
+
+    _args_type: Optional[type[BaseModel]] = None
 
     def __init_subclass__(cls) -> None:
         """set up automatic Args type detection."""
@@ -36,14 +38,14 @@ class Task(ABC):
             except Exception as e:
                 raise ValidationError(f"Failed to parse task arguments: {e}") from e
         else:
-            typed_args = raw_args
+            typed_args = BaseModel()
 
         return await self.execute(typed_args, context)
 
     @classmethod
     def parse_args(cls, json_args: Union[list[Any], dict[str, Any]]) -> BaseModel:
         """Parse JSON arguments into typed arguments."""
-        if not hasattr(cls, "_args_type"):
+        if not cls._args_type:
             raise ValidationError("Task has no Args type defined")
 
         try:
@@ -69,7 +71,7 @@ class Task(ABC):
         return class_name.lower()
 
 
-def azolla_task(func):
+def azolla_task(func: Callable[..., Any]) -> Callable[..., Any]:
     """Decorator that converts async functions into Task classes."""
 
     if not inspect.iscoroutinefunction(func):
@@ -91,9 +93,15 @@ def azolla_task(func):
 
         fields[param_name] = (param_type, default_value)
 
-    # Generate Args model
+    # Generate Args model with proper field annotations
+    # Use direct field dictionary format that create_model expects
+    model_fields = {}
+    for name, (field_type, default_value) in fields.items():
+        model_fields[name] = (field_type, default_value)
+
     args_model_name = f"{func.__name__.title().replace('_', '')}Args"
-    args_model = create_model(args_model_name, **fields)
+    # Type ignore the create_model call as pydantic's type annotation is incomplete
+    args_model = create_model(args_model_name, **model_fields)  # type: ignore[call-overload]
 
     # Store original function separately
     original_func = func
@@ -103,31 +111,30 @@ def azolla_task(func):
         Args = args_model
         _original_func = staticmethod(original_func)  # Store as staticmethod to avoid self issues
 
-        async def execute(self, args: args_model, context: Optional[TaskContext] = None) -> Any:
+        async def execute(self, args: BaseModel, context: Optional[TaskContext] = None) -> Any:
             # Convert args back to function parameters
             kwargs = args.model_dump()
             return await self._original_func(**kwargs)
 
         def name(self) -> str:
-            return original_func.__name__
+            return str(original_func.__name__)
 
     # Create task instance
     task_instance = GeneratedTask()
 
-    # Copy function metadata and add special attributes
-    functools.update_wrapper(task_instance, original_func)
-    task_instance.__name__ = original_func.__name__
-    task_instance.__azolla_task_class__ = GeneratedTask
-    task_instance.__azolla_args_model__ = args_model
+    # Add special attributes (can't use update_wrapper on task instance)
+    task_instance.__name__ = original_func.__name__  # type: ignore[attr-defined]
+    task_instance.__azolla_task_class__ = GeneratedTask  # type: ignore[attr-defined]
+    task_instance.__azolla_args_model__ = args_model  # type: ignore[attr-defined]
 
     # Make it callable like the original function for testing
     @functools.wraps(original_func)
-    async def wrapper(*args, **kwargs):
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
         return await original_func(*args, **kwargs)
 
     # Copy task attributes to wrapper
-    wrapper.__azolla_task_class__ = GeneratedTask
-    wrapper.__azolla_args_model__ = args_model
-    wrapper.__azolla_task_instance__ = task_instance
+    wrapper.__azolla_task_class__ = GeneratedTask  # type: ignore[attr-defined]
+    wrapper.__azolla_args_model__ = args_model  # type: ignore[attr-defined]
+    wrapper.__azolla_task_instance__ = task_instance  # type: ignore[attr-defined]
 
     return wrapper

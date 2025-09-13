@@ -5,10 +5,11 @@ import json
 import logging
 import time
 import uuid
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Optional, Union
 
-import grpc
+import grpc  # type: ignore[import-untyped]
 from pydantic import BaseModel, Field
 
 from azolla._grpc import common_pb2, orchestrator_pb2, orchestrator_pb2_grpc
@@ -77,7 +78,7 @@ class LoadTracker:
             return self._current_load
 
     @asynccontextmanager
-    async def track_task(self):
+    async def track_task(self) -> AsyncIterator[None]:
         """Context manager for tracking task execution."""
         async with self._lock:
             self._current_load += 1
@@ -103,10 +104,10 @@ class Worker:
 
         # gRPC components
         self._channel: Optional[grpc.aio.Channel] = None
-        self._stub: Optional[orchestrator_pb2_grpc.ClusterServiceStub] = None
+        self._stub: Optional[Any] = None
 
     @classmethod
-    def builder() -> "WorkerBuilder":
+    def builder(cls) -> "WorkerBuilder":
         """Create a worker builder."""
         return WorkerBuilder()
 
@@ -183,11 +184,11 @@ class Worker:
         # Create gRPC channel
         endpoint = self._config.orchestrator_endpoint
         self._channel = grpc.aio.insecure_channel(endpoint)
-        self._stub = orchestrator_pb2_grpc.ClusterServiceStub(self._channel)
+        self._stub = orchestrator_pb2_grpc.ClusterServiceStub(self._channel)  # type: ignore[no-untyped-call]
 
         try:
             # Create bidirectional stream
-            request_queue = asyncio.Queue(maxsize=1000)
+            request_queue: asyncio.Queue[orchestrator_pb2.ClientMsg] = asyncio.Queue(maxsize=1000)
 
             # Start the stream
             response_stream = self._stub.Stream(self._request_generator(request_queue))
@@ -227,7 +228,9 @@ class Worker:
                 self._channel = None
                 self._stub = None
 
-    async def _request_generator(self, request_queue: asyncio.Queue):
+    async def _request_generator(
+        self, request_queue: asyncio.Queue[orchestrator_pb2.ClientMsg]
+    ) -> AsyncIterator[orchestrator_pb2.ClientMsg]:
         """Generate requests for the gRPC stream."""
         while not self._shutdown_event.is_set():
             try:
@@ -237,7 +240,9 @@ class Worker:
             except asyncio.TimeoutError:
                 continue
 
-    async def _process_messages(self, response_stream, request_queue: asyncio.Queue) -> None:
+    async def _process_messages(
+        self, response_stream: Any, request_queue: asyncio.Queue[orchestrator_pb2.ClientMsg]
+    ) -> None:
         """Process incoming messages from orchestrator."""
         async for message in response_stream:
             if self._shutdown_event.is_set():
@@ -250,7 +255,9 @@ class Worker:
             else:
                 logger.warning("Received message with unknown type")
 
-    async def _handle_task(self, proto_task: common_pb2.Task, request_queue: asyncio.Queue) -> None:
+    async def _handle_task(
+        self, proto_task: common_pb2.Task, request_queue: asyncio.Queue[orchestrator_pb2.ClientMsg]
+    ) -> None:
         """Handle incoming task from orchestrator."""
         logger.info(f"Received task: {proto_task.name} ({proto_task.task_id})")
 
@@ -263,7 +270,7 @@ class Worker:
         asyncio.create_task(self._execute_task_wrapper(proto_task, request_queue))  # noqa: RUF006
 
     async def _execute_task_wrapper(
-        self, proto_task: common_pb2.Task, request_queue: asyncio.Queue
+        self, proto_task: common_pb2.Task, request_queue: asyncio.Queue[orchestrator_pb2.ClientMsg]
     ) -> None:
         """Wrapper for task execution with load tracking."""
         async with self._load_tracker.track_task():
@@ -358,13 +365,17 @@ class Worker:
                 ),
             )
 
-    async def _handle_ping(self, ping: orchestrator_pb2.Ping, request_queue: asyncio.Queue) -> None:
+    async def _handle_ping(
+        self, ping: orchestrator_pb2.Ping, request_queue: asyncio.Queue[orchestrator_pb2.ClientMsg]
+    ) -> None:
         """Handle ping from orchestrator."""
         # Pings are handled automatically by gRPC layer
         # Could add custom ping handling here if needed
         pass
 
-    async def _heartbeat_loop(self, request_queue: asyncio.Queue) -> None:
+    async def _heartbeat_loop(
+        self, request_queue: asyncio.Queue[orchestrator_pb2.ClientMsg]
+    ) -> None:
         """Send periodic status updates to orchestrator."""
         while not self._shutdown_event.is_set():
             try:

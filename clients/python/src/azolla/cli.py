@@ -5,6 +5,7 @@ import asyncio
 import importlib
 import signal
 import sys
+from typing import Any
 
 from azolla import Worker
 from azolla._internal.utils import get_logger, setup_logging
@@ -79,7 +80,7 @@ async def worker_main() -> None:
 
     # Handle shutdown signals
 
-    def signal_handler(signum, frame):
+    def signal_handler(signum: int, frame: Any) -> None:
         logger.info(f"Received signal {signum}, shutting down...")
         worker.shutdown()
 
