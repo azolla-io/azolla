@@ -21,7 +21,7 @@ fn test_basic_type_conversions() {
     // Test bool conversion
     let json_bool = json!(true);
     let result: Result<bool, _> = FromJsonValue::try_from(json_bool);
-    assert_eq!(result.unwrap(), true);
+    assert!(result.unwrap());
 }
 
 /// Test the expected behavior: Vec<T> conversion from JSON arrays

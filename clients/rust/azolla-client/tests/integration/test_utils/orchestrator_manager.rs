@@ -72,12 +72,13 @@ impl TestOrchestrator {
         let endpoint = format!("http://localhost:{port}");
 
         // Check if orchestrator is already running by attempting to create a client connection
-        if let Ok(_) = azolla_client::Client::builder()
+        if (azolla_client::Client::builder()
             .endpoint(&endpoint)
             .build()
-            .await
+            .await)
+            .is_ok()
         {
-            println!("Orchestrator already running on port {}, reusing...", port);
+            println!("Orchestrator already running on port {port}, reusing...");
             return Ok(Self {
                 process: None, // Don't manage an existing process
                 endpoint,
@@ -131,7 +132,7 @@ impl TestOrchestrator {
                     let _ = stderr.read_to_string(&mut stderr_output);
                 }
                 if !stderr_output.is_empty() {
-                    println!("Orchestrator stderr: {}", stderr_output);
+                    println!("Orchestrator stderr: {stderr_output}");
                 }
                 anyhow::bail!(
                     "Orchestrator process exited with status: {}. stderr: {}",

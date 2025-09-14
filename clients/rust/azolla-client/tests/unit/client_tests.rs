@@ -76,7 +76,7 @@ fn test_task_submission_args_serialization() {
 
     // Test single value serialization
     let single_arg = 42;
-    let serialized_single = serde_json::to_value(&single_arg).unwrap();
+    let serialized_single = serde_json::to_value(single_arg).unwrap();
     assert!(serialized_single.is_number());
 }
 
@@ -136,7 +136,7 @@ fn test_task_handle_id_concept() {
     // but we can test the ID concept
     let test_id = "task-123";
     assert_eq!(test_id, "task-123");
-    assert!(!test_id.is_empty());
+    assert_eq!(test_id.len(), 8);
 }
 
 /// Test the expected behavior: task execution result parsing
@@ -180,21 +180,21 @@ fn test_task_wait_status_logic() {
     let pending_status = "pending";
 
     match completed_status {
-        "completed" => assert!(true, "Should handle completed status"),
+        "completed" => { /* Should handle completed status */ }
         "failed" => panic!("Should not match failed"),
         _ => panic!("Should not match other status"),
     }
 
     match failed_status {
         "completed" => panic!("Should not match completed"),
-        "failed" => assert!(true, "Should handle failed status"),
+        "failed" => { /* Should handle failed status */ }
         _ => panic!("Should not match other status"),
     }
 
     match pending_status {
         "completed" => panic!("Should not match completed"),
         "failed" => panic!("Should not match failed"),
-        _ => assert!(true, "Should handle other status"),
+        _ => { /* Should handle other status */ }
     }
 }
 
@@ -226,7 +226,9 @@ fn test_shepherd_group_configuration() {
     // Test shepherd group option handling (line 165)
     let shepherd_group = Some("worker-pool-1".to_string());
     assert!(shepherd_group.is_some());
-    assert_eq!(shepherd_group.unwrap(), "worker-pool-1");
+    if let Some(group) = shepherd_group {
+        assert_eq!(group, "worker-pool-1");
+    }
 
     let no_group: Option<String> = None;
     assert!(no_group.is_none());

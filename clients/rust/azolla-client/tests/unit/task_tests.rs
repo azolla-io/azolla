@@ -184,8 +184,8 @@ fn test_parse_args_multiple() {
 #[test]
 fn test_parse_args_no_args() {
     let args = vec![];
-    let parsed = NoArgMockTask::parse_args(args).unwrap();
-    assert_eq!(parsed, ());
+    NoArgMockTask::parse_args(args).unwrap();
+    // Successfully parsing empty args for no-arg task
 }
 
 /// Test the purpose of parse_args with invalid single argument

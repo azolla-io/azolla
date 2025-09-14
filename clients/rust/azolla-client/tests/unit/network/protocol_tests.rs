@@ -39,7 +39,7 @@ fn test_message_serialization() {
         (json!(true), "boolean true"),
         (json!(false), "boolean false"),
         (json!(42), "integer"),
-        (json!(3.14159), "float"),
+        (json!(std::f64::consts::PI), "float"),
         (json!("hello world"), "string"),
         (json!(""), "empty string"),
         (json!("unicode: 🦀 🔥 ⚡"), "unicode string"),

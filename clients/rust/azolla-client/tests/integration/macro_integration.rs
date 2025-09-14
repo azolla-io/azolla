@@ -1,7 +1,7 @@
 //! Integration tests for procedural macro functionality
 //! Tests the azolla_task macro in real usage scenarios
 
-use azolla_client::task::{Task, TaskResult};
+use azolla_client::task::{BoxedTask, Task, TaskResult};
 use azolla_client::worker::Worker;
 use serde_json::json;
 
@@ -122,7 +122,7 @@ impl Task for ManualStringTask {
 #[cfg(feature = "macros")]
 #[tokio::test]
 async fn test_macro_generated_task_execution() {
-    let task = SimpleAddTaskTask::new();
+    let task = SimpleAddTaskTask;
     let result = task.execute((10, 20)).await;
 
     assert!(result.is_ok());
@@ -135,7 +135,7 @@ async fn test_macro_generated_task_execution() {
 #[cfg(feature = "macros")]
 #[tokio::test]
 async fn test_macro_string_processing() {
-    let task = StringProcessingTaskTask::new();
+    let task = StringProcessingTaskTask;
 
     // Test uppercase processing
     let result = task.execute(("hello world".to_string(), true)).await;
@@ -155,7 +155,7 @@ async fn test_macro_string_processing() {
 #[cfg(feature = "macros")]
 #[tokio::test]
 async fn test_macro_complex_data_handling() {
-    let task = ComplexDataTaskTask::new();
+    let task = ComplexDataTaskTask;
 
     let mut test_data = HashMap::new();
     test_data.insert("key1".to_string(), json!("value1"));
@@ -177,7 +177,7 @@ async fn test_macro_complex_data_handling() {
 #[cfg(feature = "macros")]
 #[tokio::test]
 async fn test_macro_error_handling() {
-    let task = FailingMacroTaskTask::new();
+    let task = FailingMacroTaskTask;
 
     // Test successful execution
     let success_result = task.execute(false).await;
@@ -197,7 +197,7 @@ async fn test_macro_error_handling() {
 #[cfg(feature = "macros")]
 #[tokio::test]
 async fn test_macro_validation_task() {
-    let task = ValidationMacroTaskTask::new();
+    let task = ValidationMacroTaskTask;
 
     // Test valid input
     let valid_result = task.execute(("user@example.com".to_string(), 25)).await;
@@ -229,13 +229,13 @@ async fn test_macro_validation_task() {
 #[cfg(feature = "macros")]
 #[test]
 fn test_macro_task_name_generation() {
-    let add_task = SimpleAddTaskTask::new();
+    let add_task = SimpleAddTaskTask;
     assert_eq!(Task::name(&add_task), "simple_add_task");
 
-    let string_task = StringProcessingTaskTask::new();
+    let string_task = StringProcessingTaskTask;
     assert_eq!(Task::name(&string_task), "string_processing_task");
 
-    let complex_task = ComplexDataTaskTask::new();
+    let complex_task = ComplexDataTaskTask;
     assert_eq!(Task::name(&complex_task), "complex_data_task");
 }
 
@@ -264,7 +264,7 @@ fn test_macro_argument_parsing() {
 async fn test_macro_boxed_task_compatibility() {
     use std::sync::Arc;
 
-    let task: Arc<dyn BoxedTask> = Arc::new(SimpleAddTaskTask::new());
+    let task: Arc<dyn BoxedTask> = Arc::new(SimpleAddTaskTask);
     assert_eq!(task.name(), "simple_add_task");
 
     let args = vec![json!(100), json!(200)];
@@ -286,9 +286,9 @@ async fn test_macro_tasks_in_worker() {
     let worker = Worker::builder()
         .orchestrator(&orchestrator.endpoint())
         .domain("macro-integration-test")
-        .register_task(SimpleAddTaskTask::new())
-        .register_task(StringProcessingTaskTask::new())
-        .register_task(ComplexDataTaskTask::new())
+        .register_task(SimpleAddTaskTask)
+        .register_task(StringProcessingTaskTask)
+        .register_task(ComplexDataTaskTask)
         .build()
         .await
         .expect("Failed to build worker with macro tasks");
@@ -346,8 +346,8 @@ async fn test_mixed_task_registration() {
         .domain("mixed-task-test")
         .register_task(ManualAddTask)
         .register_task(ManualStringTask)
-        .register_task(SimpleAddTaskTask::new())
-        .register_task(StringProcessingTaskTask::new())
+        .register_task(SimpleAddTaskTask)
+        .register_task(StringProcessingTaskTask)
         .build()
         .await
         .expect("Failed to build mixed worker");

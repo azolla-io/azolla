@@ -478,8 +478,11 @@ mod uuid {
         pub fn new_v4() -> Self {
             Self
         }
-        pub fn to_string(&self) -> String {
-            "mock-uuid-12345".to_string()
+    }
+
+    impl std::fmt::Display for Uuid {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "mock-uuid-12345")
         }
     }
 }

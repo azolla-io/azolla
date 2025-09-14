@@ -193,6 +193,67 @@ gtimeout 5m cargo test --features test-harness -- --test-threads=1
 timeout 5m cargo test --test integration_tests_main --features test-harness -- --test-threads=1
 ```
 
+#### Rust Client Tests
+Located in `clients/rust/azolla-client/`:
+- **Unit tests**: Library tests in `src/` modules
+- **Integration tests**: End-to-end tests in `tests/integration/`
+- **Unit test suite**: Organized tests in `tests/unit/`
+
+```bash
+# Run all Rust client tests (must run sequentially to avoid port conflicts)
+cargo test -- --test-threads=1
+
+# Run with strict CI-equivalent linting (catches all warnings as errors)
+cargo clippy --all-targets --all-features -- -D warnings
+
+# Run tests with all features enabled (including macros)
+cargo test --all-features -- --test-threads=1
+
+# Run only unit tests (fast)
+cargo test --lib
+
+# Run only integration tests (requires orchestrator startup)
+cargo test --test integration_tests -- --test-threads=1
+
+# Run only unit test suite
+cargo test --test unit_tests
+
+# Format code (must run before CI)
+cargo fmt
+```
+
+**Important Notes for Rust Client Tests:**
+- **Sequential execution required**: Integration tests must use `--test-threads=1` to prevent port conflicts
+- **Feature flags**: Some tests require `--all-features` to enable macro support
+- **Strict linting**: CI uses `-D warnings` to treat all warnings as errors
+- **Orchestrator dependency**: Integration tests automatically start/stop orchestrator processes
+
+#### Pre-Commit Validation (CI-Equivalent)
+To ensure your changes pass CI, run these commands before committing:
+
+```bash
+# Format code (required)
+cargo fmt
+
+# Check for compilation errors with all features
+cargo check --all-targets --all-features
+
+# Run strict linting (CI equivalent - treats warnings as errors)
+cargo clippy --all-targets --all-features -- -D warnings
+
+# Run all tests sequentially (required for integration tests)
+cargo test --all-features -- --test-threads=1
+
+# Verify macro functionality specifically
+cargo test --features macros -- --test-threads=1
+```
+
+**CI Strictness:**
+- **Warnings as errors**: `-D warnings` flag treats all warnings as compilation errors
+- **All features tested**: CI runs with `--all-features` to test macro functionality
+- **Clippy rules**: Stricter clippy rules than default local setup
+- **Feature gates**: Code using `azolla_task` must be behind `#[cfg(feature = "macros")]`
+
 ### Test Environment Setup
 
 #### Database Requirements
