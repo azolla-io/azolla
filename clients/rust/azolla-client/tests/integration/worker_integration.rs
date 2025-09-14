@@ -1,16 +1,14 @@
 //! Worker integration tests with real orchestrator
 //! Tests worker registration, task execution, and orchestrator communication
 
-use azolla_client::error::AzollaError;
 use azolla_client::task::{Task, TaskResult};
 use azolla_client::worker::{Worker, WorkerConfig};
 use serde_json::{json, Value};
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
-use uuid::Uuid;
 
-use super::{generate_task_id, init_test_env, wait_for_condition, TestOrchestrator};
+use super::TestOrchestrator;
 
 // Mock task for worker testing
 struct IntegrationTestTask;
@@ -54,7 +52,6 @@ async fn test_worker_connection_establishment() {
         .domain(&config.domain)
         .shepherd_group(&config.shepherd_group)
         .max_concurrency(config.max_concurrency)
-        .heartbeat_interval(config.heartbeat_interval)
         .register_task(IntegrationTestTask)
         .build()
         .await;
@@ -81,7 +78,7 @@ async fn test_worker_startup_and_registration() {
 
     // Test worker startup (this will attempt to connect to orchestrator)
     // Note: This might fail if orchestrator isn't fully ready, but tests the startup path
-    let startup_result = tokio::time::timeout(Duration::from_secs(5), worker.start()).await;
+    let startup_result = tokio::time::timeout(Duration::from_secs(5), worker.run()).await;
 
     // Either succeeds or times out, but shouldn't panic
     match startup_result {
@@ -175,7 +172,6 @@ async fn test_worker_builder_functionality() {
         .domain("builder-test")
         .shepherd_group("builder-workers")
         .max_concurrency(20)
-        .heartbeat_interval(Duration::from_secs(15))
         .register_task(IntegrationTestTask)
         .build()
         .await
@@ -201,16 +197,7 @@ async fn test_worker_graceful_shutdown() {
 
     // Test shutdown method exists and can be called
     // Note: Actual shutdown behavior depends on orchestrator connectivity
-    let shutdown_result = tokio::time::timeout(Duration::from_millis(100), worker.shutdown()).await;
-
-    // Should either complete quickly or timeout
-    match shutdown_result {
-        Ok(result) => match result {
-            Ok(_) => println!("Worker shutdown completed"),
-            Err(e) => println!("Worker shutdown error: {e:?}"),
-        },
-        Err(_) => println!("Worker shutdown timed out"),
-    }
+    worker.shutdown();
 }
 
 /// Test worker task count method
@@ -264,7 +251,6 @@ async fn test_worker_configuration_edge_cases() {
         .domain("maximal-test-domain-with-long-name")
         .shepherd_group("maximal-test-group-with-long-name")
         .max_concurrency(1000)
-        .heartbeat_interval(Duration::from_millis(500))
         .register_task(IntegrationTestTask)
         .build()
         .await

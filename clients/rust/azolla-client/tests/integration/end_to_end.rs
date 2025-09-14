@@ -1,6 +1,7 @@
 //! End-to-end integration tests
 //! Tests complete workflows from client submission to worker execution
 
+use azolla_client::client::TaskExecutionResult;
 use azolla_client::retry_policy::RetryPolicy;
 use azolla_client::task::{Task, TaskResult};
 use azolla_client::{Client, Worker};
@@ -9,7 +10,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
 
-use super::{generate_task_id, init_test_env, wait_for_condition, TestOrchestrator};
+use super::TestOrchestrator;
 
 // End-to-end test task
 struct E2ETestTask;
@@ -114,7 +115,7 @@ async fn test_complete_workflow() {
 
     // Start worker in background
     let worker_handle = tokio::spawn(async move {
-        let start_result = tokio::time::timeout(Duration::from_secs(5), worker.start()).await;
+        let start_result = tokio::time::timeout(Duration::from_secs(5), worker.run()).await;
         match start_result {
             Ok(result) => match result {
                 Ok(_) => println!("Worker started successfully"),
@@ -139,7 +140,8 @@ async fn test_complete_workflow() {
     let task_result = client
         .submit_task("e2e_test_task")
         .args(json!({"test_data": "hello world", "timestamp": "2023-01-01T00:00:00Z"}))
-        .execute()
+        .expect("Failed to set args")
+        .submit()
         .await;
 
     // Check result (might fail if orchestrator/worker communication isn't fully established)
@@ -152,11 +154,16 @@ async fn test_complete_workflow() {
 
             match wait_result {
                 Ok(result) => match result {
-                    Ok(value) => {
-                        println!("Task completed: {value:?}");
-                        assert!(value.get("processed").is_some());
-                    }
-                    Err(e) => println!("Task execution failed: {e:?}"),
+                    Ok(execution_result) => match execution_result {
+                        TaskExecutionResult::Success(value) => {
+                            println!("Task completed: {value:?}");
+                            assert!(value.get("processed").is_some());
+                        }
+                        TaskExecutionResult::Failed(e) => {
+                            println!("Task execution failed: {e:?}");
+                        }
+                    },
+                    Err(e) => println!("Task wait failed: {e:?}"),
                 },
                 Err(_) => println!("Task wait timed out"),
             }
@@ -185,7 +192,7 @@ async fn test_data_processing_workflow() {
         .expect("Failed to build data processing worker");
 
     let worker_handle = tokio::spawn(async move {
-        let _ = tokio::time::timeout(Duration::from_secs(3), worker.start()).await;
+        let _ = tokio::time::timeout(Duration::from_secs(3), worker.run()).await;
     });
 
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -202,7 +209,8 @@ async fn test_data_processing_workflow() {
     let result = client
         .submit_task("data_processing_task")
         .args(("test string".to_string(), 42, true))
-        .execute()
+        .expect("Failed to set args")
+        .submit()
         .await;
 
     match result {
@@ -230,7 +238,7 @@ async fn test_error_workflow() {
         .expect("Failed to build conditional worker");
 
     let worker_handle = tokio::spawn(async move {
-        let _ = tokio::time::timeout(Duration::from_secs(3), worker.start()).await;
+        let _ = tokio::time::timeout(Duration::from_secs(3), worker.run()).await;
     });
 
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -247,7 +255,8 @@ async fn test_error_workflow() {
     let success_result = client
         .submit_task("conditional_task")
         .args("succeed".to_string())
-        .execute()
+        .expect("Failed to set args")
+        .submit()
         .await;
 
     match success_result {
@@ -259,7 +268,8 @@ async fn test_error_workflow() {
     let fail_result = client
         .submit_task("conditional_task")
         .args("fail".to_string())
-        .execute()
+        .expect("Failed to set args")
+        .submit()
         .await;
 
     match fail_result {
@@ -308,8 +318,9 @@ async fn test_retry_workflow() {
     let result = client
         .submit_task("nonexistent_task")
         .args(json!({}))
+        .expect("Failed to set args")
         .retry_policy(retry_policy)
-        .execute()
+        .submit()
         .await;
 
     // Should fail but test retry policy handling
@@ -346,11 +357,11 @@ async fn test_shepherd_group_workflow() {
         .expect("Failed to build worker 2");
 
     let worker1_handle = tokio::spawn(async move {
-        let _ = tokio::time::timeout(Duration::from_secs(3), worker1.start()).await;
+        let _ = tokio::time::timeout(Duration::from_secs(3), worker1.run()).await;
     });
 
     let worker2_handle = tokio::spawn(async move {
-        let _ = tokio::time::timeout(Duration::from_secs(3), worker2.start()).await;
+        let _ = tokio::time::timeout(Duration::from_secs(3), worker2.run()).await;
     });
 
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -367,15 +378,17 @@ async fn test_shepherd_group_workflow() {
     let result1 = client
         .submit_task("e2e_test_task")
         .args(json!({}))
+        .expect("Failed to set args")
         .shepherd_group("group-1")
-        .execute()
+        .submit()
         .await;
 
     let result2 = client
         .submit_task("data_processing_task")
         .args(("test".to_string(), 10, false))
+        .expect("Failed to set args")
         .shepherd_group("group-2")
-        .execute()
+        .submit()
         .await;
 
     match result1 {
@@ -410,7 +423,7 @@ async fn test_concurrent_submissions_workflow() {
         .expect("Failed to build concurrent worker");
 
     let worker_handle = tokio::spawn(async move {
-        let _ = tokio::time::timeout(Duration::from_secs(5), worker.start()).await;
+        let _ = tokio::time::timeout(Duration::from_secs(5), worker.run()).await;
     });
 
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -423,28 +436,18 @@ async fn test_concurrent_submissions_workflow() {
         .await
         .expect("Failed to connect client");
 
-    // Submit multiple tasks concurrently
-    let mut handles = Vec::new();
+    // Submit multiple tasks sequentially (client doesn't implement Clone)
     for i in 0..5 {
-        let client_clone = client.clone();
-        let handle = tokio::spawn(async move {
-            client_clone
-                .submit_task("e2e_test_task")
-                .args(json!({"task_number": i}))
-                .execute()
-                .await
-        });
-        handles.push(handle);
-    }
+        let task_result = client
+            .submit_task("e2e_test_task")
+            .args(json!({"task_number": i}))
+            .expect("Failed to set args")
+            .submit()
+            .await;
 
-    // Wait for all submissions
-    for (i, handle) in handles.into_iter().enumerate() {
-        match handle.await {
-            Ok(result) => match result {
-                Ok(task_handle) => println!("Concurrent task {i} submitted: {}", task_handle.id()),
-                Err(e) => println!("Concurrent task {i} failed: {e:?}"),
-            },
-            Err(e) => println!("Concurrent task {i} join error: {e:?}"),
+        match task_result {
+            Ok(task_handle) => println!("Task {i} submitted: {}", task_handle.id()),
+            Err(e) => println!("Task {i} failed: {e:?}"),
         }
     }
 

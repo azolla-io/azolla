@@ -8,7 +8,7 @@ use azolla_client::Client;
 use serde_json::json;
 use std::time::Duration;
 
-use super::{generate_task_id, init_test_env, wait_for_condition, TestOrchestrator};
+use super::TestOrchestrator;
 
 /// Test the expected behavior: client connection with invalid endpoint
 #[tokio::test]
@@ -71,10 +71,11 @@ async fn test_client_connection_lifecycle() {
     let task_submission = client
         .submit_task("test_task")
         .args(json!({"test": "data"}))
+        .expect("Failed to set args")
         .shepherd_group("test-group");
 
     // We expect this to fail since no tasks are registered, but connection should work
-    let result = task_submission.execute().await;
+    let result = task_submission.submit().await;
     // Connection succeeded if we get here, even if task execution fails
     assert!(result.is_err()); // Expected - no task registered
 }
@@ -101,8 +102,9 @@ async fn test_task_submission_with_retry_policy() {
     let result = client
         .submit_task("nonexistent_task")
         .args(json!({}))
+        .expect("Failed to set args")
         .retry_policy(retry_policy)
-        .execute()
+        .submit()
         .await;
 
     // Should fail but test retry policy serialization logic
@@ -123,20 +125,27 @@ async fn test_task_submission_with_args() {
         .expect("Failed to connect to orchestrator");
 
     // Test different argument serialization patterns
-    let simple_args_result = client.submit_task("test_task").args(42).execute().await;
+    let simple_args_result = client
+        .submit_task("test_task")
+        .args(42)
+        .expect("Failed to set args")
+        .submit()
+        .await;
     assert!(simple_args_result.is_err()); // Expected - no task registered
 
     let complex_args_result = client
         .submit_task("test_task")
         .args(json!({"nested": {"data": [1, 2, 3]}}))
-        .execute()
+        .expect("Failed to set args")
+        .submit()
         .await;
     assert!(complex_args_result.is_err()); // Expected - no task registered
 
     let array_args_result = client
         .submit_task("test_task")
         .args(vec![1, 2, 3, 4, 5])
-        .execute()
+        .expect("Failed to set args")
+        .submit()
         .await;
     assert!(array_args_result.is_err()); // Expected - no task registered
 }
@@ -157,8 +166,9 @@ async fn test_task_submission_with_shepherd_group() {
     let result = client
         .submit_task("test_task")
         .args(json!({}))
+        .expect("Failed to set args")
         .shepherd_group("special-workers")
-        .execute()
+        .submit()
         .await;
 
     // Should fail but test shepherd group logic
@@ -182,7 +192,8 @@ async fn test_task_wait_operations() {
     let task_result = client
         .submit_task("test_task")
         .args(json!({}))
-        .execute()
+        .expect("Failed to set args")
+        .submit()
         .await;
 
     // This will likely fail at submission, but tests the submission path
@@ -226,7 +237,8 @@ async fn test_task_submission_serialization_errors() {
     let result = client
         .submit_task("test_task")
         .args(json!({"valid": "json"}))
-        .execute()
+        .expect("Failed to set args")
+        .submit()
         .await;
 
     // Should fail due to no task registered, not serialization
@@ -257,8 +269,9 @@ async fn test_retry_policy_serialization_in_submission() {
     let result = client
         .submit_task("complex_task")
         .args(json!({"complex": "data"}))
+        .expect("Failed to set args")
         .retry_policy(complex_retry_policy)
-        .execute()
+        .submit()
         .await;
 
     // Should fail but test complex retry policy serialization

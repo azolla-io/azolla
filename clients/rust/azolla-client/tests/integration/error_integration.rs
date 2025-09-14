@@ -11,7 +11,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::{generate_task_id, init_test_env, wait_for_condition, TestOrchestrator};
+use super::TestOrchestrator;
 
 // Mock task implementations for error testing
 struct FailingTask;
@@ -334,7 +334,8 @@ async fn test_client_error_integration() {
     let result = client
         .submit_task("nonexistent_failing_task")
         .args(json!({}))
-        .execute()
+        .expect("Failed to set args")
+        .submit()
         .await;
 
     // Should get an error from orchestrator
@@ -363,7 +364,7 @@ async fn test_worker_error_integration() {
     assert_eq!(worker.task_count(), 3);
 
     // Start worker (might fail but should handle gracefully)
-    let start_result = tokio::time::timeout(Duration::from_secs(2), worker.start()).await;
+    let start_result = tokio::time::timeout(Duration::from_secs(2), worker.run()).await;
 
     // Should either complete or timeout gracefully
     match start_result {

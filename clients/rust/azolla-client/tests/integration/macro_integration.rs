@@ -1,15 +1,20 @@
 //! Integration tests for procedural macro functionality
 //! Tests the azolla_task macro in real usage scenarios
 
-use azolla_client::error::{AzollaError, TaskError};
-use azolla_client::task::{BoxedTask, Task, TaskResult};
+use azolla_client::task::{Task, TaskResult};
 use azolla_client::worker::Worker;
-use serde_json::{json, Value};
+use serde_json::json;
+
+#[cfg(feature = "macros")]
+use azolla_client::error::TaskError;
+#[cfg(feature = "macros")]
+use serde_json::Value;
+#[cfg(feature = "macros")]
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 
-use super::{generate_task_id, init_test_env, wait_for_condition, TestOrchestrator};
+use super::TestOrchestrator;
 
 // Define tasks using the procedural macro when available
 #[cfg(feature = "macros")]
@@ -335,21 +340,24 @@ async fn test_mixed_task_registration() {
         .await
         .expect("Failed to start test orchestrator");
 
-    let mut worker_builder = Worker::builder()
+    #[cfg(feature = "macros")]
+    let worker = Worker::builder()
         .orchestrator(&orchestrator.endpoint())
         .domain("mixed-task-test")
         .register_task(ManualAddTask)
-        .register_task(ManualStringTask);
+        .register_task(ManualStringTask)
+        .register_task(SimpleAddTaskTask::new())
+        .register_task(StringProcessingTaskTask::new())
+        .build()
+        .await
+        .expect("Failed to build mixed worker");
 
-    // Add macro tasks if available
-    #[cfg(feature = "macros")]
-    {
-        worker_builder = worker_builder
-            .register_task(SimpleAddTaskTask::new())
-            .register_task(StringProcessingTaskTask::new());
-    }
-
-    let worker = worker_builder
+    #[cfg(not(feature = "macros"))]
+    let worker = Worker::builder()
+        .orchestrator(&orchestrator.endpoint())
+        .domain("mixed-task-test")
+        .register_task(ManualAddTask)
+        .register_task(ManualStringTask)
         .build()
         .await
         .expect("Failed to build mixed worker");
