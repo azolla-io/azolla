@@ -341,7 +341,7 @@ async fn test_concurrent_connection_attempts() {
 #[test]
 fn test_connection_retry_structure() {
     // Test that we can create multiple client instances without interference
-    let configs = vec![
+    let configs = [
         ClientConfig {
             endpoint: "http://test1.invalid:8001".to_string(),
             domain: "retry-test-1".to_string(),

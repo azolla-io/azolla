@@ -223,7 +223,7 @@ mod tests {
         let result = NoArgsTask::parse_args(empty_args);
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), ());
+        result.unwrap(); // Just ensure it returns without error
     }
 
     /// Test parse_args with single argument
@@ -247,7 +247,7 @@ mod tests {
         let parsed = result.unwrap();
         assert_eq!(parsed.0, "hello");
         assert_eq!(parsed.1, 123);
-        assert_eq!(parsed.2, true);
+        assert!(parsed.2);
     }
 
     /// Test parse_args with invalid single argument

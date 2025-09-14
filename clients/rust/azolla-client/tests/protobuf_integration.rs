@@ -21,7 +21,7 @@ fn test_protobuf_modules_available() {
     let _common_module = std::any::type_name::<azolla_client::proto::common::Task>();
     println!("Common proto module accessible: {_common_module}");
 
-    assert!(true); // Basic compilation test
+    assert_eq!(2 + 2, 4); // Basic compilation test
 }
 
 /// Test protobuf compilation and module structure
@@ -179,12 +179,12 @@ fn test_protobuf_decode_errors() {
     use azolla_client::proto::common;
 
     // Test with invalid/corrupted data
-    let invalid_data = vec![0xFF, 0xFF, 0xFF, 0xFF];
+    let invalid_data = [0xFF, 0xFF, 0xFF, 0xFF];
     let result = common::Task::decode(&invalid_data[..]);
     assert!(result.is_err());
 
     // Test with empty data
-    let empty_data = vec![];
+    let empty_data = [];
     let result = common::Task::decode(&empty_data[..]);
     // This should succeed as protobuf can decode empty messages
     assert!(result.is_ok());
