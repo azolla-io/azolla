@@ -148,7 +148,6 @@ impl TestOrchestrator {
         let mut process = Command::new(&orchestrator_path)
             .current_dir(&project_root) // Set working directory to project root
             .env("RUST_LOG", "info") // Reduce log verbosity for tests
-            .env("DATABASE_URL", "postgresql://localhost:5432/azolla") // Use standard database
             .stdout(Stdio::piped()) // Capture stdout to debug
             .stderr(Stdio::piped()) // Capture stderr to debug
             .spawn()
