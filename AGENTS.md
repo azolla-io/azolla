@@ -227,6 +227,23 @@ cargo test --features test-harness
 4. **Clean up resources**: Ensure tests clean up any created resources
 5. **Use appropriate test categories**: Unit tests for logic, integration tests for system behavior
 
+### Separate Test Pipelines
+
+The project uses separate CI pipelines for different components:
+
+#### Rust Client Tests (`rust-client-tests` job)
+- **Location**: `clients/rust/azolla-client` and `clients/rust/azolla-macros`
+- **Coverage requirement**: 80% minimum
+- **Runs**: Formatting, linting, unit tests, integration tests, and coverage analysis
+- **Parallel execution**: Runs in parallel with main test suite
+- **Triggers**: Changes to `clients/rust/**` paths
+
+#### Main Application Tests (`test-and-coverage` job)
+- **Location**: Core Azolla application (excluding client crates)
+- **Coverage requirement**: 64% minimum
+- **Excludes**: `azolla-client` and `azolla-macros` crates to avoid duplication
+- **Includes**: PostgreSQL integration tests with test harness
+
 ### Integration Test Patterns (test_harness.rs)
 
 Use the IntegrationTestEnvironment for end-to-end tests:

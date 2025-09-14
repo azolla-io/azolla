@@ -19,6 +19,71 @@ env:
   TARPAULIN_VERSION: "0.32.8"
 
 jobs:
+  rust-client-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Cache apt packages
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: protobuf-compiler libssl-dev pkg-config
+        version: 1.0
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: "rust-client-tests"
+        cache-targets: true
+        cache-all-crates: true
+        cache-on-failure: true
+        workspaces: |
+          clients/rust/azolla-client
+          clients/rust/azolla-macros
+
+    - name: Cache cargo-tarpaulin
+      uses: actions/cache@v4
+      id: cache-client-tarpaulin
+      with:
+        path: ~/.cargo/bin/cargo-tarpaulin
+        key: ${{ runner.os }}-cargo-tarpaulin-${{ env.TARPAULIN_VERSION }}
+
+    - name: Install cargo-tarpaulin
+      if: steps.cache-client-tarpaulin.outputs.cache-hit != 'true'
+      run: cargo install cargo-tarpaulin --version ${{ env.TARPAULIN_VERSION }}
+      timeout-minutes: 10
+
+    - name: Build and test azolla-macros
+      run: |
+        cargo fmt --all -- --check
+        cargo clippy --all-targets --all-features -- -D warnings
+        cargo build --verbose
+        cargo test --verbose
+      working-directory: clients/rust/azolla-macros
+      timeout-minutes: 10
+
+    - name: Build and test azolla-client with coverage
+      run: |
+        cargo fmt --all -- --check
+        cargo clippy --all-targets --all-features -- -D warnings
+        cargo build --verbose --all-features
+        cargo tarpaulin --verbose --all-features --timeout 120 --out xml --output-dir ./coverage --jobs 4 --engine llvm --fail-under 80
+      working-directory: clients/rust/azolla-client
+      timeout-minutes: 15
+
+    - name: Upload client coverage report
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-rust-client
+        path: clients/rust/azolla-client/coverage/cobertura.xml
+        retention-days: 1
+
   test-and-coverage:
     runs-on: ubuntu-latest
     
@@ -78,7 +143,7 @@ jobs:
       timeout-minutes: 10
     
     - name: Run tests with coverage
-      run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml --output-dir ./coverage --jobs 8 --engine llvm --fail-under 64
+      run: cargo tarpaulin --verbose --all-features --workspace --exclude azolla-client --exclude azolla-macros --timeout 120 --out xml --output-dir ./coverage --jobs 8 --engine llvm --fail-under 64
       timeout-minutes: 15
     
     - name: Upload current coverage report
