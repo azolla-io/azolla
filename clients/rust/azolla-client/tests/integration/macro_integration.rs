@@ -1,9 +1,9 @@
 //! Integration tests for procedural macro functionality
 //! Tests the azolla_task macro in real usage scenarios
 
-use azolla_client::task::{Task, TaskResult};
 #[cfg(feature = "macros")]
 use azolla_client::task::BoxedTask;
+use azolla_client::task::{Task, TaskResult};
 use azolla_client::worker::Worker;
 use serde_json::json;
 

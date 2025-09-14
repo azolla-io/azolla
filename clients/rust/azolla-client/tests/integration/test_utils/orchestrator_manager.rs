@@ -16,8 +16,8 @@ impl TestOrchestrator {
     fn find_orchestrator_info() -> Result<(String, std::path::PathBuf), String> {
         // First, check if there's an environment variable override
         if let Ok(orchestrator_path) = std::env::var("AZOLLA_ORCHESTRATOR_PATH") {
-            let project_root = std::env::current_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let project_root =
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
             return Ok((orchestrator_path, project_root));
         }
 
@@ -84,7 +84,10 @@ impl TestOrchestrator {
             - Or set AZOLLA_ORCHESTRATOR_PATH environment variable",
             project_root.display(),
             std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("unknown")),
-            possible_paths.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>()
+            possible_paths
+                .iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect::<Vec<_>>()
         ))
     }
 
