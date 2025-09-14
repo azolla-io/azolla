@@ -2,9 +2,9 @@
 /// Tests the real integration between azolla-macros and azolla-client
 #[cfg(feature = "macros")]
 mod macro_tests {
-    use azolla_macros::azolla_task;
-    use azolla_client::task::Task;
     use azolla_client::error::TaskError;
+    use azolla_client::task::Task;
+    use azolla_macros::azolla_task;
     use serde_json::{json, Value};
 
     /// Test the purpose of basic proc macro functionality: argument handling and type conversion
@@ -102,7 +102,7 @@ mod macro_tests {
     #[tokio::test]
     async fn test_proc_macro_typed_argument_execution() {
         let task = TestAddTaskTask;
-        let args = (10, 20);  // Multiple parameters: tuple
+        let args = (10, 20); // Multiple parameters: tuple
         let result = task.execute(args).await.unwrap();
 
         assert_eq!(result["sum"], 30);
@@ -113,7 +113,7 @@ mod macro_tests {
     #[tokio::test]
     async fn test_proc_macro_string_arguments() {
         let task = TestGreetTaskTask;
-        let args = "Alice".to_string();  // Single parameter: direct type
+        let args = "Alice".to_string(); // Single parameter: direct type
         let result = task.execute(args).await.unwrap();
 
         assert_eq!(result["greeting"], "Hello Alice!");
@@ -128,7 +128,12 @@ mod macro_tests {
         let result = task.execute(args).await;
 
         assert!(result.is_err());
-        if let Err(TaskError { error_type, message, .. }) = result {
+        if let Err(TaskError {
+            error_type,
+            message,
+            ..
+        }) = result
+        {
             assert_eq!(error_type, "InvalidArguments");
             assert!(message.contains("Name cannot be empty"));
         }
@@ -140,14 +145,17 @@ mod macro_tests {
         let task = TestOptionalTaskTask;
 
         // Test with Some value
-        let args_with_age = ("Bob".to_string(), Some(25));  // Multiple parameters: tuple
+        let args_with_age = ("Bob".to_string(), Some(25)); // Multiple parameters: tuple
         let result = task.execute(args_with_age).await.unwrap();
         assert_eq!(result["name"], "Bob");
         assert_eq!(result["age"], 25);
-        assert!(result["greeting"].as_str().unwrap().contains("25 years old"));
+        assert!(result["greeting"]
+            .as_str()
+            .unwrap()
+            .contains("25 years old"));
 
         // Test with None value
-        let args_without_age = ("Charlie".to_string(), None);  // Multiple parameters: tuple
+        let args_without_age = ("Charlie".to_string(), None); // Multiple parameters: tuple
         let result = task.execute(args_without_age).await.unwrap();
         assert_eq!(result["name"], "Charlie");
         assert_eq!(result["age"], Value::Null);
@@ -159,7 +167,7 @@ mod macro_tests {
     async fn test_proc_macro_array_parameters() {
         let task = TestArrayTaskTask;
 
-        let args = vec![1, 2, 3, 4, 5];  // Single parameter: direct type
+        let args = vec![1, 2, 3, 4, 5]; // Single parameter: direct type
         let result = task.execute(args).await.unwrap();
 
         assert_eq!(result["sum"], 15);
@@ -172,11 +180,16 @@ mod macro_tests {
     async fn test_proc_macro_empty_array_validation() {
         let task = TestArrayTaskTask;
 
-        let args = Vec::<i32>::new();  // Single parameter: direct type
+        let args = Vec::<i32>::new(); // Single parameter: direct type
         let result = task.execute(args).await;
 
         assert!(result.is_err());
-        if let Err(TaskError { error_type, message, .. }) = result {
+        if let Err(TaskError {
+            error_type,
+            message,
+            ..
+        }) = result
+        {
             assert_eq!(error_type, "InvalidArguments");
             assert!(message.contains("cannot be empty"));
         }
@@ -192,7 +205,7 @@ mod macro_tests {
             2.5,
             true,
             Some(vec!["tag1".to_string(), "tag2".to_string()]),
-        );  // Multiple parameters: tuple
+        ); // Multiple parameters: tuple
         let result = task.execute(args).await.unwrap();
 
         assert_eq!(result["processed"], "hellohello");
@@ -207,7 +220,7 @@ mod macro_tests {
     async fn test_proc_macro_mixed_types_with_nulls() {
         let task = TestMixedTaskTask;
 
-        let args = ("test".to_string(), 1.0, false, None);  // Multiple parameters: tuple
+        let args = ("test".to_string(), 1.0, false, None); // Multiple parameters: tuple
         let result = task.execute(args).await.unwrap();
 
         assert_eq!(result["processed"], "test");
@@ -223,16 +236,21 @@ mod macro_tests {
         let task = TestErrorTaskTask;
 
         // Test successful execution
-        let success_args = false;  // Single parameter: direct type
+        let success_args = false; // Single parameter: direct type
         let result = task.execute(success_args).await.unwrap();
         assert_eq!(result["status"], "success");
 
         // Test error execution
-        let error_args = true;  // Single parameter: direct type
+        let error_args = true; // Single parameter: direct type
         let result = task.execute(error_args).await;
         assert!(result.is_err());
 
-        if let Err(TaskError { error_type, message, .. }) = result {
+        if let Err(TaskError {
+            error_type,
+            message,
+            ..
+        }) = result
+        {
             assert_eq!(error_type, "ExecutionError");
             assert!(message.contains("failed as requested"));
         }
