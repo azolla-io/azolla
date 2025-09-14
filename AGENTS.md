@@ -198,15 +198,27 @@ timeout 5m cargo test --test integration_tests_main --features test-harness -- -
 #### Database Requirements
 Most integration tests require PostgreSQL:
 ```bash
-# Start test database
+# Start testing PostgreSQL database
 make dev-up
 
-# Run tests with database
-cargo test
-
-# Clean up
-make dev-clean
+# Run tests with database (e.g. `cargo test`)
 ```
+
+#### Python Development Environment
+The repository includes a pre-configured Python virtual environment at `./venv/` in the root directory:
+
+```bash
+# Use the repo's Python virtual environment
+./venv/bin/python <script>
+
+# Regenerate Python protobuf files (when proto files change)
+./venv/bin/python clients/python/scripts/generate_proto.py
+
+# Run Python client tests
+./venv/bin/python -m pytest clients/python/tests/
+```
+
+The venv includes all necessary dependencies including `grpcio-tools` for protobuf code generation. If the venv does not exist, create it.
 
 #### Environment Variables
 ```bash

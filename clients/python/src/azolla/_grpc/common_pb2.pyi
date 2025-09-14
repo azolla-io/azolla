@@ -17,14 +17,7 @@ class AnyValue(_message.Message):
     double_value: float
     bool_value: bool
     json_value: str
-    def __init__(
-        self,
-        string_value: _Optional[str] = ...,
-        int_value: _Optional[int] = ...,
-        double_value: _Optional[float] = ...,
-        bool_value: bool = ...,
-        json_value: _Optional[str] = ...,
-    ) -> None: ...
+    def __init__(self, string_value: _Optional[str] = ..., int_value: _Optional[int] = ..., double_value: _Optional[float] = ..., bool_value: bool = ..., json_value: _Optional[str] = ...) -> None: ...
 
 class StructValue(_message.Message):
     __slots__ = ("json_data",)
@@ -39,25 +32,16 @@ class SuccessResult(_message.Message):
     def __init__(self, result: _Optional[_Union[AnyValue, _Mapping]] = ...) -> None: ...
 
 class ErrorResult(_message.Message):
-    __slots__ = ("type", "message", "code", "stacktrace", "data")
+    __slots__ = ("type", "message", "data", "retriable")
     TYPE_FIELD_NUMBER: _ClassVar[int]
     MESSAGE_FIELD_NUMBER: _ClassVar[int]
-    CODE_FIELD_NUMBER: _ClassVar[int]
-    STACKTRACE_FIELD_NUMBER: _ClassVar[int]
     DATA_FIELD_NUMBER: _ClassVar[int]
+    RETRIABLE_FIELD_NUMBER: _ClassVar[int]
     type: str
     message: str
-    code: str
-    stacktrace: str
-    data: StructValue
-    def __init__(
-        self,
-        type: _Optional[str] = ...,
-        message: _Optional[str] = ...,
-        code: _Optional[str] = ...,
-        stacktrace: _Optional[str] = ...,
-        data: _Optional[_Union[StructValue, _Mapping]] = ...,
-    ) -> None: ...
+    data: str
+    retriable: bool
+    def __init__(self, type: _Optional[str] = ..., message: _Optional[str] = ..., data: _Optional[str] = ..., retriable: bool = ...) -> None: ...
 
 class TaskResult(_message.Message):
     __slots__ = ("task_id", "success", "error")
@@ -67,12 +51,7 @@ class TaskResult(_message.Message):
     task_id: str
     success: SuccessResult
     error: ErrorResult
-    def __init__(
-        self,
-        task_id: _Optional[str] = ...,
-        success: _Optional[_Union[SuccessResult, _Mapping]] = ...,
-        error: _Optional[_Union[ErrorResult, _Mapping]] = ...,
-    ) -> None: ...
+    def __init__(self, task_id: _Optional[str] = ..., success: _Optional[_Union[SuccessResult, _Mapping]] = ..., error: _Optional[_Union[ErrorResult, _Mapping]] = ...) -> None: ...
 
 class Task(_message.Message):
     __slots__ = ("task_id", "name", "args", "kwargs", "memory_limit", "cpu_limit")
@@ -88,12 +67,4 @@ class Task(_message.Message):
     kwargs: str
     memory_limit: int
     cpu_limit: int
-    def __init__(
-        self,
-        task_id: _Optional[str] = ...,
-        name: _Optional[str] = ...,
-        args: _Optional[str] = ...,
-        kwargs: _Optional[str] = ...,
-        memory_limit: _Optional[int] = ...,
-        cpu_limit: _Optional[int] = ...,
-    ) -> None: ...
+    def __init__(self, task_id: _Optional[str] = ..., name: _Optional[str] = ..., args: _Optional[str] = ..., kwargs: _Optional[str] = ..., memory_limit: _Optional[int] = ..., cpu_limit: _Optional[int] = ...) -> None: ...

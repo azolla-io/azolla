@@ -573,15 +573,12 @@ fn create_error_result(task_name: &str, message: &str, code: &str) -> common::Ta
             common::ErrorResult {
                 r#type: "TestError".to_string(),
                 message: message.to_string(),
-                code: code.to_string(),
-                stacktrace: "".to_string(),
-                data: Some(common::StructValue {
-                    json_data: serde_json::json!({
-                        "task_name": task_name,
-                        "error_code": code
-                    })
-                    .to_string(),
-                }),
+                data: serde_json::json!({
+                    "task_name": task_name,
+                    "error_code": code
+                })
+                .to_string(),
+                retriable: true,
             },
         )),
     }

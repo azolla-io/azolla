@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Optional, Union
 
-import grpc  # type: ignore[import-untyped]
+import grpc
 from pydantic import BaseModel, Field
 
 from azolla._grpc import common_pb2, orchestrator_pb2, orchestrator_pb2_grpc
@@ -571,7 +571,8 @@ class Worker:
                     error=common_pb2.ErrorResult(
                         type="TaskNotFound",
                         message=f"No implementation found for task: {proto_task.name}",
-                        code="TASK_NOT_FOUND",
+                        data="{}",
+                        retriable=False,
                     ),
                 )
 
@@ -592,7 +593,8 @@ class Worker:
                     error=common_pb2.ErrorResult(
                         type="ArgumentParseError",
                         message=f"Failed to parse task arguments: {e}",
-                        code="ARG_PARSE_ERROR",
+                        data="{}",
+                        retriable=False,
                     ),
                 )
 
@@ -638,7 +640,8 @@ class Worker:
                 error=common_pb2.ErrorResult(
                     type=e.error_type,
                     message=e.message,
-                    code=e.error_code,
+                    data="{}",
+                    retriable=True,
                 ),
             )
             logger.error(f"🔥 WORKER: Returning error result: {error_result}")
@@ -653,7 +656,8 @@ class Worker:
                 error=common_pb2.ErrorResult(
                     type="UnexpectedError",
                     message=str(e),
-                    code="UNEXPECTED_ERROR",
+                    data="{}",
+                    retriable=True,
                 ),
             )
 

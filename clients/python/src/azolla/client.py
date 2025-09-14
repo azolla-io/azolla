@@ -6,7 +6,7 @@ from collections.abc import Awaitable
 from datetime import datetime
 from typing import Any, Callable, Optional, Union
 
-import grpc  # type: ignore[import-untyped]
+import grpc
 from pydantic import BaseModel, Field
 
 from azolla._grpc import orchestrator_pb2, orchestrator_pb2_grpc

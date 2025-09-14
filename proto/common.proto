@@ -24,10 +24,9 @@ message SuccessResult {
 
 message ErrorResult {
   string type = 1;        // e.g., "ValueError"
-  string message = 2;     // human-readable
-  string code = 3;        // optional, app-specific
-  string stacktrace = 4;  // optional
-  StructValue data = 5;   // optional structured context
+  string message = 2;     // human-readable message
+  string data = 3;        // JSON representation of structured data, default to "{}"
+  bool retriable = 4;     // is the error retriable, default to True
 }
 
 message TaskResult {
