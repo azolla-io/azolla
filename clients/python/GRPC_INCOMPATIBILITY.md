@@ -47,12 +47,12 @@ max_stream_attempts = 3
 delay = 2 ** (stream_attempt - 1)
 ```
 
-### 3. Proper Async Iterator Handling
+### 3. Proper Async Iterator Handling (Python 3.9 compatible)
 **Location**: `src/azolla/worker.py:_get_next_message()`
 ```python
-# Fixed: Use aiter()/anext() instead of __anext__()
-async_iter = aiter(stream_call)
-return await anext(async_iter)
+# Use the async iterator interface directly for Python 3.9 compatibility
+async_iter = stream_call.__aiter__()
+return await async_iter.__anext__()
 ```
 
 ## Current Status

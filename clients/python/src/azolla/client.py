@@ -6,7 +6,7 @@ from collections.abc import Awaitable
 from datetime import datetime
 from typing import Any, Callable, Optional, Union
 
-import grpc  # type: ignore[import-untyped]
+import grpc
 from pydantic import BaseModel, Field
 
 from azolla._grpc import orchestrator_pb2, orchestrator_pb2_grpc
@@ -250,7 +250,10 @@ class Client:
             if endpoint.startswith("http://"):
                 endpoint = endpoint[7:]
             elif endpoint.startswith("https://"):
-                endpoint = endpoint[8:]
+                # TLS not yet supported for Python client gRPC
+                raise ValueError(
+                    "HTTPS endpoints are not supported yet. Use plaintext host:port or http://"
+                )
 
             self._channel = grpc.aio.insecure_channel(
                 endpoint,

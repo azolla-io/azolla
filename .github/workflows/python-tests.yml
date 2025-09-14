@@ -111,7 +111,7 @@ jobs:
           --cov-report=xml \
           --cov-report=term-missing \
           --cov-report=html \
-          --cov-fail-under=45 \
+          --cov-fail-under=61 \
           -v \
           -m "not slow" \
           --tb=short
