@@ -92,7 +92,9 @@ impl FromJsonValue for u64 {
 impl FromJsonValue for f64 {
     fn try_from(value: Value) -> Result<Self, ConversionError> {
         match value {
-            Value::Number(n) => Ok(n.as_f64().unwrap_or(0.0)),
+            Value::Number(n) => n
+                .as_f64()
+                .ok_or_else(|| ConversionError::type_mismatch("f64", &Value::Number(n))),
             _ => Err(ConversionError::type_mismatch("f64", &value)),
         }
     }
@@ -480,4 +482,7 @@ mod tests {
         // Test negative numbers with unsigned types
         assert!(<u64 as FromJsonValue>::try_from(json!(-1)).is_err());
     }
+
+    // Note: serde_json rejects unrepresentable numeric literals (e.g., 1e400),
+    // so testing the unreachable as_f64(None) path is not feasible here.
 }

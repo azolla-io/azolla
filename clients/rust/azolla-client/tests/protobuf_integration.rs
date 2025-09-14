@@ -14,7 +14,8 @@ fn test_protobuf_modules_available() {
     println!("Testing protobuf module availability");
 
     // Basic test that the proto module exists
-    let _proto_module = std::any::type_name::<azolla_client::proto::orchestrator::CreateTaskRequest>();
+    let _proto_module =
+        std::any::type_name::<azolla_client::proto::orchestrator::CreateTaskRequest>();
     println!("Orchestrator proto module accessible: {_proto_module}");
 
     let _common_module = std::any::type_name::<azolla_client::proto::common::Task>();
@@ -29,8 +30,8 @@ fn test_protobuf_structure() {
     // Verify that the proto module structure exists
     // This is mainly a compilation test to ensure protobuf generation worked
 
-    use azolla_client::proto::orchestrator;
     use azolla_client::proto::common;
+    use azolla_client::proto::orchestrator;
 
     println!("Testing protobuf module structure");
 
@@ -94,7 +95,10 @@ fn test_create_task_request_serialization() {
     // Verify all fields match
     assert_eq!(decoded_request.name, original_request.name);
     assert_eq!(decoded_request.domain, original_request.domain);
-    assert_eq!(decoded_request.shepherd_group, original_request.shepherd_group);
+    assert_eq!(
+        decoded_request.shepherd_group,
+        original_request.shepherd_group
+    );
     assert_eq!(decoded_request.args, original_request.args);
 
     println!("CreateTaskRequest serialization successful");
@@ -163,7 +167,10 @@ fn test_protobuf_large_payloads() {
     let decoded = common::Task::decode(&encoded[..]).unwrap();
     assert_eq!(decoded.name, large_data);
 
-    println!("Large payload handled correctly, size: {} bytes", encoded.len());
+    println!(
+        "Large payload handled correctly, size: {} bytes",
+        encoded.len()
+    );
 }
 
 /// Test error handling in protobuf decoding

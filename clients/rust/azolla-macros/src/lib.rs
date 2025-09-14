@@ -90,7 +90,7 @@ pub fn azolla_task(_attr: TokenStream, item: TokenStream) -> TokenStream {
                         Ok(value) => {
                             let json_value = ::serde_json::to_value(value)
                                 .map_err(|e| ::azolla_client::error::TaskError::execution_failed(
-                                    &::std::format!("Failed to serialize result: {}", e)
+                                    &::std::format!("Failed to serialize result: {e}")
                                 ))?;
                             Ok(json_value)
                         },
