@@ -272,7 +272,7 @@ make dev-clean
 #### Environment Variables
 ```bash
 # Set database URL for tests
-export DATABASE_URL="postgresql://localhost:5432/azolla_test"
+export DATABASE_URL="postgresql://localhost:5432/azolla"
 
 # Enable test harness features
 cargo test --features test-harness

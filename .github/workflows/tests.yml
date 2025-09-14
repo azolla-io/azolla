@@ -27,7 +27,7 @@ jobs:
         image: postgres:15
         env:
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: azolla_test
+          POSTGRES_DB: azolla
         options: >-
           --health-cmd pg_isready
           --health-interval 2s
@@ -76,7 +76,7 @@ jobs:
 
     - name: Set up database environment
       run: |
-        echo "DATABASE_URL=postgres://postgres:postgres@localhost:5432/azolla_test" >> $GITHUB_ENV
+        echo "DATABASE_URL=postgres://postgres:postgres@localhost:5432/azolla" >> $GITHUB_ENV
 
     - name: Build main project (for orchestrator binary)
       run: cargo build --verbose --jobs 2
@@ -115,7 +115,7 @@ jobs:
         image: postgres:15
         env:
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: azolla_test
+          POSTGRES_DB: azolla
         options: >-
           --health-cmd pg_isready
           --health-interval 2s
@@ -147,7 +147,7 @@ jobs:
     
     - name: Set up database environment
       run: |
-        echo "DATABASE_URL=postgres://postgres:postgres@localhost:5432/azolla_test" >> $GITHUB_ENV
+        echo "DATABASE_URL=postgres://postgres:postgres@localhost:5432/azolla" >> $GITHUB_ENV
     
     - name: Build
       run: cargo build --verbose --jobs 2

@@ -22,7 +22,7 @@ impl TestOrchestrator {
 
         let process = Command::new(&orchestrator_path)
             .env("AZOLLA_PORT", port.to_string())
-            .env("DATABASE_URL", "postgresql://localhost:5432/azolla_test")
+            .env("DATABASE_URL", "postgresql://localhost:5432/azolla")
             .env("RUST_LOG", "info")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
