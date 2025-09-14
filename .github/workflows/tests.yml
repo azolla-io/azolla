@@ -22,6 +22,21 @@ jobs:
   rust-client-tests:
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: azolla_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 10
+          --tmpfs /var/lib/postgresql/data
+        ports:
+          - 5432:5432
+
     steps:
     - uses: actions/checkout@v4
 
@@ -59,22 +74,30 @@ jobs:
       run: cargo install cargo-tarpaulin --version ${{ env.TARPAULIN_VERSION }}
       timeout-minutes: 10
 
+    - name: Set up database environment
+      run: |
+        echo "DATABASE_URL=postgres://postgres:postgres@localhost:5432/azolla_test" >> $GITHUB_ENV
+
+    - name: Build main project (for orchestrator binary)
+      run: cargo build --verbose --jobs 2
+      timeout-minutes: 10
+
     - name: Build and test azolla-macros
       run: |
+        cd clients/rust/azolla-macros
         cargo fmt --all -- --check
         cargo clippy --all-targets --all-features -- -D warnings
         cargo build --verbose
         cargo test --verbose
-      working-directory: clients/rust/azolla-macros
       timeout-minutes: 10
 
     - name: Build and test azolla-client with coverage
       run: |
+        cd clients/rust/azolla-client
         cargo fmt --all -- --check
         cargo clippy --all-targets --all-features -- -D warnings
         cargo build --verbose --all-features
         cargo tarpaulin --verbose --all-features --timeout 120 --out xml --output-dir ./coverage --jobs 4 --engine llvm --fail-under 80
-      working-directory: clients/rust/azolla-client
       timeout-minutes: 15
 
     - name: Upload client coverage report

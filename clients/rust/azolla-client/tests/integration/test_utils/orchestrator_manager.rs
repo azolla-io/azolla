@@ -14,6 +14,13 @@ pub struct TestOrchestrator {
 impl TestOrchestrator {
     /// Find the orchestrator binary and project root
     fn find_orchestrator_info() -> Result<(String, std::path::PathBuf), String> {
+        // First, check if there's an environment variable override
+        if let Ok(orchestrator_path) = std::env::var("AZOLLA_ORCHESTRATOR_PATH") {
+            let project_root = std::env::current_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("."));
+            return Ok((orchestrator_path, project_root));
+        }
+
         // Find project root by walking up until we find the main Azolla project
         let mut current_dir =
             std::env::current_dir().map_err(|_| "Could not get current directory".to_string())?;
@@ -39,8 +46,9 @@ impl TestOrchestrator {
             "Could not find azolla project root (src/orchestrator not found)".to_string()
         })?;
 
-        // Check common locations relative to project root
+        // Check for binary in multiple possible locations
         let possible_paths = [
+            // Standard build locations in main project
             project_root.join("target/debug/azolla-orchestrator"),
             project_root.join("target/release/azolla-orchestrator"),
         ];
@@ -51,8 +59,31 @@ impl TestOrchestrator {
             }
         }
 
+        // If binary not found in standard locations, try PATH
+        if let Ok(output) = std::process::Command::new("which")
+            .arg("azolla-orchestrator")
+            .output()
+        {
+            if output.status.success() && !output.stdout.is_empty() {
+                let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !path_str.is_empty() {
+                    return Ok((path_str, project_root));
+                }
+            }
+        }
+
         Err(format!(
-            "Orchestrator binary not found. Please build it first with: cargo build\nSearched in: {:?}",
+            "Orchestrator binary not found. Please build it first with: cargo build\n\
+            Project root: {}\n\
+            Current dir: {:?}\n\
+            Searched in: {:?}\n\
+            Also checked PATH for azolla-orchestrator\n\
+            \n\
+            For CI: Make sure to build the orchestrator binary before running client tests:\n\
+            - Run 'cargo build' from the project root to build azolla-orchestrator\n\
+            - Or set AZOLLA_ORCHESTRATOR_PATH environment variable",
+            project_root.display(),
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("unknown")),
             possible_paths.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>()
         ))
     }
