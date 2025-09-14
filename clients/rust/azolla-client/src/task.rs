@@ -118,7 +118,10 @@ mod tests {
             "simple_task"
         }
 
-        fn execute(&self, args: Self::Args) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+        fn execute(
+            &self,
+            args: Self::Args,
+        ) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
             Box::pin(async move {
                 Ok(json!({
                     "result": args.value * 2,
@@ -135,7 +138,10 @@ mod tests {
             "no_args_task"
         }
 
-        fn execute(&self, _args: Self::Args) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+        fn execute(
+            &self,
+            _args: Self::Args,
+        ) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
             Box::pin(async move {
                 Ok(json!({
                     "result": "success",
@@ -155,7 +161,10 @@ mod tests {
             "multi_args_task"
         }
 
-        fn execute(&self, args: Self::Args) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+        fn execute(
+            &self,
+            args: Self::Args,
+        ) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
             Box::pin(async move {
                 Ok(json!({
                     "result": format!("{}-{}-{}", args.0, args.1, args.2),
@@ -172,10 +181,11 @@ mod tests {
             "failing_task"
         }
 
-        fn execute(&self, _args: Self::Args) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
-            Box::pin(async move {
-                Err(TaskError::execution_failed("Task intentionally failed"))
-            })
+        fn execute(
+            &self,
+            _args: Self::Args,
+        ) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+            Box::pin(async move { Err(TaskError::execution_failed("Task intentionally failed")) })
         }
     }
 

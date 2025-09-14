@@ -50,7 +50,13 @@ impl Client {
 
     /// Create client with custom configuration
     pub async fn with_config(config: ClientConfig) -> Result<Self, AzollaError> {
-        let grpc_client = ClientServiceClient::connect(config.endpoint.clone()).await?;
+        let endpoint = tonic::transport::Endpoint::from_shared(config.endpoint.clone())
+            .map_err(|e| AzollaError::InvalidConfig(format!("Invalid endpoint {e}")))?
+            .connect_timeout(config.timeout)
+            .timeout(config.timeout);
+
+        let channel = endpoint.connect().await?;
+        let grpc_client = ClientServiceClient::new(channel);
 
         let inner = Arc::new(ClientInner {
             grpc_client,
@@ -190,51 +196,55 @@ impl TaskHandle {
 
     /// Wait for task completion
     pub async fn wait(self) -> Result<TaskExecutionResult, AzollaError> {
-        let mut interval = Duration::from_millis(100);
-        let max_interval = Duration::from_secs(5);
+        let timeout = self.client.config.timeout;
+        let fut = async move {
+            let mut interval = Duration::from_millis(100);
+            let max_interval = Duration::from_secs(5);
 
-        loop {
-            let request = WaitForTaskRequest {
-                task_id: self.id.clone(),
-                domain: self.client.config.domain.clone(),
-            };
+            loop {
+                let request = WaitForTaskRequest {
+                    task_id: self.id.clone(),
+                    domain: self.client.config.domain.clone(),
+                };
 
-            let response = self
-                .client
-                .grpc_client
-                .clone()
-                .wait_for_task(request)
-                .await?;
+                let response = self
+                    .client
+                    .grpc_client
+                    .clone()
+                    .wait_for_task(request)
+                    .await?;
 
-            let response = response.into_inner();
+                let response = response.into_inner();
 
-            match response.status.as_str() {
-                "completed" => {
-                    // Parse the actual task result
-                    let result_value: serde_json::Value = serde_json::from_str(
-                        &response.result.unwrap_or_else(|| "null".to_string()),
-                    )
-                    .map_err(AzollaError::Serialization)?;
-                    return Ok(TaskExecutionResult::Success(result_value));
-                }
-                "failed" => {
-                    // Parse the actual task error
-                    let error_msg = response
-                        .error
-                        .unwrap_or_else(|| "Task execution failed with unknown error".to_string());
+                match response.status.as_str() {
+                    "completed" => {
+                        let result_value: serde_json::Value = serde_json::from_str(
+                            &response.result.unwrap_or_else(|| "null".to_string()),
+                        )
+                        .map_err(AzollaError::Serialization)?;
+                        return Ok(TaskExecutionResult::Success(result_value));
+                    }
+                    "failed" => {
+                        let error_msg = response.error.unwrap_or_else(|| {
+                            "Task execution failed with unknown error".to_string()
+                        });
 
-                    // Try to parse as structured TaskError, fallback to generic error
-                    let task_error = serde_json::from_str::<TaskError>(&error_msg)
-                        .unwrap_or_else(|_| TaskError::execution_failed(&error_msg));
+                        let task_error = serde_json::from_str::<TaskError>(&error_msg)
+                            .unwrap_or_else(|_| TaskError::execution_failed(&error_msg));
 
-                    return Ok(TaskExecutionResult::Failed(task_error));
-                }
-                _ => {
-                    // Task still running, wait and retry
-                    tokio::time::sleep(interval).await;
-                    interval = std::cmp::min(interval * 2, max_interval);
+                        return Ok(TaskExecutionResult::Failed(task_error));
+                    }
+                    _ => {
+                        tokio::time::sleep(interval).await;
+                        interval = std::cmp::min(interval * 2, max_interval);
+                    }
                 }
             }
+        };
+
+        match tokio::time::timeout(timeout, fut).await {
+            Ok(res) => res,
+            Err(_) => Err(AzollaError::Timeout),
         }
     }
 
@@ -360,7 +370,6 @@ mod tests {
         assert_eq!(arr[2], json!(3));
     }
 
-
     /// Test retry policy serialization in task submission
     #[test]
     fn test_task_submission_retry_policy_serialization() {
@@ -405,7 +414,6 @@ mod tests {
         assert!(arr[2].is_null());
     }
 
-
     /// Test timeout configurations
     #[test]
     fn test_timeout_configurations() {
@@ -419,5 +427,4 @@ mod tests {
         // Test timeout comparison
         assert_eq!(Duration::from_millis(1000), Duration::from_secs(1));
     }
-
 }

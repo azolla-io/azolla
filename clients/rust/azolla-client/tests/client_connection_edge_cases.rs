@@ -1,7 +1,7 @@
+use azolla_client::client::ClientConfig;
 /// Test the purpose of client connection edge cases: ensure robust handling of various network and connection scenarios
 /// Test the expected behavior: client should gracefully handle connection failures, timeouts, and recovery scenarios
 use azolla_client::{AzollaError, Client};
-use azolla_client::client::ClientConfig;
 use std::time::Duration;
 use tokio::time::timeout;
 
@@ -9,15 +9,15 @@ use tokio::time::timeout;
 #[tokio::test]
 async fn test_invalid_endpoint_formats() {
     let invalid_endpoints = vec![
-        "", // Empty string
-        "not-a-url", // Not a URL
-        "ftp://invalid-protocol.com", // Wrong protocol
-        "http://", // Incomplete URL
-        "https://", // Incomplete HTTPS URL
-        "http://localhost:", // Missing port
-        "http://:8080", // Missing host
-        "http://localhost:999999", // Invalid port range
-        "http://[invalid-ipv6", // Malformed IPv6
+        "",                            // Empty string
+        "not-a-url",                   // Not a URL
+        "ftp://invalid-protocol.com",  // Wrong protocol
+        "http://",                     // Incomplete URL
+        "https://",                    // Incomplete HTTPS URL
+        "http://localhost:",           // Missing port
+        "http://:8080",                // Missing host
+        "http://localhost:999999",     // Invalid port range
+        "http://[invalid-ipv6",        // Malformed IPv6
         "http://256.256.256.256:8080", // Invalid IP address
     ];
 
@@ -94,10 +94,7 @@ async fn test_dns_resolution_failures() {
     for endpoint in unresolvable_hosts {
         println!("Testing DNS resolution for: {endpoint}");
 
-        let result = timeout(
-            Duration::from_secs(5),
-            Client::connect(endpoint)
-        ).await;
+        let result = timeout(Duration::from_secs(5), Client::connect(endpoint)).await;
 
         match result {
             Ok(client_result) => {
@@ -120,17 +117,20 @@ async fn test_protocol_variations() {
     let protocol_tests = vec![
         ("http://127.0.0.1:99999", "HTTP with unreachable port"),
         ("https://127.0.0.1:99998", "HTTPS with unreachable port"),
-        ("http://localhost:99997", "HTTP localhost with unreachable port"),
-        ("https://localhost:99996", "HTTPS localhost with unreachable port"),
+        (
+            "http://localhost:99997",
+            "HTTP localhost with unreachable port",
+        ),
+        (
+            "https://localhost:99996",
+            "HTTPS localhost with unreachable port",
+        ),
     ];
 
     for (endpoint, description) in protocol_tests {
         println!("Testing {description}: {endpoint}");
 
-        let result = timeout(
-            Duration::from_secs(3),
-            Client::connect(endpoint)
-        ).await;
+        let result = timeout(Duration::from_secs(3), Client::connect(endpoint)).await;
 
         match result {
             Ok(client_result) => {
@@ -148,18 +148,15 @@ async fn test_protocol_variations() {
 #[tokio::test]
 async fn test_ipv6_addresses() {
     let ipv6_endpoints = vec![
-        "http://[::1]:99999", // IPv6 loopback
+        "http://[::1]:99999",        // IPv6 loopback
         "http://[2001:db8::1]:8080", // Documentation IPv6 address (RFC 3849)
-        "http://[fe80::1]:9090", // Link-local IPv6
+        "http://[fe80::1]:9090",     // Link-local IPv6
     ];
 
     for endpoint in ipv6_endpoints {
         println!("Testing IPv6 endpoint: {endpoint}");
 
-        let result = timeout(
-            Duration::from_secs(3),
-            Client::connect(endpoint)
-        ).await;
+        let result = timeout(Duration::from_secs(3), Client::connect(endpoint)).await;
 
         match result {
             Ok(client_result) => {
@@ -167,7 +164,9 @@ async fn test_ipv6_addresses() {
                 assert!(client_result.is_err());
                 match client_result.err().unwrap() {
                     AzollaError::Connection(_) => { /* Expected */ }
-                    other => println!("Non-connection error for IPv6 (may be acceptable): {other:?}"),
+                    other => {
+                        println!("Non-connection error for IPv6 (may be acceptable): {other:?}")
+                    }
                 }
             }
             Err(_) => {
@@ -191,10 +190,7 @@ async fn test_port_edge_cases() {
     for (endpoint, description) in port_tests {
         println!("Testing {description}: {endpoint}");
 
-        let result = timeout(
-            Duration::from_secs(2),
-            Client::connect(endpoint)
-        ).await;
+        let result = timeout(Duration::from_secs(2), Client::connect(endpoint)).await;
 
         match result {
             Ok(client_result) => {
@@ -230,10 +226,7 @@ async fn test_client_builder_edge_cases() {
         assert!(std::mem::size_of_val(&builder) > 0);
 
         // Attempting to build should fail due to unreachable endpoint
-        let result = timeout(
-            Duration::from_secs(2),
-            builder.build()
-        ).await;
+        let result = timeout(Duration::from_secs(2), builder.build()).await;
 
         match result {
             Ok(client_result) => {
@@ -273,10 +266,7 @@ async fn test_domain_validation() {
             timeout: Duration::from_millis(500),
         };
 
-        let result = timeout(
-            Duration::from_secs(1),
-            Client::with_config(config)
-        ).await;
+        let result = timeout(Duration::from_secs(1), Client::with_config(config)).await;
 
         match result {
             Ok(client_result) => {
@@ -319,10 +309,7 @@ async fn test_concurrent_connection_attempts() {
     for endpoint in endpoints {
         let endpoint = endpoint.to_string();
         let handle = tokio::spawn(async move {
-            let result = timeout(
-                Duration::from_secs(2),
-                Client::connect(&endpoint)
-            ).await;
+            let result = timeout(Duration::from_secs(2), Client::connect(&endpoint)).await;
 
             match result {
                 Ok(client_result) => {
@@ -377,8 +364,13 @@ fn test_connection_retry_structure() {
         assert!(!config.endpoint.is_empty());
         assert!(!config.domain.is_empty());
         assert!(config.timeout.as_millis() > 0);
-        println!("Config {}: endpoint={}, domain={}, timeout={:?}",
-            i + 1, config.endpoint, config.domain, config.timeout);
+        println!(
+            "Config {}: endpoint={}, domain={}, timeout={:?}",
+            i + 1,
+            config.endpoint,
+            config.domain,
+            config.timeout
+        );
     }
 }
 
@@ -386,17 +378,20 @@ fn test_connection_retry_structure() {
 #[tokio::test]
 async fn test_connection_error_messages() {
     let test_cases = vec![
-        ("http://192.0.2.254:99999", "Should include host and port information"),
-        ("https://nonexistent.invalid:443", "Should indicate DNS or connection failure"),
+        (
+            "http://192.0.2.254:99999",
+            "Should include host and port information",
+        ),
+        (
+            "https://nonexistent.invalid:443",
+            "Should indicate DNS or connection failure",
+        ),
     ];
 
     for (endpoint, expected_info) in test_cases {
         println!("Testing error message quality for: {endpoint}");
 
-        let result = timeout(
-            Duration::from_secs(3),
-            Client::connect(endpoint)
-        ).await;
+        let result = timeout(Duration::from_secs(3), Client::connect(endpoint)).await;
 
         match result {
             Ok(client_result) => {

@@ -1,149 +1,8 @@
 use azolla_macros::azolla_task;
 use serde_json::{json, Value};
-use std::future::Future;
-use std::pin::Pin;
-
-// Mock the required types for testing the proc macro
-// These mirror the actual types from azolla-client
-mod mock {
-    use serde_json::Value;
-    use std::future::Future;
-    use std::pin::Pin;
-
-    #[derive(Debug, PartialEq)]
-    pub enum TaskError {
-        InvalidArgs(String),
-        ExecutionFailed(String),
-    }
-
-    impl TaskError {
-        pub fn invalid_args(msg: &str) -> Self {
-            Self::InvalidArgs(msg.to_string())
-        }
-
-        pub fn execution_failed(msg: &str) -> Self {
-            Self::ExecutionFailed(msg.to_string())
-        }
-    }
-
-    impl std::fmt::Display for TaskError {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            match self {
-                TaskError::InvalidArgs(msg) => write!(f, "Invalid arguments: {msg}"),
-                TaskError::ExecutionFailed(msg) => write!(f, "Execution failed: {msg}"),
-            }
-        }
-    }
-
-    impl std::error::Error for TaskError {}
-
-    pub type TaskResult = Result<Value, TaskError>;
-
-    pub trait Task {
-        fn name(&self) -> &'static str;
-        fn execute(
-            &self,
-            args: Vec<Value>,
-        ) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>>;
-    }
-
-    pub mod convert {
-        use super::*;
-
-        #[derive(Debug)]
-        pub struct ConversionError(pub String);
-
-        impl std::fmt::Display for ConversionError {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(f, "Conversion error: {}", self.0)
-            }
-        }
-
-        impl std::error::Error for ConversionError {}
-
-        pub trait FromJsonValue: Sized {
-            fn try_from(value: Value) -> Result<Self, ConversionError>;
-        }
-
-        impl FromJsonValue for i32 {
-            fn try_from(value: Value) -> Result<Self, ConversionError> {
-                value
-                    .as_i64()
-                    .and_then(|i| i.try_into().ok())
-                    .ok_or_else(|| ConversionError("Not a valid i32".to_string()))
-            }
-        }
-
-        impl FromJsonValue for u32 {
-            fn try_from(value: Value) -> Result<Self, ConversionError> {
-                value
-                    .as_u64()
-                    .and_then(|i| i.try_into().ok())
-                    .ok_or_else(|| ConversionError("Not a valid u32".to_string()))
-            }
-        }
-
-        impl FromJsonValue for f64 {
-            fn try_from(value: Value) -> Result<Self, ConversionError> {
-                value
-                    .as_f64()
-                    .ok_or_else(|| ConversionError("Not a valid f64".to_string()))
-            }
-        }
-
-        impl FromJsonValue for String {
-            fn try_from(value: Value) -> Result<Self, ConversionError> {
-                value
-                    .as_str()
-                    .map(|s| s.to_string())
-                    .ok_or_else(|| ConversionError("Not a valid string".to_string()))
-            }
-        }
-
-        impl FromJsonValue for bool {
-            fn try_from(value: Value) -> Result<Self, ConversionError> {
-                value
-                    .as_bool()
-                    .ok_or_else(|| ConversionError("Not a valid boolean".to_string()))
-            }
-        }
-
-        impl<T: FromJsonValue> FromJsonValue for Option<T> {
-            fn try_from(value: Value) -> Result<Self, ConversionError> {
-                match value {
-                    Value::Null => Ok(None),
-                    v => T::try_from(v).map(Some),
-                }
-            }
-        }
-
-        impl<T: FromJsonValue> FromJsonValue for Vec<T> {
-            fn try_from(value: Value) -> Result<Self, ConversionError> {
-                match value {
-                    Value::Array(arr) => {
-                        let mut result = Vec::with_capacity(arr.len());
-                        for item in arr {
-                            result.push(T::try_from(item)?);
-                        }
-                        Ok(result)
-                    }
-                    _ => Err(ConversionError("Not a valid array".to_string())),
-                }
-            }
-        }
-    }
-
-    pub mod task {
-        pub use super::{Task, TaskResult};
-    }
-
-    pub mod error {
-        pub use super::TaskError;
-    }
-}
-
-// Set up path for proc macro testing
-use mock as azolla_client;
+// (no additional prelude imports needed)
+use azolla_client;
+use azolla_client::Task;
 
 // Test functions using the proc macro
 
@@ -249,8 +108,7 @@ async fn test_proc_macro_generates_task_struct() {
 #[tokio::test]
 async fn test_proc_macro_argument_extraction() {
     let task = TestAddTask;
-    let args = vec![json!(10), json!(20)];
-    let result = task.execute(args).await.unwrap();
+    let result = task.execute((10, 20)).await.unwrap();
     assert_eq!(result["sum"], 30);
     assert_eq!(result["inputs"], json!([10, 20]));
 }
@@ -258,55 +116,23 @@ async fn test_proc_macro_argument_extraction() {
 #[tokio::test]
 async fn test_proc_macro_string_arguments() {
     let task = TestGreetTask;
-    let args = vec![json!("Alice")];
-    let result = task.execute(args).await.unwrap();
+    let result = task.execute("Alice".to_string()).await.unwrap();
     assert_eq!(result["greeting"], "Hello Alice!");
     assert_eq!(result["name"], "Alice");
 }
 
-#[tokio::test]
-async fn test_proc_macro_missing_arguments() {
-    let task = TestAddTask;
-    let args = vec![json!(10)]; // Missing second argument
-    let result = task.execute(args).await;
-    assert!(result.is_err());
+// Removed: argument count/type mismatch is a compile-time concern with typed execute
 
-    if let Err(azolla_client::TaskError::InvalidArgs(msg)) = result {
-        assert!(msg.contains("Missing argument"));
-    }
-}
+// Removed: see note above
 
-#[tokio::test]
-async fn test_proc_macro_too_many_arguments() {
-    let task = TestAddTask;
-    let args = vec![json!(10), json!(20), json!(30)]; // Extra argument
-    let result = task.execute(args).await;
-    assert!(result.is_err());
-
-    if let Err(azolla_client::TaskError::InvalidArgs(msg)) = result {
-        assert!(msg.contains("Too many arguments"));
-    }
-}
-
-#[tokio::test]
-async fn test_proc_macro_wrong_argument_types() {
-    let task = TestAddTask;
-    let args = vec![json!("not a number"), json!(20)];
-    let result = task.execute(args).await;
-    assert!(result.is_err());
-
-    if let Err(azolla_client::TaskError::InvalidArgs(msg)) = result {
-        assert!(msg.contains("Invalid type"));
-    }
-}
+// Removed: see note above
 
 #[tokio::test]
 async fn test_proc_macro_optional_parameters() {
     let task = TestGreetWithAgeTask;
 
-    // Test with age provided
-    let args_with_age = vec![json!("Bob"), json!(25)];
-    let result = task.execute(args_with_age).await.unwrap();
+    // With age provided
+    let result = task.execute(("Bob".to_string(), Some(25))).await.unwrap();
     assert_eq!(result["name"], "Bob");
     assert_eq!(result["age"], 25);
     assert!(result["greeting"]
@@ -314,9 +140,8 @@ async fn test_proc_macro_optional_parameters() {
         .unwrap()
         .contains("25 years old"));
 
-    // Test with null age
-    let args_without_age = vec![json!("Charlie"), json!(null)];
-    let result = task.execute(args_without_age).await.unwrap();
+    // With None
+    let result = task.execute(("Charlie".to_string(), None)).await.unwrap();
     assert_eq!(result["name"], "Charlie");
     assert_eq!(result["age"], Value::Null);
     assert!(!result["greeting"].as_str().unwrap().contains("years old"));
@@ -325,9 +150,7 @@ async fn test_proc_macro_optional_parameters() {
 #[tokio::test]
 async fn test_proc_macro_array_parameters() {
     let task = TestSumNumbersTask;
-
-    let args = vec![json!([1, 2, 3, 4, 5])];
-    let result = task.execute(args).await.unwrap();
+    let result = task.execute(vec![1, 2, 3, 4, 5]).await.unwrap();
     assert_eq!(result["sum"], 15);
     assert_eq!(result["count"], 5);
     assert_eq!(result["numbers"], json!([1, 2, 3, 4, 5]));
@@ -336,27 +159,23 @@ async fn test_proc_macro_array_parameters() {
 #[tokio::test]
 async fn test_proc_macro_empty_array_validation() {
     let task = TestSumNumbersTask;
-
-    let args = vec![json!([])];
-    let result = task.execute(args).await;
-    assert!(result.is_err());
-
-    if let Err(azolla_client::TaskError::InvalidArgs(msg)) = result {
-        assert!(msg.contains("cannot be empty"));
-    }
+    let result = task.execute(Vec::<i32>::new()).await;
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("cannot be empty"));
 }
 
 #[tokio::test]
 async fn test_proc_macro_mixed_parameter_types() {
     let task = TestProcessDataTask;
-
-    let args = vec![
-        json!("hello"),
-        json!(2.5),
-        json!(true),
-        json!(["tag1", "tag2"]),
-    ];
-    let result = task.execute(args).await.unwrap();
+    let result = task
+        .execute((
+            "hello".to_string(),
+            2.5,
+            true,
+            Some(vec!["tag1".to_string(), "tag2".to_string()]),
+        ))
+        .await
+        .unwrap();
 
     assert_eq!(result["processed"], "hellohello");
     assert_eq!(result["multiplier"], 2.5);
@@ -368,9 +187,10 @@ async fn test_proc_macro_mixed_parameter_types() {
 #[tokio::test]
 async fn test_proc_macro_mixed_types_with_nulls() {
     let task = TestProcessDataTask;
-
-    let args = vec![json!("test"), json!(1.0), json!(false), json!(null)];
-    let result = task.execute(args).await.unwrap();
+    let result = task
+        .execute(("test".to_string(), 1.0, false, None))
+        .await
+        .unwrap();
 
     assert_eq!(result["processed"], "test");
     assert_eq!(result["multiplier"], 1.0);
@@ -383,49 +203,25 @@ async fn test_proc_macro_mixed_types_with_nulls() {
 async fn test_proc_macro_task_error_handling() {
     let task = TestErrorTaskTask;
 
-    // Test successful execution
-    let success_args = vec![json!(false)];
-    let result = task.execute(success_args).await.unwrap();
+    // Success
+    let result = task.execute(false).await.unwrap();
     assert_eq!(result["status"], "success");
 
-    // Test error execution
-    let error_args = vec![json!(true)];
-    let result = task.execute(error_args).await;
-    assert!(result.is_err());
-
-    if let Err(azolla_client::TaskError::ExecutionFailed(msg)) = result {
-        assert!(msg.contains("failed as requested"));
-    }
+    // Failure
+    let result = task.execute(true).await;
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("failed as requested"));
 }
 
 #[tokio::test]
 async fn test_proc_macro_string_validation() {
     let task = TestGreetTask;
-
-    // Test empty string validation
-    let args = vec![json!("")];
-    let result = task.execute(args).await;
-    assert!(result.is_err());
-
-    if let Err(azolla_client::TaskError::InvalidArgs(msg)) = result {
-        assert!(msg.contains("cannot be empty"));
-    }
+    let result = task.execute(String::new()).await;
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("cannot be empty"));
 }
 
-#[tokio::test]
-async fn test_proc_macro_type_conversion_edge_cases() {
-    let task = TestAddTask;
-
-    // Test integer overflow
-    let args = vec![json!(i64::MAX), json!(1)];
-    let result = task.execute(args).await;
-    assert!(result.is_err()); // Should fail conversion
-
-    // Test floating point to integer
-    let float_args = vec![json!(10.5), json!(20)];
-    let result = task.execute(float_args).await;
-    assert!(result.is_err()); // Should fail conversion
-}
+// Removed: conversion edge cases are compile-time or runtime parse concerns outside the macro
 
 // Test that original function is still available
 #[tokio::test]

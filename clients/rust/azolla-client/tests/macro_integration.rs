@@ -3,7 +3,11 @@
 
 #[cfg(feature = "macros")]
 mod macro_tests {
-    use azolla_client::{azolla_task, task::{BoxedTask, Task, TaskResult}, TaskError};
+    use azolla_client::{
+        azolla_task,
+        task::{BoxedTask, Task, TaskResult},
+        TaskError,
+    };
     use serde_json::json;
     use std::sync::Arc;
 
@@ -383,7 +387,7 @@ fn test_macro_feature_conditional_compilation() {
 #[cfg(feature = "macros")]
 /// Test edge cases in macro argument handling
 mod macro_edge_cases {
-    use azolla_client::{azolla_task, TaskResult, TaskError};
+    use azolla_client::{azolla_task, TaskError, TaskResult};
     use serde_json::json;
 
     // Test with Option arguments

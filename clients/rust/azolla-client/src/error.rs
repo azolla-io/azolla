@@ -85,13 +85,13 @@ impl TaskError {
     }
 
     /// Get error type for external use
-    pub fn error_type(&self) -> Option<String> {
-        Some(self.error_type.clone())
+    pub fn error_type(&self) -> &str {
+        &self.error_type
     }
 
     /// Get error code for external use
-    pub fn error_code(&self) -> Option<String> {
-        self.code.clone()
+    pub fn error_code(&self) -> Option<&str> {
+        self.code.as_deref()
     }
 }
 
@@ -190,8 +190,8 @@ mod tests {
             data: Some(serde_json::json!({"context": "test"})),
         };
 
-        assert_eq!(error.error_type(), Some("TestError".to_string()));
-        assert_eq!(error.error_code(), Some("TEST_001".to_string()));
+        assert_eq!(error.error_type(), "TestError");
+        assert_eq!(error.error_code(), Some("TEST_001"));
         assert!(error.data.is_some());
     }
 
