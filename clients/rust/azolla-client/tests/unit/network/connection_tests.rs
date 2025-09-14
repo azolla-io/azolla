@@ -1,6 +1,7 @@
+//! Network connection tests
+//! Tests various connection scenarios, timeouts, and edge cases
+
 use azolla_client::client::ClientConfig;
-/// Test the purpose of client connection edge cases: ensure robust handling of various network and connection scenarios
-/// Test the expected behavior: client should gracefully handle connection failures, timeouts, and recovery scenarios
 use azolla_client::{AzollaError, Client};
 use std::time::Duration;
 use tokio::time::timeout;

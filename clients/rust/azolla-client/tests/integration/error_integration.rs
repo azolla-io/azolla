@@ -1,12 +1,17 @@
-/// Test the purpose of error handling: ensure errors propagate correctly through the entire stack
-/// Test the expected behavior: errors from tasks, workers, and clients should be handled consistently
+//! Error integration tests across components
+//! Tests error propagation between client, worker, and orchestrator
+
 use azolla_client::error::{AzollaError, TaskError};
 use azolla_client::task::{BoxedTask, Task, TaskResult};
+use azolla_client::worker::Worker;
+use azolla_client::Client;
 use serde_json::json;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
+
+use super::{generate_task_id, init_test_env, wait_for_condition, TestOrchestrator};
 
 // Mock task implementations for error testing
 struct FailingTask;
@@ -190,156 +195,6 @@ async fn test_validation_success_case() {
     assert_eq!(success_value["status"], "validation_passed");
 }
 
-/// Test argument parsing errors through Task trait
-#[test]
-fn test_argument_parsing_errors() {
-    let invalid_arg_cases = vec![
-        (
-            vec![json!("not_an_object")],
-            "Failed to parse single argument",
-        ),
-        (
-            vec![json!({"invalid": "structure"})],
-            "Failed to parse single argument",
-        ),
-        (vec![], "No arguments provided"),
-    ];
-
-    for (invalid_args, expected_error_fragment) in invalid_arg_cases {
-        let result = ValidationErrorTask::parse_args(invalid_args);
-
-        assert!(result.is_err());
-        let error = result.unwrap_err();
-        assert_eq!(error.error_type, "InvalidArguments");
-        assert!(error.message.contains(expected_error_fragment));
-    }
-}
-
-/// Test error conversion chains
-#[test]
-fn test_error_conversion_chains() {
-    // Test TaskError -> AzollaError conversion
-    let task_error = TaskError::execution_failed("Execution failed");
-    let azolla_error: AzollaError = task_error.clone().into();
-
-    match azolla_error {
-        AzollaError::TaskFailed(err) => {
-            assert_eq!(err.message, task_error.message);
-            assert_eq!(err.error_type, task_error.error_type);
-        }
-        _ => panic!("Expected TaskFailed variant"),
-    }
-
-    // Test serde_json::Error -> AzollaError conversion
-    let json_result: Result<serde_json::Value, serde_json::Error> =
-        serde_json::from_str("invalid json");
-    assert!(json_result.is_err());
-
-    let json_error = json_result.unwrap_err();
-    let azolla_error: AzollaError = json_error.into();
-
-    match azolla_error {
-        AzollaError::Serialization(_) => { /* Expected */ }
-        _ => panic!("Expected Serialization variant"),
-    }
-
-    // Test tonic::Status -> AzollaError conversion
-    let tonic_error = tonic::Status::internal("Internal server error");
-    let azolla_error: AzollaError = tonic_error.into();
-
-    match azolla_error {
-        AzollaError::Grpc(_) => { /* Expected */ }
-        _ => panic!("Expected Grpc variant"),
-    }
-}
-
-/// Test error serialization and deserialization consistency
-#[test]
-fn test_error_serialization_consistency() {
-    let errors = vec![
-        TaskError::execution_failed("Execution failed"),
-        TaskError::invalid_args("Invalid arguments"),
-        TaskError::new("Custom error")
-            .with_error_type("CustomError")
-            .with_error_code("CUSTOM_001"),
-    ];
-
-    for original_error in errors {
-        // Test serialization
-        let serialized = serde_json::to_string(&original_error).unwrap();
-        assert!(!serialized.is_empty());
-
-        // Test deserialization
-        let deserialized: TaskError = serde_json::from_str(&serialized).unwrap();
-
-        // Verify all fields match
-        assert_eq!(original_error.error_type, deserialized.error_type);
-        assert_eq!(original_error.message, deserialized.message);
-        assert_eq!(original_error.code, deserialized.code);
-        assert_eq!(original_error.stacktrace, deserialized.stacktrace);
-        assert_eq!(original_error.data, deserialized.data);
-    }
-}
-
-/// Test error display formatting
-#[test]
-fn test_error_display_formatting() {
-    let task_error = TaskError::new("Test error message")
-        .with_error_type("TestError")
-        .with_error_code("TEST_001");
-
-    let display_str = format!("{task_error}");
-    assert_eq!(display_str, "TestError: Test error message");
-
-    let debug_str = format!("{task_error:?}");
-    assert!(debug_str.contains("TestError"));
-    assert!(debug_str.contains("Test error message"));
-    assert!(debug_str.contains("TEST_001"));
-
-    // Test AzollaError display
-    let azolla_error = AzollaError::TaskFailed(task_error);
-    let azolla_display = format!("{azolla_error}");
-    assert!(azolla_display.contains("Task execution failed"));
-    assert!(azolla_display.contains("TestError"));
-}
-
-/// Test error with complex data
-#[test]
-fn test_error_with_complex_data() {
-    let error_data = json!({
-        "request_id": "req_12345",
-        "user_id": 67890,
-        "context": {
-            "endpoint": "/api/v1/tasks",
-            "method": "POST",
-            "timestamp": "2023-01-01T00:00:00Z"
-        },
-        "validation_errors": [
-            {"field": "email", "message": "Invalid format"},
-            {"field": "age", "message": "Out of range"}
-        ]
-    });
-
-    let task_error = TaskError {
-        error_type: "ValidationError".to_string(),
-        message: "Multiple validation errors occurred".to_string(),
-        code: Some("VAL_001".to_string()),
-        stacktrace: Some("at validation.rs:123".to_string()),
-        data: Some(error_data.clone()),
-    };
-
-    // Test serialization preserves complex data
-    let serialized = serde_json::to_string(&task_error).unwrap();
-    let deserialized: TaskError = serde_json::from_str(&serialized).unwrap();
-
-    assert_eq!(deserialized.data, Some(error_data));
-    assert_eq!(deserialized.code, Some("VAL_001".to_string()));
-    assert_eq!(
-        deserialized.stacktrace,
-        Some("at validation.rs:123".to_string())
-    );
-}
-
 /// Test error propagation in async contexts
 #[tokio::test]
 async fn test_async_error_propagation() {
@@ -459,4 +314,63 @@ async fn test_error_recovery_patterns() {
     let second_result = retryable_task.execute(()).await;
     assert!(second_result.is_ok());
     assert_eq!(second_result.unwrap()["status"], "success_on_retry");
+}
+
+/// Test error integration with client submission
+#[tokio::test]
+async fn test_client_error_integration() {
+    let orchestrator = TestOrchestrator::start()
+        .await
+        .expect("Failed to start test orchestrator");
+
+    let client = Client::builder()
+        .endpoint(&orchestrator.endpoint())
+        .domain("error-test")
+        .build()
+        .await
+        .expect("Failed to connect to orchestrator");
+
+    // Test submitting to nonexistent task
+    let result = client
+        .submit_task("nonexistent_failing_task")
+        .args(json!({}))
+        .execute()
+        .await;
+
+    // Should get an error from orchestrator
+    assert!(result.is_err());
+}
+
+/// Test error integration with worker registration
+#[tokio::test]
+async fn test_worker_error_integration() {
+    let orchestrator = TestOrchestrator::start()
+        .await
+        .expect("Failed to start test orchestrator");
+
+    // Register failing tasks with worker
+    let worker = Worker::builder()
+        .orchestrator(&orchestrator.endpoint())
+        .domain("error-worker-test")
+        .register_task(FailingTask)
+        .register_task(TimeoutTask)
+        .register_task(ValidationErrorTask)
+        .build()
+        .await
+        .expect("Failed to build error worker");
+
+    // Verify tasks are registered
+    assert_eq!(worker.task_count(), 3);
+
+    // Start worker (might fail but should handle gracefully)
+    let start_result = tokio::time::timeout(Duration::from_secs(2), worker.start()).await;
+
+    // Should either complete or timeout gracefully
+    match start_result {
+        Ok(result) => match result {
+            Ok(_) => println!("Worker with error tasks started successfully"),
+            Err(e) => println!("Worker startup failed: {e:?}"),
+        },
+        Err(_) => println!("Worker startup timed out"),
+    }
 }

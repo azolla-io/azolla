@@ -1,12 +1,12 @@
 use quote::ToTokens;
 use syn::{parse_quote, ItemFn};
 
-/// Test the purpose of basic macro compilation: ensures the azolla_task macro can be compiled
-/// Expected behavior: the macro should be available and generate syntactically correct code
+/// Test the purpose of basic macro compilation: ensures the azolla_task macro dependencies work
+/// Expected behavior: the macro crate should compile and basic infrastructure should be available
 #[test]
 fn test_proc_macro_crate_builds() {
-    // This is a basic sanity test to ensure the proc macro crate compiles
-    // The azolla_task macro functionality is tested in integration with azolla-client
+    // This is a unit test to ensure the proc macro crate compiles correctly
+    // The actual macro functionality is tested in the azolla-client crate's integration tests
 
     // Verify basic proc macro infrastructure is working
     assert_eq!(2 + 2, 4);
@@ -15,17 +15,17 @@ fn test_proc_macro_crate_builds() {
 /// Test the expected behavior: basic code generation produces valid Rust syntax
 #[test]
 fn test_proc_macro_generates_valid_syntax() {
-    // Create a simple function AST for testing
+    // Create a simple function AST for unit testing
     let input_fn: ItemFn = parse_quote! {
         async fn simple_task() -> Result<serde_json::Value, String> {
             Ok(serde_json::json!({"result": "test"}))
         }
     };
 
-    // Convert to TokenStream and apply the macro logic manually for testing
+    // Convert to TokenStream and test basic proc macro dependencies
     let input_tokens = input_fn.to_token_stream();
 
-    // This validates the basic compilation and proc macro dependencies work
+    // This unit test validates that proc macro dependencies (syn, quote) work correctly
     assert!(!input_tokens.is_empty());
 }
 
@@ -33,10 +33,9 @@ fn test_proc_macro_generates_valid_syntax() {
 /// Expected behavior: snake_case function names should become PascalCase struct names
 #[test]
 fn test_pascal_case_conversion() {
-    // Test the to_pascal_case function that's used internally
+    // Unit test for pascal case conversion logic used by the macro
 
-    // Test basic pascal case conversion logic indirectly through compilation
-    // The actual conversion is tested through integration tests in azolla-client
+    // Test basic pascal case conversion patterns (the actual implementation is tested elsewhere)
 
     let test_cases = vec![
         ("simple_task", "SimpleTask"),
@@ -109,8 +108,8 @@ fn test_proc_macro_function_signature_parsing() {
 /// Test the purpose of module structure validation: ensures crate exports are correct
 #[test]
 fn test_crate_structure() {
-    // This test validates that the crate has the expected basic structure
-    // More detailed macro testing happens in azolla-client integration tests
+    // This unit test validates that the crate has the expected basic structure
+    // Actual macro functionality testing happens in azolla-client tests
 
     // Verify we can work with basic types expected by the macro
     let test_string = "azolla_task";

@@ -79,4 +79,9 @@ assert_matches = "1.5"
 # Property-based testing
 proptest = "1.0"
 
+# Integration testing dependencies
+anyhow = "1.0"
+reqwest = "0.11"
+futures = "0.3"
+
 # Examples moved to repo root examples/ directory
