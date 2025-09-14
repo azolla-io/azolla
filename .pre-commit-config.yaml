@@ -15,19 +15,19 @@ repos:
         pass_filenames: false
       - id: python-ruff-check
         name: ruff check
-        entry: bash -c 'cd clients/python && ruff check src/azolla tests --extend-exclude src/azolla/_grpc'
+        entry: bash -c 'cd clients/python && ../../venv/bin/ruff check src tests'
         language: system
         files: ^clients/python/.*\.py$
         pass_filenames: false
-      - id: python-black-check
-        name: black check
-        entry: bash -c 'cd clients/python && black --check src/azolla tests --extend-exclude src/azolla/_grpc'
+      - id: python-ruff-format
+        name: ruff format check
+        entry: bash -c 'cd clients/python && ../../venv/bin/ruff format --check src tests'
         language: system
         files: ^clients/python/.*\.py$
         pass_filenames: false
       - id: python-mypy-check
         name: mypy check
-        entry: bash -c 'cd clients/python && mypy src'
+        entry: bash -c 'cd clients/python && ../../venv/bin/mypy src'
         language: system
         files: ^clients/python/src/.*\.py$
         pass_filenames: false

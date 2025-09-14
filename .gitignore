@@ -55,3 +55,8 @@ coverage.xml
 
 # Logs
 integration_test_logs/
+
+# Rust coverage reports (cargo-tarpaulin)
+coverage/
+cobertura.xml
+tarpaulin-report.html

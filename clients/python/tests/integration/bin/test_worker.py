@@ -9,6 +9,7 @@ This worker implements the same test tasks as the Rust version for integration t
 - math_add: Adds two numbers
 - count_args: Counts the number of arguments
 """
+
 import argparse
 import asyncio
 import json

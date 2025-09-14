@@ -51,8 +51,9 @@ dev = [
     "pytest-cov>=4.0.0",
     "mypy>=1.9.0",
     "ruff>=0.8.0",
-    "black>=24.0.0",
     "pre-commit>=4.0.0",
+    "grpcio-tools>=1.50.0",
+    "types-grpcio>=1.0.0",
 ]
 # Documentation
 docs = [
@@ -115,6 +116,13 @@ extend-exclude = [
     "src/azolla/_grpc"  # Skip generated gRPC files
 ]
 
+[tool.ruff.format]
+# Ruff format settings (replaces Black)
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
 [tool.ruff.lint]
 select = [
     "E",  # pycodestyle errors
@@ -136,14 +144,6 @@ ignore = [
     "B018", # Found useless expression
 ]
 
-[tool.black]
-line-length = 100
-target-version = ['py39', 'py310', 'py311', 'py312', 'py313']
-extend-exclude = '''
-(
-  src/azolla/_grpc/
-)
-'''
 
 
 [tool.pytest.ini_options]
@@ -181,6 +181,7 @@ exclude_lines = [
 ]
 show_missing = true
 skip_covered = false
+fail_under = 61
 
 [tool.coverage.html]
 directory = "htmlcov"

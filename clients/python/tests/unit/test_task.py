@@ -5,7 +5,7 @@ from typing import Optional
 import pytest
 from pydantic import BaseModel
 
-from azolla import Task, TaskContext, ValidationError, azolla_task
+from azolla import Task, TaskContext, TaskValidationError, azolla_task
 
 
 # Test tasks for decorator approach
@@ -63,6 +63,22 @@ class TestTaskDecorator:
         result = await simple_task("World", count=3)
         assert result == {"message": "Hello World!", "count": 3}
 
+    async def test_decorator_passes_context(self) -> None:
+        """Decorator should pass TaskContext when function accepts it and exclude it from Args."""
+
+        @azolla_task
+        async def fn_with_ctx(x: int, context: Optional[TaskContext] = None) -> int:  # type: ignore[unused-variable]
+            assert context is not None
+            return x + context.attempt_number
+
+        task_instance = fn_with_ctx.__azolla_task_instance__
+        # Context should not be part of the args model fields
+        assert "context" not in fn_with_ctx.__azolla_args_model__.model_fields
+
+        ctx = TaskContext(task_id="t", attempt_number=2)
+        result = await task_instance._execute_with_casting({"x": 5}, ctx)
+        assert result == 7
+
     async def test_task_execution_via_instance(self) -> None:
         """Test task execution through task instance."""
         task_instance = simple_task.__azolla_task_instance__
@@ -83,11 +99,11 @@ class TestTaskDecorator:
         await task_instance._execute_with_casting({"name": "Valid"})
 
         # Invalid arguments - missing required field
-        with pytest.raises(ValidationError):
+        with pytest.raises(TaskValidationError):
             await task_instance._execute_with_casting({"count": 5})  # Missing 'name'
 
         # Invalid arguments - wrong type
-        with pytest.raises(ValidationError):
+        with pytest.raises(TaskValidationError):
             await task_instance._execute_with_casting({"name": "Test", "count": "invalid"})
 
     async def test_error_handling_in_decorated_task(self) -> None:
@@ -126,7 +142,7 @@ class TestExplicitTask:
         assert args.multiplier == 2.0  # Default value
 
         # Test validation error
-        with pytest.raises(ValidationError):
+        with pytest.raises(TaskValidationError):
             task.parse_args({"value": "invalid"})  # Wrong type
 
     async def test_explicit_task_execution(self) -> None:
@@ -148,6 +164,39 @@ class TestExplicitTask:
         result = await task._execute_with_casting({"value": 4})
         expected = {"input": 4, "multiplier": 2.0, "result": 8.0}
         assert result == expected
+
+    def test_positional_list_args_mapping(self) -> None:
+        """Positional list should map to Args fields by order for typed tasks."""
+
+        class TwoArgTask(Task):
+            class Args(BaseModel):
+                a: int
+                b: int
+
+            async def execute(
+                self, args: "TwoArgTask.Args", context: Optional[TaskContext] = None
+            ) -> int:  # type: ignore[name-defined]
+                return args.a + args.b
+
+        # Parse positional list should map to fields by order
+        args = TwoArgTask.parse_args([3, 4])
+        assert isinstance(args, BaseModel)
+        assert args.model_dump() == {"a": 3, "b": 4}
+
+    @pytest.mark.asyncio
+    async def test_task_without_args_model_passes_raw_args(self) -> None:
+        """Tasks without an Args model should receive raw args in execute()."""
+
+        class NoArgsTask(Task):
+            async def execute(self, args: object, context: Optional[TaskContext] = None) -> object:
+                # Echo back what we got
+                return args
+
+        task = NoArgsTask()
+        result1 = await task._execute_with_casting([1, 2, 3])
+        assert result1 == [1, 2, 3]
+        result2 = await task._execute_with_casting({"k": "v"})
+        assert result2 == {"k": "v"}
 
 
 class TestTaskContext:

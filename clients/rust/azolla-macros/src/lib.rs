@@ -38,7 +38,7 @@ pub fn azolla_task(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     // Generate wrapper struct name
     let fn_name_pascal = to_pascal_case(&fn_name_str);
-    let wrapper_struct_name = syn::Ident::new(&format!("{}Task", fn_name_pascal), fn_name.span());
+    let wrapper_struct_name = syn::Ident::new(&format!("{fn_name_pascal}Task"), fn_name.span());
 
     // Generate the Args type and unpacking logic
     let (args_type, arg_unpacking) = match param_types.len() {

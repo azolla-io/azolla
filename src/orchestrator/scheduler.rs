@@ -1720,6 +1720,7 @@ mod tests {
                     .unwrap();
 
                 // Should still have attempts left (2 < 3)
+                // Check status before starting the next retry attempt
                 let task_after_second =
                     scheduler.get_task_for_test(task_id).await.unwrap().unwrap();
                 assert_eq!(

@@ -6,12 +6,14 @@ A modern, type-safe Python client for Azolla distributed task processing.
 from azolla._version import __version__, __version_info__
 from azolla.client import Client, ClientConfig, TaskHandle
 from azolla.exceptions import (
+    AzollaConnectionError,
     AzollaError,
     ConnectionError,
     ResourceError,
     SerializationError,
     TaskError,
-    TimeoutError,
+    TaskTimeoutError,
+    TaskValidationError,
     ValidationError,
     WorkerError,
 )
@@ -21,6 +23,7 @@ from azolla.types import TaskContext, TaskResult, TaskStatus
 from azolla.worker import Worker, WorkerConfig
 
 __all__ = [
+    "AzollaConnectionError",
     "AzollaError",
     "Client",
     "ClientConfig",
@@ -37,7 +40,8 @@ __all__ = [
     "TaskHandle",
     "TaskResult",
     "TaskStatus",
-    "TimeoutError",
+    "TaskTimeoutError",
+    "TaskValidationError",
     "ValidationError",
     "Worker",
     "WorkerConfig",

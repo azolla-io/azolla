@@ -200,12 +200,9 @@ class Worker:
                 except asyncio.TimeoutError:
                     pass  # Continue to reconnect
 
-                # Exponential backoff with jitter
-                jitter = 1.0 + (
-                    reconnect_delay * 0.1 * (2 * asyncio.get_event_loop().time() % 1 - 1)
-                )
-                reconnect_delay = min(
-                    reconnect_delay * 1.5 * jitter, self._config.max_reconnect_delay
+                # Exponential backoff with bounded jitter
+                reconnect_delay = self._next_reconnect_delay(
+                    reconnect_delay, self._config.max_reconnect_delay
                 )
 
         self._running = False
@@ -322,10 +319,6 @@ class Worker:
 
         logger.info(f"Shepherd {self._shepherd_uuid} registered successfully")
 
-        # Signal that worker is ready to receive tasks (only on first successful attempt)
-        if not self._ready_event.is_set():
-            self._ready_event.set()
-
         # Start heartbeat task
         heartbeat_task = asyncio.create_task(self._heartbeat_loop(request_queue))
 
@@ -415,6 +408,9 @@ class Worker:
                         break
 
                     last_activity = asyncio.get_event_loop().time()
+                    # Mark ready upon receiving the first valid server message
+                    if not self._ready_event.is_set():
+                        self._ready_event.set()
                     logger.info(f"🔄 WORKER: Received message: {message}")
 
                     if message.HasField("task"):
@@ -448,6 +444,20 @@ class Worker:
                 raise
         finally:
             logger.info("🔄 WORKER: Response reader ended")
+
+    @staticmethod
+    def _next_reconnect_delay(current: float, max_delay: float) -> float:
+        """Compute bounded next reconnect delay with jitter.
+
+        - Multiplies by 1.5 and a small jitter in [0.9, 1.1].
+        - Never returns less than 0.05s.
+        - Caps at max_delay.
+        """
+        import random as _random
+
+        factor = _random.uniform(0.9, 1.1)  # nosec B311 - jitter for reconnect timing, not security
+        next_delay = max(0.05, current * 1.5 * factor)
+        return min(next_delay, max_delay)
 
     async def _get_next_message(self, stream_call: Any) -> Any:
         """
@@ -641,7 +651,7 @@ class Worker:
                     type=e.error_type,
                     message=e.message,
                     data="{}",
-                    retriable=True,
+                    retriable=e.retryable,
                 ),
             )
             logger.error(f"🔥 WORKER: Returning error result: {error_result}")
@@ -651,13 +661,26 @@ class Worker:
             execution_time = time.time() - start_time
             logger.error(f"Task {task_id} failed after {execution_time:.3f}s: {e}", exc_info=True)
 
+            # Wrap non-TaskError exceptions in TaskError
+            if not isinstance(e, TaskError):
+                wrapped_error = TaskError(
+                    message=str(e),
+                    error_type=e.__class__.__name__,
+                    retryable=True,
+                    original_exception=str(e),
+                    original_exception_type=e.__class__.__name__,
+                )
+                logger.info(f"🔄 WORKER: Wrapped {e.__class__.__name__} in TaskError")
+            else:
+                wrapped_error = e
+
             return common_pb2.TaskResult(
                 task_id=task_id,
                 error=common_pb2.ErrorResult(
-                    type="UnexpectedError",
-                    message=str(e),
+                    type=wrapped_error.error_type,
+                    message=wrapped_error.message,
                     data="{}",
-                    retriable=True,
+                    retriable=wrapped_error.retryable,
                 ),
             )
 

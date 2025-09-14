@@ -45,14 +45,14 @@ class TaskError(AzollaError):
         }
 
 
-class ValidationError(TaskError):
+class TaskValidationError(TaskError):
     """Raised when task arguments are invalid."""
 
     def __init__(self, message: str, **extra_data: Any) -> None:
         super().__init__(message, error_code="VALIDATION_ERROR", retryable=False, **extra_data)
 
 
-class TimeoutError(TaskError):
+class TaskTimeoutError(TaskError):
     """Raised when task execution times out."""
 
     def __init__(self, message: str, **extra_data: Any) -> None:
@@ -74,5 +74,18 @@ class SerializationError(AzollaError):
 
 class WorkerError(AzollaError):
     """Raised when worker encounters an error."""
+
+    pass
+
+
+# Preferred aliases to avoid confusion with Python built-ins in user code.
+class AzollaConnectionError(ConnectionError):
+    """Alias for ConnectionError to avoid shadowing built-in names."""
+
+    pass
+
+
+class ValidationError(TaskValidationError):
+    """Alias for TaskValidationError for backward compatibility."""
 
     pass
