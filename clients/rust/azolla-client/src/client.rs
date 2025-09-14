@@ -72,7 +72,7 @@ impl Client {
     }
 
     /// Submit a task for execution
-    pub fn submit_task(&self, name: &str) -> TaskSubmissionBuilder {
+    pub fn submit_task(&self, name: &str) -> TaskSubmissionBuilder<'_> {
         TaskSubmissionBuilder::new(self, name)
     }
 }
