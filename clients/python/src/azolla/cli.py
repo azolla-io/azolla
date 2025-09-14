@@ -124,7 +124,7 @@ def discover_and_register_tasks(worker: Worker, module_names: list[str]) -> int:
                 elif isinstance(obj, Task):
                     worker.register_task(obj)
                     count += 1
-            except Exception:
-                # Ignore non-task attributes
+            except (AttributeError, TypeError):
+                # Ignore non-task attributes that can't be registered
                 continue
     return count

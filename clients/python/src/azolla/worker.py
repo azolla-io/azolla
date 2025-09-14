@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Optional, Union
 
-import grpc  # type: ignore[import-untyped]
+import grpc
 from pydantic import BaseModel, Field
 
 from azolla._grpc import common_pb2, orchestrator_pb2, orchestrator_pb2_grpc
@@ -455,7 +455,7 @@ class Worker:
         """
         import random as _random
 
-        factor = _random.uniform(0.9, 1.1)
+        factor = _random.uniform(0.9, 1.1)  # nosec B311 - jitter for reconnect timing, not security
         next_delay = max(0.05, current * 1.5 * factor)
         return min(next_delay, max_delay)
 
