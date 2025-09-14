@@ -107,8 +107,9 @@ async fn test_task_submission_with_retry_policy() {
         .submit()
         .await;
 
-    // Should fail but test retry policy serialization logic
-    assert!(result.is_err());
+    // Task submission should succeed (orchestrator accepts it), but task will be queued
+    // This tests that retry policy serialization works correctly
+    assert!(result.is_ok());
 }
 
 /// Test task submission with various argument types

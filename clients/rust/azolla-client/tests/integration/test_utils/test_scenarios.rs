@@ -1,10 +1,10 @@
-use azolla_client::Client;
-use azolla_client::client::ClientConfig;
-use azolla_client::worker::WorkerConfig;
-use azolla_client::error::AzollaError;
-use std::time::Duration;
 use super::TestOrchestrator;
 use anyhow::Result;
+use azolla_client::client::ClientConfig;
+use azolla_client::error::AzollaError;
+use azolla_client::worker::WorkerConfig;
+use azolla_client::Client;
+use std::time::Duration;
 
 /// Common test scenario utilities
 pub struct TestScenarios;
@@ -18,7 +18,8 @@ impl TestScenarios {
             timeout: Duration::from_secs(10),
         };
 
-        Client::with_config(config).await
+        Client::with_config(config)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to create client: {e}"))
     }
 
@@ -76,12 +77,14 @@ impl TestScenarios {
             timeout,
         };
 
-        Client::with_config(config).await
+        Client::with_config(config)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to create client with timeout: {e}"))
     }
 
     /// Try to create a client with invalid endpoint for error testing
-    pub async fn try_create_client_with_invalid_endpoint() -> Result<Client, azolla_client::error::AzollaError> {
+    pub async fn try_create_client_with_invalid_endpoint(
+    ) -> Result<Client, azolla_client::error::AzollaError> {
         let config = ClientConfig {
             endpoint: "http://invalid-host:99999".to_string(),
             domain: "test_domain".to_string(),
@@ -97,13 +100,11 @@ impl TestScenarios {
         task_name: &str,
         args: serde_json::Value,
     ) -> Result<azolla_client::client::TaskExecutionResult> {
-        let handle = client
-            .submit_task(task_name)
-            .args(args)?
-            .submit()
-            .await?;
+        let handle = client.submit_task(task_name).args(args)?.submit().await?;
 
-        handle.wait().await
+        handle
+            .wait()
+            .await
             .map_err(|e| anyhow::anyhow!("Task execution failed: {e}"))
     }
 
@@ -112,24 +113,18 @@ impl TestScenarios {
         client: &Client,
         task_configs: Vec<(&str, serde_json::Value)>,
     ) -> Result<Vec<azolla_client::client::TaskExecutionResult>> {
-        let handles: Result<Vec<_>, AzollaError> = futures::future::try_join_all(
-            task_configs
-                .into_iter()
-                .map(|(task_name, args)| async move {
-                    client
-                        .submit_task(task_name)
-                        .args(args)?
-                        .submit()
-                        .await
-                }),
-        ).await;
+        let handles: Result<Vec<_>, AzollaError> =
+            futures::future::try_join_all(task_configs.into_iter().map(
+                |(task_name, args)| async move {
+                    client.submit_task(task_name).args(args)?.submit().await
+                },
+            ))
+            .await;
 
         let handles = handles.map_err(|e| anyhow::anyhow!("Failed to submit tasks: {e}"))?;
 
         // Wait for all tasks to complete
-        let results = futures::future::try_join_all(
-            handles.into_iter().map(|h| h.wait())
-        ).await?;
+        let results = futures::future::try_join_all(handles.into_iter().map(|h| h.wait())).await?;
 
         Ok(results)
     }

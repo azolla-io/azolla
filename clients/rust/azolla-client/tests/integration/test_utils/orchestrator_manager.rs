@@ -1,7 +1,8 @@
+use anyhow::{Context, Result};
+use azolla_client::error::AzollaError;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
-use anyhow::{Result, Context};
 
 /// Manages the lifecycle of an orchestrator instance for testing
 pub struct TestOrchestrator {
@@ -11,15 +12,19 @@ pub struct TestOrchestrator {
 }
 
 impl TestOrchestrator {
-    /// Find the orchestrator binary in common locations
-    fn find_orchestrator_binary() -> Result<String, String> {
-        // Find project root by walking up until we find Cargo.toml
-        let mut current_dir = std::env::current_dir()
-            .map_err(|_| "Could not get current directory".to_string())?;
+    /// Find the orchestrator binary and project root
+    fn find_orchestrator_info() -> Result<(String, std::path::PathBuf), String> {
+        // Find project root by walking up until we find the main Azolla project
+        let mut current_dir =
+            std::env::current_dir().map_err(|_| "Could not get current directory".to_string())?;
 
         let mut project_root = None;
         loop {
-            if current_dir.join("Cargo.toml").exists() {
+            // Look for the main azolla project markers
+            if current_dir.join("src").exists()
+                && current_dir.join("src").join("orchestrator").exists()
+                && current_dir.join("Cargo.toml").exists()
+            {
                 project_root = Some(current_dir.clone());
                 break;
             }
@@ -31,7 +36,7 @@ impl TestOrchestrator {
         }
 
         let project_root = project_root.ok_or_else(|| {
-            "Could not find project root (Cargo.toml not found)".to_string()
+            "Could not find azolla project root (src/orchestrator not found)".to_string()
         })?;
 
         // Check common locations relative to project root
@@ -42,7 +47,7 @@ impl TestOrchestrator {
 
         for path in &possible_paths {
             if path.exists() {
-                return Ok(path.to_string_lossy().to_string());
+                return Ok((path.to_string_lossy().to_string(), project_root));
             }
         }
 
@@ -52,29 +57,96 @@ impl TestOrchestrator {
         ))
     }
 
-    /// Start a new orchestrator instance
-    pub async fn start() -> Result<Self> {
-        let port = find_free_port().await?;
+    /// Start a new orchestrator instance (compatibility method for integration tests)
+    pub async fn start() -> Result<Self, AzollaError> {
+        Self::start_with_anyhow().await.map_err(|e| {
+            AzollaError::ConnectionError(format!("Failed to start test orchestrator: {e}"))
+        })
+    }
+
+    /// Start a new orchestrator instance (internal implementation)
+    async fn start_with_anyhow() -> Result<Self> {
+        // Use the default port that orchestrator actually uses (52710)
+        // since environment variable override doesn't seem to work
+        let port = 52710;
         let endpoint = format!("http://localhost:{port}");
 
+        // Check if orchestrator is already running by attempting to create a client connection
+        if let Ok(_) = azolla_client::Client::builder()
+            .endpoint(&endpoint)
+            .build()
+            .await
+        {
+            println!("Orchestrator already running on port {}, reusing...", port);
+            return Ok(Self {
+                process: None, // Don't manage an existing process
+                endpoint,
+                port,
+            });
+        }
+
         // Start orchestrator binary
-        let orchestrator_path = std::env::var("AZOLLA_ORCHESTRATOR_PATH")
+        let (orchestrator_path, project_root) = std::env::var("AZOLLA_ORCHESTRATOR_PATH")
+            .map(|path| {
+                (
+                    path,
+                    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+                )
+            })
             .unwrap_or_else(|_| {
-                Self::find_orchestrator_binary()
-                    .unwrap_or_else(|e| {
-                        eprintln!("Warning: {e}");
-                        "azolla-orchestrator".to_string() // Fallback to PATH
-                    })
+                Self::find_orchestrator_info().unwrap_or_else(|e| {
+                    eprintln!("Warning: {e}");
+                    (
+                        "azolla-orchestrator".to_string(),
+                        std::path::PathBuf::from("."),
+                    ) // Fallback to PATH
+                })
             });
 
-        let process = Command::new(&orchestrator_path)
-            .env("AZOLLA_PORT", port.to_string())
-            .env("DATABASE_URL", "postgresql://localhost:5432/azolla_test")
-            .env("RUST_LOG", "info")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+        println!(
+            "Starting orchestrator: {} on port {} from directory: {}",
+            orchestrator_path,
+            port,
+            project_root.display()
+        );
+
+        let mut process = Command::new(&orchestrator_path)
+            .current_dir(&project_root) // Set working directory to project root
+            .env("RUST_LOG", "info") // Reduce log verbosity for tests
+            .stdout(Stdio::piped()) // Capture stdout to debug
+            .stderr(Stdio::piped()) // Capture stderr to debug
             .spawn()
             .context("Failed to start orchestrator process")?;
+
+        // Give the process a moment to start
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+
+        // Check if the process is still running
+        match process.try_wait() {
+            Ok(Some(status)) => {
+                // Process has exited, try to capture stderr for debugging
+                let mut stderr_output = String::new();
+                if let Some(stderr) = process.stderr.as_mut() {
+                    use std::io::Read;
+                    let _ = stderr.read_to_string(&mut stderr_output);
+                }
+                if !stderr_output.is_empty() {
+                    println!("Orchestrator stderr: {}", stderr_output);
+                }
+                anyhow::bail!(
+                    "Orchestrator process exited with status: {}. stderr: {}",
+                    status,
+                    stderr_output
+                );
+            }
+            Ok(None) => {
+                // Process is still running
+                println!("Orchestrator process is running (PID: {})", process.id());
+            }
+            Err(e) => {
+                anyhow::bail!("Failed to check orchestrator process status: {}", e);
+            }
+        }
 
         let orchestrator = Self {
             process: Some(process),
@@ -90,22 +162,43 @@ impl TestOrchestrator {
 
     /// Wait for the orchestrator to become ready
     async fn wait_for_readiness(&self) -> Result<()> {
-        let client = reqwest::Client::new();
-        let health_url = format!("{}/_health", self.endpoint);
+        println!(
+            "Waiting for orchestrator to become ready at {}",
+            self.endpoint
+        );
 
-        // Retry for up to 30 seconds
-        for attempt in 0..60 {
-            if let Ok(response) = client.get(&health_url).send().await {
-                if response.status().is_success() {
+        // Retry for up to 60 seconds with more frequent checks initially
+        for attempt in 0..120 {
+            match azolla_client::Client::builder()
+                .endpoint(&self.endpoint)
+                .build()
+                .await
+            {
+                Ok(_) => {
                     println!("Orchestrator ready after {} attempts", attempt + 1);
                     return Ok(());
+                }
+                Err(e) => {
+                    if attempt % 10 == 0 {
+                        println!(
+                            "Health check attempt {}: Connection error: {}",
+                            attempt + 1,
+                            e
+                        );
+                    }
                 }
             }
 
             sleep(Duration::from_millis(500)).await;
         }
 
-        anyhow::bail!("Orchestrator failed to become ready within 30 seconds")
+        anyhow::bail!("Orchestrator failed to become ready within 60 seconds")
+    }
+
+    /// Get the orchestrator endpoint (compatibility method for integration tests)
+    pub fn endpoint(&self) -> String {
+        // For client connections, return the full HTTP URL
+        self.endpoint.clone()
     }
 
     /// Get the orchestrator endpoint for client connections
@@ -118,8 +211,15 @@ impl TestOrchestrator {
         format!("localhost:{}", self.port)
     }
 
-    /// Gracefully shutdown the orchestrator
-    pub async fn shutdown(&mut self) -> Result<()> {
+    /// Gracefully shutdown the orchestrator (compatibility method for integration tests)
+    pub async fn shutdown(mut self) -> Result<(), AzollaError> {
+        self.shutdown_mut().await.map_err(|e| {
+            AzollaError::WorkerError(format!("Failed to shutdown test orchestrator: {e}"))
+        })
+    }
+
+    /// Gracefully shutdown the orchestrator (internal implementation)
+    pub async fn shutdown_mut(&mut self) -> Result<()> {
         if let Some(mut process) = self.process.take() {
             // Send SIGTERM for graceful shutdown
             #[cfg(unix)]
@@ -133,7 +233,8 @@ impl TestOrchestrator {
             // Wait for graceful shutdown or force kill after timeout
             let wait_result = timeout(Duration::from_secs(5), async {
                 tokio::task::spawn_blocking(move || process.wait()).await
-            }).await;
+            })
+            .await;
 
             match wait_result {
                 Ok(Ok(Ok(_))) => {
@@ -156,19 +257,4 @@ impl Drop for TestOrchestrator {
             let _ = process.wait();
         }
     }
-}
-
-/// Find an available port for testing
-async fn find_free_port() -> Result<u16> {
-    use std::net::{TcpListener, SocketAddr};
-
-    // Try ports in the test range 15000-16000
-    for port in 15000..16000 {
-        let addr: SocketAddr = format!("127.0.0.1:{port}").parse()?;
-        if TcpListener::bind(addr).is_ok() {
-            return Ok(port);
-        }
-    }
-
-    anyhow::bail!("No free ports found in range 15000-16000")
 }

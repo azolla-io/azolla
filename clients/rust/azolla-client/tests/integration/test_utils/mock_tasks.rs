@@ -40,7 +40,9 @@ impl Task for InstantFailureTask {
 
     fn execute(&self, _args: Self::Args) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
         Box::pin(async move {
-            Err(azolla_client::error::TaskError::execution_failed("Task failed intentionally"))
+            Err(azolla_client::error::TaskError::execution_failed(
+                "Task failed intentionally",
+            ))
         })
     }
 }
@@ -125,8 +127,12 @@ impl Task for ConditionalTask {
                     "condition_met": true
                 }))
             } else {
-                let error_msg = args.error_message.unwrap_or_else(|| "Condition not met".to_string());
-                Err(azolla_client::error::TaskError::execution_failed(&error_msg))
+                let error_msg = args
+                    .error_message
+                    .unwrap_or_else(|| "Condition not met".to_string());
+                Err(azolla_client::error::TaskError::execution_failed(
+                    &error_msg,
+                ))
             }
         })
     }

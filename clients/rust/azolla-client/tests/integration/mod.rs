@@ -7,6 +7,12 @@ pub mod macro_integration;
 pub mod worker_integration;
 
 // Test utilities
+pub mod test_utils;
+
+// Re-export the real TestOrchestrator from test_utils
+pub use test_utils::TestOrchestrator;
+
+// Test utilities
 use azolla_client::error::AzollaError;
 use std::sync::Once;
 use std::time::Duration;
@@ -21,34 +27,6 @@ pub fn init_test_env() {
         // Set up test environment
         std::env::set_var("RUST_LOG", "debug");
     });
-}
-
-/// Mock orchestrator for testing
-pub struct TestOrchestrator {
-    endpoint: String,
-    port: u16,
-}
-
-impl TestOrchestrator {
-    /// Start a mock orchestrator
-    pub async fn start() -> Result<Self, AzollaError> {
-        // Mock implementation - just returns a test instance
-        let port = 52710; // Default test port
-        let endpoint = format!("http://localhost:{port}");
-
-        Ok(TestOrchestrator { endpoint, port })
-    }
-
-    /// Get the orchestrator endpoint
-    pub fn endpoint(&self) -> String {
-        self.endpoint.clone()
-    }
-
-    /// Shutdown the orchestrator
-    pub async fn shutdown(self) -> Result<(), AzollaError> {
-        // Mock shutdown
-        Ok(())
-    }
 }
 
 /// Wait for condition with timeout
