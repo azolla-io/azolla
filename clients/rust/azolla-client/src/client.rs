@@ -72,7 +72,7 @@ impl Client {
     }
 
     /// Submit a task for execution
-    pub fn submit_task(&self, name: &str) -> TaskSubmissionBuilder {
+    pub fn submit_task(&self, name: &str) -> TaskSubmissionBuilder<'_> {
         TaskSubmissionBuilder::new(self, name)
     }
 }
@@ -390,7 +390,7 @@ mod tests {
 
         let optional_group: Option<String> = Some("gpu-workers".to_string());
         assert!(optional_group.is_some());
-        assert_eq!(optional_group.unwrap(), "gpu-workers");
+        assert_eq!(optional_group.as_ref().unwrap(), "gpu-workers");
     }
 
     /// Test JSON argument validation
