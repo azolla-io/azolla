@@ -581,7 +581,8 @@ class Worker:
                     error=common_pb2.ErrorResult(
                         type="TaskNotFound",
                         message=f"No implementation found for task: {proto_task.name}",
-                        code="TASK_NOT_FOUND",
+                        data="{}",
+                        retriable=False,
                     ),
                 )
 
@@ -602,7 +603,8 @@ class Worker:
                     error=common_pb2.ErrorResult(
                         type="ArgumentParseError",
                         message=f"Failed to parse task arguments: {e}",
-                        code="ARG_PARSE_ERROR",
+                        data="{}",
+                        retriable=False,
                     ),
                 )
 
@@ -648,7 +650,8 @@ class Worker:
                 error=common_pb2.ErrorResult(
                     type=e.error_type,
                     message=e.message,
-                    code=e.error_code,
+                    data="{}",
+                    retriable=e.retryable,
                 ),
             )
             logger.error(f"🔥 WORKER: Returning error result: {error_result}")
@@ -658,12 +661,26 @@ class Worker:
             execution_time = time.time() - start_time
             logger.error(f"Task {task_id} failed after {execution_time:.3f}s: {e}", exc_info=True)
 
+            # Wrap non-TaskError exceptions in TaskError
+            if not isinstance(e, TaskError):
+                wrapped_error = TaskError(
+                    message=str(e),
+                    error_type=e.__class__.__name__,
+                    retryable=True,
+                    original_exception=str(e),
+                    original_exception_type=e.__class__.__name__,
+                )
+                logger.info(f"🔄 WORKER: Wrapped {e.__class__.__name__} in TaskError")
+            else:
+                wrapped_error = e
+
             return common_pb2.TaskResult(
                 task_id=task_id,
                 error=common_pb2.ErrorResult(
-                    type="UnexpectedError",
-                    message=str(e),
-                    code="UNEXPECTED_ERROR",
+                    type=wrapped_error.error_type,
+                    message=wrapped_error.message,
+                    data="{}",
+                    retriable=wrapped_error.retryable,
                 ),
             )
 

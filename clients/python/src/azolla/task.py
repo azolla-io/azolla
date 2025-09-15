@@ -8,7 +8,7 @@ from typing import Any, Callable, Optional, Union, get_type_hints
 from pydantic import BaseModel, create_model
 from pydantic import ValidationError as PydanticValidationError
 
-from azolla.exceptions import ValidationError
+from azolla.exceptions import TaskValidationError
 from azolla.types import TaskContext
 
 
@@ -36,7 +36,7 @@ class Task(ABC):
             try:
                 typed_args = self.parse_args(raw_args)
             except Exception as e:
-                raise ValidationError(f"Failed to parse task arguments: {e}") from e
+                raise TaskValidationError(f"Failed to parse task arguments: {e}") from e
             return await self.execute(typed_args, context)
         # No typed Args model: pass through raw args unchanged
         return await self.execute(raw_args, context)
@@ -45,7 +45,7 @@ class Task(ABC):
     def parse_args(cls, json_args: Union[list[Any], dict[str, Any]]) -> BaseModel:
         """Parse JSON arguments into typed arguments."""
         if not cls._args_type:
-            raise ValidationError("Task has no Args type defined")
+            raise TaskValidationError("Task has no Args type defined")
 
         try:
             if isinstance(json_args, list):
@@ -56,7 +56,7 @@ class Task(ABC):
                 # Map positional list to fields by order
                 field_names = list(cls._args_type.model_fields.keys())
                 if len(json_args) > len(field_names):
-                    raise ValidationError(
+                    raise TaskValidationError(
                         f"Too many positional arguments: expected at most {len(field_names)}, got {len(json_args)}"
                     )
                 data = {name: json_args[i] for i, name in enumerate(field_names[: len(json_args)])}
@@ -65,7 +65,7 @@ class Task(ABC):
                 # dict - treat as keyword arguments
                 return cls._args_type.model_validate(json_args)
         except PydanticValidationError as e:
-            raise ValidationError(f"Argument validation failed: {e}") from e
+            raise TaskValidationError(f"Argument validation failed: {e}") from e
 
     def name(self) -> str:
         """Task name for registration."""

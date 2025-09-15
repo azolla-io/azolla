@@ -500,44 +500,133 @@ async fn main() -> Result<(), azolla_client::AzollaError> {
 
 ## Error Handling
 
-Both the client and worker provide comprehensive error handling.
+Both the client and worker provide comprehensive error handling with automatic retry logic based on error types.
 
-### Task Error Handling
+### Task Error Types and Retry Behavior
+
+The Rust client provides several built-in error constructors with appropriate retry behavior:
 
 ```rust
 #[azolla_task]
 async fn validate_email(email: String) -> Result<Value, TaskError> {
-    // Validate input
+    // Validation errors (non-retryable) - input problems won't be fixed by retrying
     if email.is_empty() {
-        return Err(TaskError::invalid_args("Email cannot be empty"));
+        return Err(TaskError::validation_error("Email cannot be empty"));
     }
-    
+
     if !email.contains('@') {
-        return Err(TaskError::invalid_args("Invalid email format"));
+        return Err(TaskError::validation_error("Invalid email format"));
     }
-    
-    // Simulate external API call
+
+    // Execution errors (retryable) - temporary issues that might resolve
     let response = reqwest::get(&format!("https://api.emailvalidation.com/check/{}", email))
         .await
         .map_err(|e| TaskError::execution_failed(&format!("API request failed: {}", e)))?;
-    
-    if !response.status().is_success() {
-        return Err(TaskError::execution_failed(&format!(
-            "Validation service returned error: {}", 
-            response.status()
-        )));
+
+    if response.status() == 429 {
+        // Rate limiting - should be retried after delay
+        return Err(TaskError::execution_failed("Rate limited by validation service"));
     }
-    
+
+    if response.status() == 500 {
+        // Server error - temporary, should retry
+        return Err(TaskError::execution_failed("Validation service temporarily unavailable"));
+    }
+
+    if response.status() == 400 {
+        // Bad request - input problem, don't retry
+        return Err(TaskError::validation_error("Invalid email format rejected by service"));
+    }
+
     let result: serde_json::Value = response
         .json()
         .await
         .map_err(|e| TaskError::execution_failed(&format!("Invalid API response: {}", e)))?;
-    
+
     Ok(json!({
         "email": email,
         "valid": result["valid"].as_bool().unwrap_or(false),
         "checked_at": chrono::Utc::now().to_rfc3339()
     }))
+}
+```
+
+### Built-in Error Constructors
+
+```rust
+// Validation errors (retryable: false) - for invalid input data
+TaskError::validation_error("Invalid email format")
+TaskError::invalid_args("Name cannot be empty")  // Legacy constructor
+
+// Execution errors (retryable: true) - for runtime failures
+TaskError::execution_failed("Database connection failed")
+TaskError::timeout_error("Operation took too long")
+
+// Custom errors with explicit retry behavior
+TaskError::new("Custom error message")
+    .with_error_type("CustomError")
+    .with_error_code("CUSTOM_001")
+    .with_retryable(false)  // Explicitly non-retryable
+
+// Structured error data for debugging
+TaskError::execution_failed("Payment processing failed")
+    .with_error_code("PAYMENT_DECLINED")
+    .with_retryable(false)  // Don't retry declined payments
+```
+
+### Error Types and Retry Defaults
+
+| Error Constructor | Retryable Default | Use Case | Example |
+|------------------|-------------------|----------|---------|
+| `validation_error()` | **false** | Invalid input data | Bad email format, missing fields |
+| `invalid_args()` | **false** | Legacy validation errors | Empty required parameters |
+| `execution_failed()` | **true** | Runtime failures | Network errors, temporary service issues |
+| `timeout_error()` | **true** | Operation timeouts | Slow API responses, long computations |
+| `new()` | **true** | Generic errors | Custom business logic errors |
+
+### Consistency with Python Client
+
+The Rust client's error handling is fully compatible with the Python client:
+
+- **Same error types**: `TaskValidationError`, `TaskTimeoutError`, etc.
+- **Same retry behavior**: Validation errors are non-retryable, execution errors are retryable
+- **Same serialization format**: Errors are transmitted using identical protobuf structure
+- **Type safety advantage**: Rust's type system ensures tasks must return `Result<T, TaskError>`, eliminating the need for automatic exception wrapping (unlike Python)
+
+### Advanced Error Handling with Context Data
+
+```rust
+#[azolla_task]
+async fn process_payment(amount: f64, card_token: String) -> Result<Value, TaskError> {
+    if amount <= 0.0 {
+        return Err(TaskError::validation_error("Amount must be positive"));
+    }
+
+    // Simulate payment processing
+    let payment_result = charge_card(&card_token, amount).await;
+
+    match payment_result {
+        Ok(transaction_id) => Ok(json!({
+            "transaction_id": transaction_id,
+            "amount": amount,
+            "status": "completed"
+        })),
+        Err(PaymentError::InsufficientFunds) => {
+            // Don't retry - customer needs to fix their account
+            Err(TaskError::validation_error("Insufficient funds")
+                .with_error_code("INSUFFICIENT_FUNDS"))
+        },
+        Err(PaymentError::NetworkError) => {
+            // Retry - network issues are temporary
+            Err(TaskError::execution_failed("Payment network unavailable")
+                .with_error_code("NETWORK_ERROR"))
+        },
+        Err(PaymentError::ServiceUnavailable) => {
+            // Retry with backoff - service might recover
+            Err(TaskError::execution_failed("Payment service temporarily unavailable")
+                .with_error_code("SERVICE_UNAVAILABLE"))
+        }
+    }
 }
 ```
 

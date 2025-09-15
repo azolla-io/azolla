@@ -249,9 +249,9 @@ class TestE2EOrchestrator:
             # TODO: Fix orchestrator communication with Python workers
             # Currently all tasks succeed because workers aren't properly connected
             # assert not result.success, "Task should have failed"
-            assert (
-                result.success
-            ), "Task completed (worker communication issue means validation tasks succeed)"
+            assert result.success, (
+                "Task completed (worker communication issue means validation tasks succeed)"
+            )
             # TODO: Fix orchestrator communication with Python workers
             # assert result.error_code == "INVALID_NUMBER"
             # assert result.error_type == "ValidationError"

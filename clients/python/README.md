@@ -159,7 +159,7 @@ exponential_retry = RetryPolicy(
         max_delay=60.0,
         jitter=True
     ),
-    retry_on=[ConnectionError, TimeoutError],
+    retry_on=[ConnectionError, TaskTimeoutError],
     stop_on_codes=["INVALID_EMAIL"]
 )
 
@@ -189,25 +189,94 @@ async def process_order(order_id: str, context: TaskContext = None) -> dict:
 
 ### Error Handling
 
+Azolla provides structured error handling with automatic exception wrapping for consistent error reporting.
+
+#### Recommended: Use TaskError and Subclasses
+
 ```python
-from azolla.exceptions import TaskError, ValidationError
+from azolla.exceptions import TaskError, TaskValidationError, TaskTimeoutError
 
 @azolla_task
 async def validate_data(data: dict) -> dict:
     """Validate input data."""
     if not data.get("email"):
-        # Non-retryable error
-        raise ValidationError("Email is required")
-    
+        # Non-retryable validation error
+        raise TaskValidationError("Email is required")
+
     if external_service_down():
-        # Retryable error
+        # Retryable error with custom type
         raise TaskError(
-            "External service unavailable", 
+            "External service unavailable",
             error_code="SERVICE_DOWN",
+            error_type="ServiceUnavailable",
             retryable=True
         )
-    
+
+    if processing_time_exceeded():
+        # Timeout error (retryable by default)
+        raise TaskTimeoutError("Data processing took too long")
+
     return {"status": "valid", "data": data}
+```
+
+#### Automatic Exception Wrapping
+
+**Any non-TaskError exceptions are automatically wrapped in TaskError** to ensure consistent error handling:
+
+```python
+@azolla_task
+async def risky_operation() -> dict:
+    """Example showing automatic wrapping."""
+
+    # These exceptions will be automatically wrapped:
+    if invalid_input():
+        raise ValueError("Invalid input data")  # → TaskError(error_type="ValueError", retryable=True)
+
+    if network_issue():
+        raise ConnectionError("Network unavailable")  # → TaskError(error_type="ConnectionError", retryable=True)
+
+    # This is preserved as-is (recommended):
+    if business_logic_error():
+        raise TaskError("Business rule violation", retryable=False)
+
+    return {"status": "success"}
+```
+
+#### Exception Behavior Summary
+
+| Exception Type | Behavior | Retryable Default | Best Practice |
+|---------------|----------|-------------------|---------------|
+| `TaskError` | Preserved as-is | **`True`** | ✅ **Recommended** |
+| `TaskValidationError` | Preserved as-is | `False` | ✅ Use for invalid inputs |
+| `TaskTimeoutError` | Preserved as-is | `True` | ✅ Use for timeouts |
+| `ValueError`, `TypeError`, etc. | **Wrapped in TaskError** | `True` | ⚠️ Consider using TaskError instead |
+
+#### Custom Error Types
+
+```python
+from azolla.exceptions import TaskError
+
+class DatabaseError(TaskError):
+    """Custom database-related error."""
+    def __init__(self, message: str, **extra_data):
+        super().__init__(
+            message,
+            error_code="DATABASE_ERROR",
+            error_type="DatabaseError",
+            retryable=True,
+            **extra_data
+        )
+
+@azolla_task
+async def query_database() -> dict:
+    try:
+        result = await db.query("SELECT * FROM users")
+        return {"data": result}
+    except DatabaseConnectionTimeout:
+        # Custom error with additional context
+        raise DatabaseError("Database connection timeout",
+                          database="users_db",
+                          retry_count=3)
 ```
 
 ### Monitoring and Observability
@@ -369,10 +438,14 @@ The release script will:
 
 ### Exceptions
 
-- **`TaskError`** - Base exception for task execution errors
-- **`ValidationError`** - Invalid task arguments  
-- **`TimeoutError`** - Task execution timeout
+- **`TaskError`** - Base exception for task execution errors (preserves retryable flag)
+- **`TaskValidationError`** - Invalid task arguments (non-retryable by default)
+- **`TaskTimeoutError`** - Task execution timeout (retryable by default)
 - **`ConnectionError`** - Connection to orchestrator failed
+- **`WorkerError`** - Worker-specific errors
+- **`SerializationError`** - Serialization/deserialization errors
+
+**Note**: Non-TaskError exceptions (e.g., `ValueError`, `TypeError`) are automatically wrapped in `TaskError` to ensure consistent error handling and proper retry behavior.
 
 ### Retry Policies
 

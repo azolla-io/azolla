@@ -167,9 +167,8 @@ mod tests {
                     common::ErrorResult {
                         r#type: "TestError".to_string(),
                         message: "Test error message".to_string(),
-                        code: "TEST_ERROR".to_string(),
-                        stacktrace: "".to_string(),
-                        data: None,
+                        data: "{}".to_string(),
+                        retriable: true,
                     },
                 )),
             }),

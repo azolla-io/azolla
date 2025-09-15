@@ -287,9 +287,8 @@ impl Worker {
                                 "No implementation found for task: {}",
                                 proto_task.name
                             ),
-                            code: "TASK_NOT_FOUND".to_string(),
-                            stacktrace: "".to_string(),
-                            data: None,
+                            data: "{}".to_string(),
+                            retriable: false,
                         },
                     )),
                 };
@@ -307,9 +306,8 @@ impl Worker {
                         ErrorResult {
                             r#type: "ArgumentParseError".to_string(),
                             message: format!("Failed to parse task arguments: {e}"),
-                            code: "ARG_PARSE_ERROR".to_string(),
-                            stacktrace: "".to_string(),
-                            data: None,
+                            data: "{}".to_string(),
+                            retriable: false,
                         },
                     )),
                 };
@@ -346,9 +344,12 @@ impl Worker {
                         ErrorResult {
                             r#type: e.error_type().to_string(),
                             message: e.to_string(),
-                            code: e.error_code().unwrap_or("EXECUTION_ERROR").to_string(),
-                            stacktrace: "".to_string(),
-                            data: None,
+                            data: e
+                                .data
+                                .as_ref()
+                                .and_then(|d| serde_json::to_string(d).ok())
+                                .unwrap_or_else(|| "{}".to_string()),
+                            retriable: e.retryable,
                         },
                     )),
                 }

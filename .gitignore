@@ -53,6 +53,9 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 
+# Logs
+integration_test_logs/
+
 # Rust coverage reports (cargo-tarpaulin)
 coverage/
 cobertura.xml

@@ -675,9 +675,8 @@ impl SchedulerState {
                         crate::proto::common::ErrorResult {
                             r#type: "InfrastructureError".to_string(),
                             message: "Shepherd disconnected".to_string(),
-                            code: "503".to_string(),
-                            stacktrace: "".to_string(),
-                            data: None,
+                            data: "{}".to_string(),
+                            retriable: true,
                         },
                     )),
                 };
@@ -1183,9 +1182,8 @@ mod tests {
                     ErrorResult {
                         r#type: "RuntimeError".to_string(),
                         message: "Task failed".to_string(),
-                        code: "500".to_string(),
-                        stacktrace: "".to_string(),
-                        data: None,
+                        data: "{}".to_string(),
+                        retriable: false,
                     },
                 )),
             };
@@ -1251,9 +1249,8 @@ mod tests {
                     ErrorResult {
                         r#type: "RuntimeError".to_string(),
                         message: "Task failed".to_string(),
-                        code: "500".to_string(),
-                        stacktrace: "".to_string(),
-                        data: None,
+                        data: "{}".to_string(),
+                        retriable: false,
                     },
                 )),
             };
@@ -1686,9 +1683,8 @@ mod tests {
                         ErrorResult {
                             r#type: "RetryableError".to_string(),
                             message: "First attempt failed".to_string(),
-                            code: "500".to_string(),
-                            stacktrace: "".to_string(),
-                            data: None,
+                            data: "{}".to_string(),
+                            retriable: true,
                         },
                     )),
                 };
@@ -1712,9 +1708,8 @@ mod tests {
                         ErrorResult {
                             r#type: "FatalError".to_string(),
                             message: "Final failure".to_string(),
-                            code: "500".to_string(),
-                            stacktrace: "".to_string(),
-                            data: None,
+                            data: "{}".to_string(),
+                            retriable: false,
                         },
                     )),
                 };
@@ -2161,9 +2156,8 @@ mod tests {
                     ErrorResult {
                         r#type: "RetryableError".to_string(),
                         message: "First attempt failed".to_string(),
-                        code: "500".to_string(),
-                        stacktrace: "stack trace here".to_string(),
-                        data: None,
+                        data: "{}".to_string(),
+                        retriable: true,
                     },
                 )),
             };
@@ -2192,9 +2186,8 @@ mod tests {
                     ErrorResult {
                         r#type: "RetryableError".to_string(),
                         message: "Second attempt failed".to_string(),
-                        code: "503".to_string(),
-                        stacktrace: "second stack trace".to_string(),
-                        data: None,
+                        data: "{}".to_string(),
+                        retriable: true,
                     },
                 )),
             };
@@ -2222,9 +2215,8 @@ mod tests {
                     ErrorResult {
                         r#type: "FatalError".to_string(),
                         message: "Final attempt failed".to_string(),
-                        code: "500".to_string(),
-                        stacktrace: "final stack trace".to_string(),
-                        data: None,
+                        data: "{}".to_string(),
+                        retriable: false,
                     },
                 )),
             };

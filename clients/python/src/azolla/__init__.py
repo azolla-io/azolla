@@ -13,7 +13,7 @@ from azolla.exceptions import (
     SerializationError,
     TaskError,
     TaskTimeoutError,
-    TimeoutError,
+    TaskValidationError,
     ValidationError,
     WorkerError,
 )
@@ -41,7 +41,7 @@ __all__ = [
     "TaskResult",
     "TaskStatus",
     "TaskTimeoutError",
-    "TimeoutError",
+    "TaskValidationError",
     "ValidationError",
     "Worker",
     "WorkerConfig",

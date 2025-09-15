@@ -36,8 +36,8 @@ pub struct TaskError {
     pub error_type: String,
     pub message: String,
     pub code: Option<String>,
-    pub stacktrace: Option<String>,
     pub data: Option<Value>,
+    pub retryable: bool,
 }
 
 impl TaskError {
@@ -46,8 +46,8 @@ impl TaskError {
             error_type: "ExecutionError".to_string(),
             message: message.to_string(),
             code: None,
-            stacktrace: None,
             data: None,
+            retryable: true,
         }
     }
 
@@ -56,8 +56,8 @@ impl TaskError {
             error_type: "InvalidArguments".to_string(),
             message: message.to_string(),
             code: None,
-            stacktrace: None,
             data: None,
+            retryable: false,
         }
     }
 
@@ -67,8 +67,8 @@ impl TaskError {
             error_type: "TaskError".to_string(),
             message: message.to_string(),
             code: None,
-            stacktrace: None,
             data: None,
+            retryable: true,
         }
     }
 
@@ -84,6 +84,12 @@ impl TaskError {
         self
     }
 
+    /// Set the retryable flag
+    pub fn with_retryable(mut self, retryable: bool) -> Self {
+        self.retryable = retryable;
+        self
+    }
+
     /// Get error type for external use
     pub fn error_type(&self) -> &str {
         &self.error_type
@@ -92,6 +98,28 @@ impl TaskError {
     /// Get error code for external use
     pub fn error_code(&self) -> Option<&str> {
         self.code.as_deref()
+    }
+
+    /// Create a validation error (non-retryable)
+    pub fn validation_error(message: &str) -> Self {
+        Self {
+            error_type: "TaskValidationError".to_string(),
+            message: message.to_string(),
+            code: Some("VALIDATION_ERROR".to_string()),
+            data: None,
+            retryable: false,
+        }
+    }
+
+    /// Create a timeout error (retryable)
+    pub fn timeout_error(message: &str) -> Self {
+        Self {
+            error_type: "TaskTimeoutError".to_string(),
+            message: message.to_string(),
+            code: Some("TIMEOUT_ERROR".to_string()),
+            data: None,
+            retryable: true,
+        }
     }
 }
 
@@ -186,8 +214,8 @@ mod tests {
             error_type: "TestError".to_string(),
             message: "test message".to_string(),
             code: Some("TEST_001".to_string()),
-            stacktrace: None,
             data: Some(serde_json::json!({"context": "test"})),
+            retryable: true,
         };
 
         assert_eq!(error.error_type(), "TestError");
@@ -252,8 +280,8 @@ mod tests {
             error_type: "ValidationError".to_string(),
             message: "Field validation failed".to_string(),
             code: Some("VAL_001".to_string()),
-            stacktrace: Some("at line 123".to_string()),
             data: Some(serde_json::json!({"field": "email", "value": "invalid"})),
+            retryable: false,
         };
 
         // Test serialization
@@ -267,7 +295,7 @@ mod tests {
         assert_eq!(error.error_type, deserialized.error_type);
         assert_eq!(error.message, deserialized.message);
         assert_eq!(error.code, deserialized.code);
-        assert_eq!(error.stacktrace, deserialized.stacktrace);
+        assert_eq!(error.retryable, deserialized.retryable);
     }
 
     /// Test error formatting and debug output
@@ -343,19 +371,19 @@ mod tests {
             error_type: "FullError".to_string(),
             message: "Full error message".to_string(),
             code: Some("ERR_001".to_string()),
-            stacktrace: Some("Stack trace here".to_string()),
             data: Some(serde_json::json!({"key": "value"})),
+            retryable: true,
         };
 
         assert!(full_error.code.is_some());
-        assert!(full_error.stacktrace.is_some());
         assert!(full_error.data.is_some());
+        assert!(full_error.retryable);
 
         // Test with minimal fields
         let minimal_error = TaskError::invalid_args("minimal");
         assert!(minimal_error.code.is_none());
-        assert!(minimal_error.stacktrace.is_none());
         assert!(minimal_error.data.is_none());
+        assert!(!minimal_error.retryable);
     }
 
     /// Test error propagation in Result chains

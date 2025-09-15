@@ -5,7 +5,7 @@ from typing import Optional
 import pytest
 from pydantic import BaseModel
 
-from azolla import Task, TaskContext, ValidationError, azolla_task
+from azolla import Task, TaskContext, TaskValidationError, azolla_task
 
 
 # Test tasks for decorator approach
@@ -99,11 +99,11 @@ class TestTaskDecorator:
         await task_instance._execute_with_casting({"name": "Valid"})
 
         # Invalid arguments - missing required field
-        with pytest.raises(ValidationError):
+        with pytest.raises(TaskValidationError):
             await task_instance._execute_with_casting({"count": 5})  # Missing 'name'
 
         # Invalid arguments - wrong type
-        with pytest.raises(ValidationError):
+        with pytest.raises(TaskValidationError):
             await task_instance._execute_with_casting({"name": "Test", "count": "invalid"})
 
     async def test_error_handling_in_decorated_task(self) -> None:
@@ -142,7 +142,7 @@ class TestExplicitTask:
         assert args.multiplier == 2.0  # Default value
 
         # Test validation error
-        with pytest.raises(ValidationError):
+        with pytest.raises(TaskValidationError):
             task.parse_args({"value": "invalid"})  # Wrong type
 
     async def test_explicit_task_execution(self) -> None:
@@ -173,7 +173,9 @@ class TestExplicitTask:
                 a: int
                 b: int
 
-            async def execute(self, args: "TwoArgTask.Args", context: Optional[TaskContext] = None) -> int:  # type: ignore[name-defined]
+            async def execute(
+                self, args: "TwoArgTask.Args", context: Optional[TaskContext] = None
+            ) -> int:  # type: ignore[name-defined]
                 return args.a + args.b
 
         # Parse positional list should map to fields by order

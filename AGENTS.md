@@ -259,15 +259,27 @@ cargo test --features macros -- --test-threads=1
 #### Database Requirements
 Most integration tests require PostgreSQL:
 ```bash
-# Start test database
+# Start testing PostgreSQL database
 make dev-up
 
-# Run tests with database
-cargo test
-
-# Clean up
-make dev-clean
+# Run tests with database (e.g. `cargo test`)
 ```
+
+#### Python Development Environment
+The repository includes a pre-configured Python virtual environment at `./venv/` in the root directory:
+
+```bash
+# Use the repo's Python virtual environment
+./venv/bin/python <script>
+
+# Regenerate Python protobuf files (when proto files change)
+./venv/bin/python clients/python/scripts/generate_proto.py
+
+# Run Python client tests
+./venv/bin/python -m pytest clients/python/tests/
+```
+
+The venv includes all necessary dependencies including `grpcio-tools` for protobuf code generation. If the venv does not exist, create it.
 
 #### Environment Variables
 ```bash
@@ -346,7 +358,7 @@ This command performs an intelligent git commit by analyzing changes and followi
 6. **Create commit**: Create the commit, never use the `--no-verify` option to bypass hooks and handle all pre-commit failures.
 
 ### Git Commit Message Standards
-
+- **Never make a git commit or push without my confirmation**
 - **Never add Claude Code promotion message**: Do not include any promotional text about Claude Code in commit messages
 - **Follow conventional commit format**: Use the format `<type>: <description>` as a single-line title
 - **Supported types**: fix, feat, build, chore, ci, docs, style, refactor, perf, test, and others

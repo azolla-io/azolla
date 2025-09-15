@@ -95,9 +95,9 @@ jobs:
       working-directory: clients/python
       run: ruff check src tests --output-format=github
     
-    - name: Format check with black
+    - name: Format check with ruff
       working-directory: clients/python
-      run: black --check src tests
+      run: ruff format --check src tests
     
     - name: Type check with mypy
       working-directory: clients/python
