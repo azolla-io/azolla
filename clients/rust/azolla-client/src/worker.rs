@@ -344,7 +344,8 @@ impl Worker {
                         ErrorResult {
                             r#type: e.error_type().to_string(),
                             message: e.to_string(),
-                            data: e.data
+                            data: e
+                                .data
                                 .as_ref()
                                 .and_then(|d| serde_json::to_string(d).ok())
                                 .unwrap_or_else(|| "{}".to_string()),
