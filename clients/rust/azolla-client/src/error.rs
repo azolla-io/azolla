@@ -377,13 +377,13 @@ mod tests {
 
         assert!(full_error.code.is_some());
         assert!(full_error.data.is_some());
-        assert_eq!(full_error.retryable, true);
+        assert!(full_error.retryable);
 
         // Test with minimal fields
         let minimal_error = TaskError::invalid_args("minimal");
         assert!(minimal_error.code.is_none());
         assert!(minimal_error.data.is_none());
-        assert_eq!(minimal_error.retryable, false);
+        assert!(!minimal_error.retryable);
     }
 
     /// Test error propagation in Result chains
