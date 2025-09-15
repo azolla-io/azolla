@@ -65,8 +65,8 @@ fn test_error_serialization_consistency() {
         assert_eq!(original_error.error_type, deserialized.error_type);
         assert_eq!(original_error.message, deserialized.message);
         assert_eq!(original_error.code, deserialized.code);
-        assert_eq!(original_error.stacktrace, deserialized.stacktrace);
         assert_eq!(original_error.data, deserialized.data);
+        assert_eq!(original_error.retryable, deserialized.retryable);
     }
 }
 
@@ -113,8 +113,8 @@ fn test_error_with_complex_data() {
         error_type: "ValidationError".to_string(),
         message: "Multiple validation errors occurred".to_string(),
         code: Some("VAL_001".to_string()),
-        stacktrace: Some("at validation.rs:123".to_string()),
         data: Some(error_data.clone()),
+        retryable: false,
     };
 
     // Test serialization preserves complex data
@@ -123,10 +123,7 @@ fn test_error_with_complex_data() {
 
     assert_eq!(deserialized.data, Some(error_data));
     assert_eq!(deserialized.code, Some("VAL_001".to_string()));
-    assert_eq!(
-        deserialized.stacktrace,
-        Some("at validation.rs:123".to_string())
-    );
+    assert_eq!(deserialized.retryable, false);
 }
 
 /// Test TaskError constructor methods
@@ -137,18 +134,35 @@ fn test_task_error_constructors() {
     assert_eq!(exec_error.error_type, "ExecutionError");
     assert_eq!(exec_error.message, "Task failed");
     assert!(exec_error.code.is_none());
+    assert_eq!(exec_error.retryable, true);
 
     // Test invalid_args constructor
     let arg_error = TaskError::invalid_args("Bad arguments");
     assert_eq!(arg_error.error_type, "InvalidArguments");
     assert_eq!(arg_error.message, "Bad arguments");
     assert!(arg_error.code.is_none());
+    assert_eq!(arg_error.retryable, false);
 
     // Test new constructor
     let custom_error = TaskError::new("Custom message");
     assert_eq!(custom_error.error_type, "TaskError");
     assert_eq!(custom_error.message, "Custom message");
     assert!(custom_error.code.is_none());
+    assert_eq!(custom_error.retryable, true);
+
+    // Test validation_error constructor
+    let validation_error = TaskError::validation_error("Invalid input");
+    assert_eq!(validation_error.error_type, "TaskValidationError");
+    assert_eq!(validation_error.message, "Invalid input");
+    assert_eq!(validation_error.code, Some("VALIDATION_ERROR".to_string()));
+    assert_eq!(validation_error.retryable, false);
+
+    // Test timeout_error constructor
+    let timeout_error = TaskError::timeout_error("Operation timed out");
+    assert_eq!(timeout_error.error_type, "TaskTimeoutError");
+    assert_eq!(timeout_error.message, "Operation timed out");
+    assert_eq!(timeout_error.code, Some("TIMEOUT_ERROR".to_string()));
+    assert_eq!(timeout_error.retryable, true);
 }
 
 /// Test TaskError builder methods
@@ -240,8 +254,8 @@ fn test_error_equality_and_cloning() {
 fn test_error_optional_fields() {
     let mut error = TaskError::new("Base error");
     assert!(error.code.is_none());
-    assert!(error.stacktrace.is_none());
     assert!(error.data.is_none());
+    assert_eq!(error.retryable, true); // Default retryable
 
     error = error.with_error_code("CODE_001");
     assert_eq!(error.code, Some("CODE_001".to_string()));
@@ -250,9 +264,9 @@ fn test_error_optional_fields() {
     error.data = Some(json!({"key": "value"}));
     assert!(error.data.is_some());
 
-    // Test setting stacktrace
-    error.stacktrace = Some("at test.rs:123".to_string());
-    assert_eq!(error.stacktrace, Some("at test.rs:123".to_string()));
+    // Test setting retryable
+    error = error.with_retryable(false);
+    assert_eq!(error.retryable, false);
 }
 
 /// Test TaskError to AzollaError conversion

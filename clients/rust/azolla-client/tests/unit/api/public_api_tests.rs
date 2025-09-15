@@ -65,8 +65,8 @@ fn test_public_type_construction() {
         error_type: "TestError".to_string(),
         message: "Test message".to_string(),
         code: Some("TEST_001".to_string()),
-        stacktrace: None,
         data: Some(json!({"key": "value"})),
+        retryable: true,
     };
     assert_eq!(task_error.error_type, "TestError");
 }
@@ -332,8 +332,8 @@ fn test_backwards_compatibility() {
         error_type: "ExecutionError".to_string(),
         message: "message".to_string(),
         code: None,
-        stacktrace: None,
         data: None,
+        retryable: true,
     };
     assert_eq!(error1.error_type, error2.error_type);
     assert_eq!(error1.message, error2.message);

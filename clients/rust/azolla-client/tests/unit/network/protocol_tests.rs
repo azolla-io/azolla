@@ -98,13 +98,13 @@ fn test_task_error_protocol_serialization() {
             error_type: "NetworkError".to_string(),
             message: "Connection to database failed".to_string(),
             code: Some("NET_DB_001".to_string()),
-            stacktrace: Some("at database.rs:123\nat task.rs:456".to_string()),
             data: Some(json!({
                 "host": "db.example.com",
                 "port": 5432,
                 "database": "production",
                 "retry_count": 3
             })),
+            retryable: true,
         },
     ];
 
@@ -122,7 +122,7 @@ fn test_task_error_protocol_serialization() {
         assert_eq!(error.error_type, deserialized.error_type);
         assert_eq!(error.message, deserialized.message);
         assert_eq!(error.code, deserialized.code);
-        assert_eq!(error.stacktrace, deserialized.stacktrace);
+        assert_eq!(error.retryable, deserialized.retryable);
         assert_eq!(error.data, deserialized.data);
 
         // Test pretty-printing for debugging
