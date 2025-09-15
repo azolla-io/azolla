@@ -158,6 +158,44 @@ async fn test_task_retry_handling() {
         );
     }
 
+    // Verify final task result is properly stored after all retries exhausted
+    let wait_request = tonic::Request::new(azolla::proto::orchestrator::WaitForTaskRequest {
+        task_id: task_id.clone(),
+        domain: harness.shepherd_config.domain.clone(),
+        timeout_ms: Some(1000), // Short timeout since task is already failed
+    });
+
+    let wait_response = harness.client.wait_for_task(wait_request).await.unwrap();
+    let wait_result = wait_response.into_inner();
+
+    // Verify the response indicates completion with error result
+    assert_eq!(
+        wait_result.status_code,
+        azolla::proto::orchestrator::WaitForTaskStatus::Completed as i32,
+        "Failed task should be completed with stored error result"
+    );
+
+    // Verify the error result contains proper error information
+    match &wait_result.result_type {
+        Some(azolla::proto::orchestrator::wait_for_task_response::ResultType::Error(error)) => {
+            assert_eq!(error.r#type, "TestError", "Error type should be TestError");
+            assert_eq!(
+                error.message, "This task always fails",
+                "Error message should match expected failure message"
+            );
+            assert!(
+                error.retriable,
+                "Error should be marked as retriable since it's a TestError"
+            );
+        }
+        Some(azolla::proto::orchestrator::wait_for_task_response::ResultType::Success(_)) => {
+            panic!("Expected error result for failed task, got success");
+        }
+        None => {
+            panic!("Expected result_type to be present for failed task with stored result");
+        }
+    }
+
     harness.shutdown().await.unwrap();
 }
 

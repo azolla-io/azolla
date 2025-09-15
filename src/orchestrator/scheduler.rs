@@ -1,7 +1,7 @@
 use crate::orchestrator::event_stream::EventStream;
 use crate::orchestrator::retry_policy::RetryPolicy;
 use crate::orchestrator::shepherd_manager::ShepherdManager;
-use crate::orchestrator::taskset::{Task, TaskSet};
+use crate::orchestrator::taskset::{Task, TaskResultValue, TaskSet};
 use crate::{
     TASK_STATUS_ATTEMPT_FAILED_WITH_ATTEMPTS_LEFT, TASK_STATUS_ATTEMPT_STARTED,
     TASK_STATUS_CREATED, TASK_STATUS_FAILED, TASK_STATUS_SUCCEEDED,
@@ -87,6 +87,10 @@ pub enum SchedulerCommand {
     GetTaskForTest {
         task_id: Uuid,
         respond_to: oneshot::Sender<Option<Task>>,
+    },
+    GetTaskResult {
+        task_id: Uuid,
+        respond_to: oneshot::Sender<Option<TaskResultValue>>,
     },
 }
 
@@ -187,6 +191,11 @@ impl SchedulerActor {
                             Some(SchedulerCommand::GetTaskForTest { task_id, respond_to }) => {
                                 let task = scheduler_state.task_set.get_task(task_id).cloned();
                                 let _ = respond_to.send(task);
+                            }
+                            Some(SchedulerCommand::GetTaskResult { task_id, respond_to }) => {
+                                let result = scheduler_state.task_set.get_task(task_id)
+                                    .and_then(|task| task.result.clone());
+                                let _ = respond_to.send(result);
                             }
                             None => {
                                 info!("Scheduler for domain {} channel closed", scheduler_state.domain);
@@ -306,9 +315,30 @@ impl SchedulerActor {
         Ok(())
     }
 
+    // This function should only be used in testing and NOT in production code
     pub async fn get_task_for_test(&self, task_id: Uuid) -> Result<Option<Task>, SchedulerError> {
         let (tx, rx) = oneshot::channel();
         let cmd = SchedulerCommand::GetTaskForTest {
+            task_id,
+            respond_to: tx,
+        };
+
+        self.sender
+            .send(cmd)
+            .await
+            .map_err(|_| SchedulerError::ChannelClosed)?;
+
+        rx.await.map_err(|_| SchedulerError::ResponseLost)
+    }
+
+    /// Get the result of a task if it has completed
+    /// Returns None if task doesn't exist or hasn't completed yet
+    pub async fn get_task_result(
+        &self,
+        task_id: Uuid,
+    ) -> Result<Option<TaskResultValue>, SchedulerError> {
+        let (tx, rx) = oneshot::channel();
+        let cmd = SchedulerCommand::GetTaskResult {
             task_id,
             respond_to: tx,
         };
@@ -347,6 +377,59 @@ impl SchedulerState {
                 tokio::time::sleep_until(tokio_instant)
             }
             None => tokio::time::sleep(std::time::Duration::from_secs(60)), // 1 min default
+        }
+    }
+
+    fn convert_task_result_to_value(result: &TaskResult) -> TaskResultValue {
+        match &result.result_type {
+            Some(crate::proto::common::task_result::ResultType::Success(success)) => {
+                TaskResultValue::Success(Self::convert_any_value_to_json(success.result.as_ref()))
+            }
+            Some(crate::proto::common::task_result::ResultType::Error(error)) => {
+                TaskResultValue::Error {
+                    error_type: error.r#type.clone(),
+                    message: error.message.clone(),
+                    data: serde_json::from_str(&error.data)
+                        .unwrap_or_else(|_| serde_json::Value::String(error.data.clone())),
+                    retriable: error.retriable,
+                }
+            }
+            None => TaskResultValue::Error {
+                error_type: "UnknownError".to_string(),
+                message: "Task result had no result_type".to_string(),
+                data: serde_json::Value::Null,
+                retriable: false,
+            },
+        }
+    }
+
+    fn convert_any_value_to_json(
+        any_value: Option<&crate::proto::common::AnyValue>,
+    ) -> serde_json::Value {
+        match any_value {
+            Some(any_value) => match &any_value.value {
+                Some(crate::proto::common::any_value::Value::StringValue(s)) => {
+                    serde_json::Value::String(s.clone())
+                }
+                Some(crate::proto::common::any_value::Value::IntValue(i)) => {
+                    serde_json::Value::Number(serde_json::Number::from(*i))
+                }
+                Some(crate::proto::common::any_value::Value::DoubleValue(d)) => {
+                    serde_json::Value::Number(
+                        serde_json::Number::from_f64(*d)
+                            .unwrap_or_else(|| serde_json::Number::from(0)),
+                    )
+                }
+                Some(crate::proto::common::any_value::Value::BoolValue(b)) => {
+                    serde_json::Value::Bool(*b)
+                }
+                Some(crate::proto::common::any_value::Value::JsonValue(json_str)) => {
+                    serde_json::from_str(json_str)
+                        .unwrap_or_else(|_| serde_json::Value::String(json_str.clone()))
+                }
+                None => serde_json::Value::Null,
+            },
+            None => serde_json::Value::Null,
         }
     }
 
@@ -490,6 +573,11 @@ impl SchedulerState {
             info!("Task {task_id} attempt {attempt_number} succeeded");
 
             task.status = TASK_STATUS_SUCCEEDED;
+
+            // Store the task result
+            let result_value = Self::convert_task_result_to_value(&result);
+            self.task_set.store_task_result(task_id, result_value);
+
             None // No slow operations needed for success
         } else {
             info!("Task {task_id} attempt {attempt_number} failed");
@@ -527,6 +615,11 @@ impl SchedulerState {
             if !should_retry {
                 info!("Error type not in retry list, failing task {task_id}");
                 task.status = TASK_STATUS_FAILED;
+
+                // Store the error result
+                let result_value = Self::convert_task_result_to_value(&result);
+                self.task_set.store_task_result(task_id, result_value);
+
                 return Some(TaskResultData {
                     flow_instance_id,
                     attempt_number,
@@ -545,6 +638,11 @@ impl SchedulerState {
                 if total_attempts >= max_attempts as i32 {
                     info!("🚫 SCHEDULER: Max attempts ({max_attempts}) reached for task {task_id} - setting status to FAILED");
                     task.status = TASK_STATUS_FAILED;
+
+                    // Store the error result
+                    let result_value = Self::convert_task_result_to_value(&result);
+                    self.task_set.store_task_result(task_id, result_value);
+
                     return Some(TaskResultData {
                         flow_instance_id,
                         attempt_number,
@@ -561,6 +659,11 @@ impl SchedulerState {
             if task.has_exceeded_max_delay(retry_policy.stop.max_delay) {
                 info!("Max delay exceeded for task {task_id}");
                 task.status = TASK_STATUS_FAILED;
+
+                // Store the error result
+                let result_value = Self::convert_task_result_to_value(&result);
+                self.task_set.store_task_result(task_id, result_value);
+
                 return Some(TaskResultData {
                     flow_instance_id,
                     attempt_number,
@@ -865,6 +968,8 @@ mod tests {
             status: TASK_STATUS_CREATED,
             attempts: Vec::new(),
             shepherd_group: None,
+            result: None,
+            result_stored_at: None,
         }
     }
 

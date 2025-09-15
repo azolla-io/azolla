@@ -3,31 +3,33 @@
 import grpc
 import warnings
 
-from . import orchestrator_pb2 as orchestrator__pb2
+import orchestrator_pb2 as orchestrator__pb2
 
-GRPC_GENERATED_VERSION = '1.74.0'
+GRPC_GENERATED_VERSION = "1.74.0"
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
 try:
     from grpc._utilities import first_version_is_lower
-    _version_not_supported = first_version_is_lower(GRPC_VERSION, GRPC_GENERATED_VERSION)
+
+    _version_not_supported = first_version_is_lower(
+        GRPC_VERSION, GRPC_GENERATED_VERSION
+    )
 except ImportError:
     _version_not_supported = True
 
 if _version_not_supported:
     raise RuntimeError(
-        f'The grpc package installed is at version {GRPC_VERSION},'
-        + f' but the generated code in orchestrator_pb2_grpc.py depends on'
-        + f' grpcio>={GRPC_GENERATED_VERSION}.'
-        + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
-        + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
+        f"The grpc package installed is at version {GRPC_VERSION},"
+        + f" but the generated code in orchestrator_pb2_grpc.py depends on"
+        + f" grpcio>={GRPC_GENERATED_VERSION}."
+        + f" Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}"
+        + f" or downgrade your generated code using grpcio-tools<={GRPC_VERSION}."
     )
 
 
 class ClientServiceStub(object):
-    """Public API service for end-user clients of the Azolla platform.
-    """
+    """Public API service for end-user clients of the Azolla platform."""
 
     def __init__(self, channel):
         """Constructor.
@@ -36,143 +38,146 @@ class ClientServiceStub(object):
             channel: A grpc.Channel.
         """
         self.CreateTask = channel.unary_unary(
-                '/azolla.orchestrator.ClientService/CreateTask',
-                request_serializer=orchestrator__pb2.CreateTaskRequest.SerializeToString,
-                response_deserializer=orchestrator__pb2.CreateTaskResponse.FromString,
-                _registered_method=True)
+            "/azolla.orchestrator.ClientService/CreateTask",
+            request_serializer=orchestrator__pb2.CreateTaskRequest.SerializeToString,
+            response_deserializer=orchestrator__pb2.CreateTaskResponse.FromString,
+            _registered_method=True,
+        )
         self.WaitForTask = channel.unary_unary(
-                '/azolla.orchestrator.ClientService/WaitForTask',
-                request_serializer=orchestrator__pb2.WaitForTaskRequest.SerializeToString,
-                response_deserializer=orchestrator__pb2.WaitForTaskResponse.FromString,
-                _registered_method=True)
+            "/azolla.orchestrator.ClientService/WaitForTask",
+            request_serializer=orchestrator__pb2.WaitForTaskRequest.SerializeToString,
+            response_deserializer=orchestrator__pb2.WaitForTaskResponse.FromString,
+            _registered_method=True,
+        )
         self.CreateFlow = channel.unary_unary(
-                '/azolla.orchestrator.ClientService/CreateFlow',
-                request_serializer=orchestrator__pb2.CreateFlowRequest.SerializeToString,
-                response_deserializer=orchestrator__pb2.CreateFlowResponse.FromString,
-                _registered_method=True)
+            "/azolla.orchestrator.ClientService/CreateFlow",
+            request_serializer=orchestrator__pb2.CreateFlowRequest.SerializeToString,
+            response_deserializer=orchestrator__pb2.CreateFlowResponse.FromString,
+            _registered_method=True,
+        )
         self.WaitForFlow = channel.unary_unary(
-                '/azolla.orchestrator.ClientService/WaitForFlow',
-                request_serializer=orchestrator__pb2.WaitForFlowRequest.SerializeToString,
-                response_deserializer=orchestrator__pb2.WaitForFlowResponse.FromString,
-                _registered_method=True)
+            "/azolla.orchestrator.ClientService/WaitForFlow",
+            request_serializer=orchestrator__pb2.WaitForFlowRequest.SerializeToString,
+            response_deserializer=orchestrator__pb2.WaitForFlowResponse.FromString,
+            _registered_method=True,
+        )
         self.PublishTaskEvent = channel.unary_unary(
-                '/azolla.orchestrator.ClientService/PublishTaskEvent',
-                request_serializer=orchestrator__pb2.PublishTaskEventRequest.SerializeToString,
-                response_deserializer=orchestrator__pb2.PublishTaskEventResponse.FromString,
-                _registered_method=True)
+            "/azolla.orchestrator.ClientService/PublishTaskEvent",
+            request_serializer=orchestrator__pb2.PublishTaskEventRequest.SerializeToString,
+            response_deserializer=orchestrator__pb2.PublishTaskEventResponse.FromString,
+            _registered_method=True,
+        )
         self.PublishFlowEvent = channel.unary_unary(
-                '/azolla.orchestrator.ClientService/PublishFlowEvent',
-                request_serializer=orchestrator__pb2.PublishFlowEventRequest.SerializeToString,
-                response_deserializer=orchestrator__pb2.PublishFlowEventResponse.FromString,
-                _registered_method=True)
+            "/azolla.orchestrator.ClientService/PublishFlowEvent",
+            request_serializer=orchestrator__pb2.PublishFlowEventRequest.SerializeToString,
+            response_deserializer=orchestrator__pb2.PublishFlowEventResponse.FromString,
+            _registered_method=True,
+        )
 
 
 class ClientServiceServicer(object):
-    """Public API service for end-user clients of the Azolla platform.
-    """
+    """Public API service for end-user clients of the Azolla platform."""
 
     def CreateTask(self, request, context):
-        """Creates a new task instance.
-        """
+        """Creates a new task instance."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
 
     def WaitForTask(self, request, context):
-        """Waits for a task to reach a terminal state.
-        """
+        """Waits for a task to reach a terminal state."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
 
     def CreateFlow(self, request, context):
-        """Creates a new flow instance.
-        """
+        """Creates a new flow instance."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
 
     def WaitForFlow(self, request, context):
-        """Waits for a flow to reach a terminal state.
-        """
+        """Waits for a flow to reach a terminal state."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
 
     def PublishTaskEvent(self, request, context):
-        """Publishes an event associated with a task.
-        """
+        """Publishes an event associated with a task."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
 
     def PublishFlowEvent(self, request, context):
-        """Publishes an event associated with a flow.
-        """
+        """Publishes an event associated with a flow."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
 
 
 def add_ClientServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'CreateTask': grpc.unary_unary_rpc_method_handler(
-                    servicer.CreateTask,
-                    request_deserializer=orchestrator__pb2.CreateTaskRequest.FromString,
-                    response_serializer=orchestrator__pb2.CreateTaskResponse.SerializeToString,
-            ),
-            'WaitForTask': grpc.unary_unary_rpc_method_handler(
-                    servicer.WaitForTask,
-                    request_deserializer=orchestrator__pb2.WaitForTaskRequest.FromString,
-                    response_serializer=orchestrator__pb2.WaitForTaskResponse.SerializeToString,
-            ),
-            'CreateFlow': grpc.unary_unary_rpc_method_handler(
-                    servicer.CreateFlow,
-                    request_deserializer=orchestrator__pb2.CreateFlowRequest.FromString,
-                    response_serializer=orchestrator__pb2.CreateFlowResponse.SerializeToString,
-            ),
-            'WaitForFlow': grpc.unary_unary_rpc_method_handler(
-                    servicer.WaitForFlow,
-                    request_deserializer=orchestrator__pb2.WaitForFlowRequest.FromString,
-                    response_serializer=orchestrator__pb2.WaitForFlowResponse.SerializeToString,
-            ),
-            'PublishTaskEvent': grpc.unary_unary_rpc_method_handler(
-                    servicer.PublishTaskEvent,
-                    request_deserializer=orchestrator__pb2.PublishTaskEventRequest.FromString,
-                    response_serializer=orchestrator__pb2.PublishTaskEventResponse.SerializeToString,
-            ),
-            'PublishFlowEvent': grpc.unary_unary_rpc_method_handler(
-                    servicer.PublishFlowEvent,
-                    request_deserializer=orchestrator__pb2.PublishFlowEventRequest.FromString,
-                    response_serializer=orchestrator__pb2.PublishFlowEventResponse.SerializeToString,
-            ),
+        "CreateTask": grpc.unary_unary_rpc_method_handler(
+            servicer.CreateTask,
+            request_deserializer=orchestrator__pb2.CreateTaskRequest.FromString,
+            response_serializer=orchestrator__pb2.CreateTaskResponse.SerializeToString,
+        ),
+        "WaitForTask": grpc.unary_unary_rpc_method_handler(
+            servicer.WaitForTask,
+            request_deserializer=orchestrator__pb2.WaitForTaskRequest.FromString,
+            response_serializer=orchestrator__pb2.WaitForTaskResponse.SerializeToString,
+        ),
+        "CreateFlow": grpc.unary_unary_rpc_method_handler(
+            servicer.CreateFlow,
+            request_deserializer=orchestrator__pb2.CreateFlowRequest.FromString,
+            response_serializer=orchestrator__pb2.CreateFlowResponse.SerializeToString,
+        ),
+        "WaitForFlow": grpc.unary_unary_rpc_method_handler(
+            servicer.WaitForFlow,
+            request_deserializer=orchestrator__pb2.WaitForFlowRequest.FromString,
+            response_serializer=orchestrator__pb2.WaitForFlowResponse.SerializeToString,
+        ),
+        "PublishTaskEvent": grpc.unary_unary_rpc_method_handler(
+            servicer.PublishTaskEvent,
+            request_deserializer=orchestrator__pb2.PublishTaskEventRequest.FromString,
+            response_serializer=orchestrator__pb2.PublishTaskEventResponse.SerializeToString,
+        ),
+        "PublishFlowEvent": grpc.unary_unary_rpc_method_handler(
+            servicer.PublishFlowEvent,
+            request_deserializer=orchestrator__pb2.PublishFlowEventRequest.FromString,
+            response_serializer=orchestrator__pb2.PublishFlowEventResponse.SerializeToString,
+        ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'azolla.orchestrator.ClientService', rpc_method_handlers)
+        "azolla.orchestrator.ClientService", rpc_method_handlers
+    )
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('azolla.orchestrator.ClientService', rpc_method_handlers)
+    server.add_registered_method_handlers(
+        "azolla.orchestrator.ClientService", rpc_method_handlers
+    )
 
 
- # This class is part of an EXPERIMENTAL API.
+# This class is part of an EXPERIMENTAL API.
 class ClientService(object):
-    """Public API service for end-user clients of the Azolla platform.
-    """
+    """Public API service for end-user clients of the Azolla platform."""
 
     @staticmethod
-    def CreateTask(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
+    def CreateTask(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/azolla.orchestrator.ClientService/CreateTask',
+            "/azolla.orchestrator.ClientService/CreateTask",
             orchestrator__pb2.CreateTaskRequest.SerializeToString,
             orchestrator__pb2.CreateTaskResponse.FromString,
             options,
@@ -183,23 +188,26 @@ class ClientService(object):
             wait_for_ready,
             timeout,
             metadata,
-            _registered_method=True)
+            _registered_method=True,
+        )
 
     @staticmethod
-    def WaitForTask(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
+    def WaitForTask(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/azolla.orchestrator.ClientService/WaitForTask',
+            "/azolla.orchestrator.ClientService/WaitForTask",
             orchestrator__pb2.WaitForTaskRequest.SerializeToString,
             orchestrator__pb2.WaitForTaskResponse.FromString,
             options,
@@ -210,23 +218,26 @@ class ClientService(object):
             wait_for_ready,
             timeout,
             metadata,
-            _registered_method=True)
+            _registered_method=True,
+        )
 
     @staticmethod
-    def CreateFlow(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
+    def CreateFlow(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/azolla.orchestrator.ClientService/CreateFlow',
+            "/azolla.orchestrator.ClientService/CreateFlow",
             orchestrator__pb2.CreateFlowRequest.SerializeToString,
             orchestrator__pb2.CreateFlowResponse.FromString,
             options,
@@ -237,23 +248,26 @@ class ClientService(object):
             wait_for_ready,
             timeout,
             metadata,
-            _registered_method=True)
+            _registered_method=True,
+        )
 
     @staticmethod
-    def WaitForFlow(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
+    def WaitForFlow(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/azolla.orchestrator.ClientService/WaitForFlow',
+            "/azolla.orchestrator.ClientService/WaitForFlow",
             orchestrator__pb2.WaitForFlowRequest.SerializeToString,
             orchestrator__pb2.WaitForFlowResponse.FromString,
             options,
@@ -264,23 +278,26 @@ class ClientService(object):
             wait_for_ready,
             timeout,
             metadata,
-            _registered_method=True)
+            _registered_method=True,
+        )
 
     @staticmethod
-    def PublishTaskEvent(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
+    def PublishTaskEvent(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/azolla.orchestrator.ClientService/PublishTaskEvent',
+            "/azolla.orchestrator.ClientService/PublishTaskEvent",
             orchestrator__pb2.PublishTaskEventRequest.SerializeToString,
             orchestrator__pb2.PublishTaskEventResponse.FromString,
             options,
@@ -291,23 +308,26 @@ class ClientService(object):
             wait_for_ready,
             timeout,
             metadata,
-            _registered_method=True)
+            _registered_method=True,
+        )
 
     @staticmethod
-    def PublishFlowEvent(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
+    def PublishFlowEvent(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/azolla.orchestrator.ClientService/PublishFlowEvent',
+            "/azolla.orchestrator.ClientService/PublishFlowEvent",
             orchestrator__pb2.PublishFlowEventRequest.SerializeToString,
             orchestrator__pb2.PublishFlowEventResponse.FromString,
             options,
@@ -318,12 +338,12 @@ class ClientService(object):
             wait_for_ready,
             timeout,
             metadata,
-            _registered_method=True)
+            _registered_method=True,
+        )
 
 
 class ClusterServiceStub(object):
-    """Internal service for orchestrator-shepherd communication.
-    """
+    """Internal service for orchestrator-shepherd communication."""
 
     def __init__(self, channel):
         """Constructor.
@@ -332,58 +352,61 @@ class ClusterServiceStub(object):
             channel: A grpc.Channel.
         """
         self.Stream = channel.stream_stream(
-                '/azolla.orchestrator.ClusterService/Stream',
-                request_serializer=orchestrator__pb2.ClientMsg.SerializeToString,
-                response_deserializer=orchestrator__pb2.ServerMsg.FromString,
-                _registered_method=True)
+            "/azolla.orchestrator.ClusterService/Stream",
+            request_serializer=orchestrator__pb2.ClientMsg.SerializeToString,
+            response_deserializer=orchestrator__pb2.ServerMsg.FromString,
+            _registered_method=True,
+        )
 
 
 class ClusterServiceServicer(object):
-    """Internal service for orchestrator-shepherd communication.
-    """
+    """Internal service for orchestrator-shepherd communication."""
 
     def Stream(self, request_iterator, context):
-        """Establishes a bi-directional stream between shepherd and orchestrator.
-        """
+        """Establishes a bi-directional stream between shepherd and orchestrator."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
 
 
 def add_ClusterServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'Stream': grpc.stream_stream_rpc_method_handler(
-                    servicer.Stream,
-                    request_deserializer=orchestrator__pb2.ClientMsg.FromString,
-                    response_serializer=orchestrator__pb2.ServerMsg.SerializeToString,
-            ),
+        "Stream": grpc.stream_stream_rpc_method_handler(
+            servicer.Stream,
+            request_deserializer=orchestrator__pb2.ClientMsg.FromString,
+            response_serializer=orchestrator__pb2.ServerMsg.SerializeToString,
+        ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'azolla.orchestrator.ClusterService', rpc_method_handlers)
+        "azolla.orchestrator.ClusterService", rpc_method_handlers
+    )
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('azolla.orchestrator.ClusterService', rpc_method_handlers)
+    server.add_registered_method_handlers(
+        "azolla.orchestrator.ClusterService", rpc_method_handlers
+    )
 
 
- # This class is part of an EXPERIMENTAL API.
+# This class is part of an EXPERIMENTAL API.
 class ClusterService(object):
-    """Internal service for orchestrator-shepherd communication.
-    """
+    """Internal service for orchestrator-shepherd communication."""
 
     @staticmethod
-    def Stream(request_iterator,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
+    def Stream(
+        request_iterator,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
         return grpc.experimental.stream_stream(
             request_iterator,
             target,
-            '/azolla.orchestrator.ClusterService/Stream',
+            "/azolla.orchestrator.ClusterService/Stream",
             orchestrator__pb2.ClientMsg.SerializeToString,
             orchestrator__pb2.ServerMsg.FromString,
             options,
@@ -394,4 +417,5 @@ class ClusterService(object):
             wait_for_ready,
             timeout,
             metadata,
-            _registered_method=True)
+            _registered_method=True,
+        )

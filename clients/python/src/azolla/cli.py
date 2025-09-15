@@ -17,21 +17,31 @@ logger = get_logger(__name__)
 async def worker_main() -> None:
     """Main entry point for azolla-worker CLI."""
     parser = argparse.ArgumentParser(
-        description="Azolla Python Worker", formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        description="Azolla Python Worker",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
-    parser.add_argument("--orchestrator", default="localhost:52710", help="Orchestrator endpoint")
+    parser.add_argument(
+        "--orchestrator", default="localhost:52710", help="Orchestrator endpoint"
+    )
 
     parser.add_argument("--domain", default="default", help="Worker domain")
 
     parser.add_argument(
-        "--shepherd-group", default="python-workers", help="Shepherd group for this worker"
+        "--shepherd-group",
+        default="python-workers",
+        help="Shepherd group for this worker",
     )
 
-    parser.add_argument("--max-concurrency", type=int, default=10, help="Maximum concurrent tasks")
+    parser.add_argument(
+        "--max-concurrency", type=int, default=10, help="Maximum concurrent tasks"
+    )
 
     parser.add_argument(
-        "--heartbeat-interval", type=float, default=30.0, help="Heartbeat interval in seconds"
+        "--heartbeat-interval",
+        type=float,
+        default=30.0,
+        help="Heartbeat interval in seconds",
     )
 
     parser.add_argument(
@@ -65,7 +75,9 @@ async def worker_main() -> None:
     if args.task_modules:
         try:
             count = discover_and_register_tasks(worker, args.task_modules)
-            logger.info(f"Imported and registered {count} tasks from modules: {args.task_modules}")
+            logger.info(
+                f"Imported and registered {count} tasks from modules: {args.task_modules}"
+            )
         except ImportError as e:
             logger.error(f"Failed to import task modules {args.task_modules}: {e}")
             sys.exit(1)

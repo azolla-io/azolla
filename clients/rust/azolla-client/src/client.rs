@@ -1,6 +1,7 @@
 use crate::error::{AzollaError, TaskError};
 use crate::proto::orchestrator::{
     client_service_client::ClientServiceClient, CreateTaskRequest, WaitForTaskRequest,
+    WaitForTaskStatus,
 };
 use crate::retry_policy::RetryPolicy;
 use serde::Serialize;
@@ -38,6 +39,31 @@ impl Default for ClientConfig {
 }
 
 impl Client {
+    /// Helper function to convert AnyValue from protobuf to serde_json::Value
+    fn convert_any_value_to_json(any_value: &crate::proto::common::AnyValue) -> serde_json::Value {
+        match &any_value.value {
+            Some(crate::proto::common::any_value::Value::StringValue(s)) => {
+                serde_json::Value::String(s.clone())
+            }
+            Some(crate::proto::common::any_value::Value::IntValue(i)) => {
+                serde_json::Value::Number(serde_json::Number::from(*i))
+            }
+            Some(crate::proto::common::any_value::Value::DoubleValue(d)) => {
+                serde_json::Value::Number(
+                    serde_json::Number::from_f64(*d).unwrap_or_else(|| serde_json::Number::from(0)),
+                )
+            }
+            Some(crate::proto::common::any_value::Value::BoolValue(b)) => {
+                serde_json::Value::Bool(*b)
+            }
+            Some(crate::proto::common::any_value::Value::JsonValue(json_str)) => {
+                serde_json::from_str(json_str)
+                    .unwrap_or_else(|_| serde_json::Value::String(json_str.clone()))
+            }
+            None => serde_json::Value::Null,
+        }
+    }
+
     /// Connect to Azolla orchestrator with default config
     pub async fn connect(endpoint: &str) -> Result<Self, AzollaError> {
         let config = ClientConfig {
@@ -152,7 +178,7 @@ impl<'a> TaskSubmissionBuilder<'a> {
         let args_json = serde_json::to_string(&self.args)?;
         let retry_policy_json = match self.retry_policy {
             Some(policy) => serde_json::to_string(&policy)?,
-            None => String::new(),
+            None => "{}".to_string(), // Send empty JSON object instead of empty string
         };
 
         let request = CreateTaskRequest {
@@ -205,6 +231,7 @@ impl TaskHandle {
                 let request = WaitForTaskRequest {
                     task_id: self.id.clone(),
                     domain: self.client.config.domain.clone(),
+                    timeout_ms: None, // Let server use default timeout for individual polls
                 };
 
                 let response = self
@@ -216,23 +243,50 @@ impl TaskHandle {
 
                 let response = response.into_inner();
 
-                match response.status.as_str() {
-                    "completed" => {
-                        let result_value: serde_json::Value = serde_json::from_str(
-                            &response.result.unwrap_or_else(|| "null".to_string()),
-                        )
-                        .map_err(AzollaError::Serialization)?;
-                        return Ok(TaskExecutionResult::Success(result_value));
+                match response.status_code {
+                    x if x == WaitForTaskStatus::Completed as i32 => match &response.result_type {
+                        Some(
+                            crate::proto::orchestrator::wait_for_task_response::ResultType::Success(
+                                success,
+                            ),
+                        ) => {
+                            let result_value = if let Some(ref any_value) = success.result {
+                                Client::convert_any_value_to_json(any_value)
+                            } else {
+                                serde_json::Value::Null
+                            };
+                            return Ok(TaskExecutionResult::Success(result_value));
+                        }
+                        Some(
+                            crate::proto::orchestrator::wait_for_task_response::ResultType::Error(
+                                error,
+                            ),
+                        ) => {
+                            let task_error = TaskError {
+                                error_type: error.r#type.clone(),
+                                message: error.message.clone(),
+                                code: None,
+                                data: Some(serde_json::from_str(&error.data).unwrap_or_else(
+                                    |_| serde_json::Value::String(error.data.clone()),
+                                )),
+                                retryable: error.retriable,
+                            };
+                            return Ok(TaskExecutionResult::Failed(task_error));
+                        }
+                        None => {
+                            return Err(AzollaError::Protocol(
+                                "Task completed but no result provided".to_string(),
+                            ));
+                        }
+                    },
+                    x if x == WaitForTaskStatus::TaskNotFound as i32 => {
+                        return Err(AzollaError::TaskNotFound(self.id.clone()));
                     }
-                    "failed" => {
-                        let error_msg = response.error.unwrap_or_else(|| {
-                            "Task execution failed with unknown error".to_string()
-                        });
-
-                        let task_error = serde_json::from_str::<TaskError>(&error_msg)
-                            .unwrap_or_else(|_| TaskError::execution_failed(&error_msg));
-
-                        return Ok(TaskExecutionResult::Failed(task_error));
+                    x if x == WaitForTaskStatus::Timeout as i32 => {
+                        return Err(AzollaError::Timeout);
+                    }
+                    x if x == WaitForTaskStatus::InternalError as i32 => {
+                        return Err(AzollaError::Protocol("Internal server error".to_string()));
                     }
                     _ => {
                         tokio::time::sleep(interval).await;
@@ -253,6 +307,7 @@ impl TaskHandle {
         let request = WaitForTaskRequest {
             task_id: self.id.clone(),
             domain: self.client.config.domain.clone(),
+            timeout_ms: Some(0), // Use 0 timeout for non-blocking check
         };
 
         let response = self
@@ -264,27 +319,45 @@ impl TaskHandle {
 
         let response = response.into_inner();
 
-        match response.status.as_str() {
-            "completed" => {
-                // Parse the actual task result
-                let result_value: serde_json::Value =
-                    serde_json::from_str(&response.result.unwrap_or_else(|| "null".to_string()))
-                        .map_err(AzollaError::Serialization)?;
-                Ok(Some(TaskExecutionResult::Success(result_value)))
+        match response.status_code {
+            x if x == WaitForTaskStatus::Completed as i32 => match &response.result_type {
+                Some(crate::proto::orchestrator::wait_for_task_response::ResultType::Success(
+                    success,
+                )) => {
+                    let result_value = if let Some(ref any_value) = success.result {
+                        Client::convert_any_value_to_json(any_value)
+                    } else {
+                        serde_json::Value::Null
+                    };
+                    Ok(Some(TaskExecutionResult::Success(result_value)))
+                }
+                Some(crate::proto::orchestrator::wait_for_task_response::ResultType::Error(
+                    error,
+                )) => {
+                    let task_error = TaskError {
+                        error_type: error.r#type.clone(),
+                        message: error.message.clone(),
+                        code: None,
+                        data: Some(
+                            serde_json::from_str(&error.data)
+                                .unwrap_or_else(|_| serde_json::Value::String(error.data.clone())),
+                        ),
+                        retryable: error.retriable,
+                    };
+                    Ok(Some(TaskExecutionResult::Failed(task_error)))
+                }
+                None => Err(AzollaError::Protocol(
+                    "Task completed but no result provided".to_string(),
+                )),
+            },
+            x if x == WaitForTaskStatus::TaskNotFound as i32 => {
+                Err(AzollaError::TaskNotFound(self.id.clone()))
             }
-            "failed" => {
-                // Parse the actual task error
-                let error_msg = response
-                    .error
-                    .unwrap_or_else(|| "Task execution failed with unknown error".to_string());
-
-                // Try to parse as structured TaskError, fallback to generic error
-                let task_error = serde_json::from_str::<TaskError>(&error_msg)
-                    .unwrap_or_else(|_| TaskError::execution_failed(&error_msg));
-
-                Ok(Some(TaskExecutionResult::Failed(task_error)))
+            x if x == WaitForTaskStatus::Timeout as i32 => Err(AzollaError::Timeout),
+            x if x == WaitForTaskStatus::InternalError as i32 => {
+                Err(AzollaError::Protocol("Internal server error".to_string()))
             }
-            _ => Ok(None), // Still running
+            _ => Ok(None), // Still running or unspecified status
         }
     }
 }

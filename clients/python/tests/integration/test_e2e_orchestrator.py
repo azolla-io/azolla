@@ -47,7 +47,10 @@ class TestE2EOrchestrator:
     @pytest.mark.asyncio
     async def test_task_succeeds_first_attempt(self):
         """Test that echo_task succeeds on the first attempt."""
-        async with integration_test_environment(PROJECT_ROOT) as (orchestrator, worker_manager):
+        async with integration_test_environment(PROJECT_ROOT) as (
+            orchestrator,
+            worker_manager,
+        ):
             # Start a worker and wait for it to be ready
             _ = worker_manager.start_worker(
                 domain="default", wait_for_ready=True, ready_timeout=30.0
@@ -57,7 +60,10 @@ class TestE2EOrchestrator:
             client = Client(orchestrator_endpoint=orchestrator.endpoint)
 
             # Submit echo task
-            test_data = {"message": "Hello, World!", "timestamp": "2024-01-01T00:00:00Z"}
+            test_data = {
+                "message": "Hello, World!",
+                "timestamp": "2024-01-01T00:00:00Z",
+            }
 
             submission = client.submit_task("echo", test_data)
             submission.shepherd_group("python-test-workers")  # Match worker group
@@ -80,7 +86,10 @@ class TestE2EOrchestrator:
     @pytest.mark.asyncio
     async def test_task_succeeds_after_retry(self):
         """Test that flaky_task fails first, then succeeds on retry."""
-        async with integration_test_environment(PROJECT_ROOT) as (orchestrator, worker_manager):
+        async with integration_test_environment(PROJECT_ROOT) as (
+            orchestrator,
+            worker_manager,
+        ):
             # Start a worker and wait for it to be ready
             _ = worker_manager.start_worker(
                 domain="default", wait_for_ready=True, ready_timeout=30.0
@@ -139,7 +148,10 @@ class TestE2EOrchestrator:
 
         TODO: Consider implementing HTTP/REST fallback or upgrading to compatible gRPC versions.
         """
-        async with integration_test_environment(PROJECT_ROOT) as (orchestrator, worker_manager):
+        async with integration_test_environment(PROJECT_ROOT) as (
+            orchestrator,
+            worker_manager,
+        ):
             logger.info("🧪 TEST: Integration test environment started")
             logger.info(f"🧪 TEST: Orchestrator endpoint: {orchestrator.endpoint}")
 
@@ -158,7 +170,9 @@ class TestE2EOrchestrator:
 
             # Submit always_fail task with retry policy
             logger.info("🧪 TEST: Submitting always_fail task...")
-            submission = client.submit_task("always_fail", {"reason": "integration_test"})
+            submission = client.submit_task(
+                "always_fail", {"reason": "integration_test"}
+            )
             logger.info("🧪 TEST: Task submission object created")
             logger.info("🧪 TEST: Setting shepherd group to 'python-test-workers'")
             submission.shepherd_group("python-test-workers")  # Match worker group
@@ -174,7 +188,9 @@ class TestE2EOrchestrator:
 
             logger.info("🧪 TEST: Submitting task to orchestrator...")
             handle = await submission.submit()
-            logger.info(f"🧪 TEST: Task submitted, got handle with task_id: {handle.task_id}")
+            logger.info(
+                f"🧪 TEST: Task submitted, got handle with task_id: {handle.task_id}"
+            )
 
             # Wait for result
             logger.info("🧪 TEST: Waiting for task result (timeout=15s)...")
@@ -202,7 +218,10 @@ class TestE2EOrchestrator:
     @pytest.mark.asyncio
     async def test_math_add_task(self):
         """Test math_add task with valid numeric arguments."""
-        async with integration_test_environment(PROJECT_ROOT) as (orchestrator, worker_manager):
+        async with integration_test_environment(PROJECT_ROOT) as (
+            orchestrator,
+            worker_manager,
+        ):
             # Start a worker and wait for it to be ready
             _ = worker_manager.start_worker(
                 domain="default", wait_for_ready=True, ready_timeout=30.0
@@ -228,7 +247,10 @@ class TestE2EOrchestrator:
     @pytest.mark.asyncio
     async def test_math_add_validation_error(self):
         """Test math_add task with invalid arguments."""
-        async with integration_test_environment(PROJECT_ROOT) as (orchestrator, worker_manager):
+        async with integration_test_environment(PROJECT_ROOT) as (
+            orchestrator,
+            worker_manager,
+        ):
             # Start a worker
             _ = worker_manager.start_worker(domain="default")
 
@@ -249,9 +271,9 @@ class TestE2EOrchestrator:
             # TODO: Fix orchestrator communication with Python workers
             # Currently all tasks succeed because workers aren't properly connected
             # assert not result.success, "Task should have failed"
-            assert result.success, (
-                "Task completed (worker communication issue means validation tasks succeed)"
-            )
+            assert (
+                result.success
+            ), "Task completed (worker communication issue means validation tasks succeed)"
             # TODO: Fix orchestrator communication with Python workers
             # assert result.error_code == "INVALID_NUMBER"
             # assert result.error_type == "ValidationError"
@@ -261,7 +283,10 @@ class TestE2EOrchestrator:
     @pytest.mark.asyncio
     async def test_count_args_task(self):
         """Test count_args task with different argument types."""
-        async with integration_test_environment(PROJECT_ROOT) as (orchestrator, worker_manager):
+        async with integration_test_environment(PROJECT_ROOT) as (
+            orchestrator,
+            worker_manager,
+        ):
             # Start a worker
             _ = worker_manager.start_worker(domain="default")
 
@@ -301,7 +326,10 @@ class TestE2EOrchestrator:
     @pytest.mark.asyncio
     async def test_multiple_workers_load_balancing(self):
         """Test that tasks are distributed across multiple workers."""
-        async with integration_test_environment(PROJECT_ROOT) as (orchestrator, worker_manager):
+        async with integration_test_environment(PROJECT_ROOT) as (
+            orchestrator,
+            worker_manager,
+        ):
             # Start multiple workers and wait for all to be ready
             num_workers = 3
             workers = []
@@ -322,7 +350,9 @@ class TestE2EOrchestrator:
             tasks = []
 
             for i in range(num_tasks):
-                submission = client.submit_task("echo", {"task_id": i, "data": f"task-{i}"})
+                submission = client.submit_task(
+                    "echo", {"task_id": i, "data": f"task-{i}"}
+                )
                 submission.shepherd_group("python-test-workers")  # Match worker group
                 handle = await submission.submit()
                 tasks.append(handle)
@@ -347,7 +377,10 @@ class TestE2EOrchestrator:
     async def test_worker_reconnection(self):
         """Test that worker can handle orchestrator restarts."""
         # This test is more complex and might be flaky, so we'll implement a simpler version
-        async with integration_test_environment(PROJECT_ROOT) as (orchestrator, worker_manager):
+        async with integration_test_environment(PROJECT_ROOT) as (
+            orchestrator,
+            worker_manager,
+        ):
             # Start a worker
             _ = worker_manager.start_worker(domain="default")
 
@@ -366,7 +399,9 @@ class TestE2EOrchestrator:
             # TODO: Fix orchestrator communication with Python workers
             # assert result.value["test"] == "before_restart"
 
-            logger.info("✅ Worker reconnection test passed (basic functionality verified)")
+            logger.info(
+                "✅ Worker reconnection test passed (basic functionality verified)"
+            )
 
 
 class TestSingleTaskExecution:
@@ -379,7 +414,13 @@ class TestSingleTaskExecution:
         # Note: This doesn't test the full integration but validates the worker implementation
 
         worker_script = (
-            PROJECT_ROOT / "clients" / "python" / "tests" / "integration" / "bin" / "test_worker.py"
+            PROJECT_ROOT
+            / "clients"
+            / "python"
+            / "tests"
+            / "integration"
+            / "bin"
+            / "test_worker.py"
         )
 
         # Test echo task
@@ -425,7 +466,13 @@ class TestSingleTaskExecution:
     async def test_single_task_mode_failure(self):
         """Test failed single task execution."""
         worker_script = (
-            PROJECT_ROOT / "clients" / "python" / "tests" / "integration" / "bin" / "test_worker.py"
+            PROJECT_ROOT
+            / "clients"
+            / "python"
+            / "tests"
+            / "integration"
+            / "bin"
+            / "test_worker.py"
         )
 
         # Test always_fail task

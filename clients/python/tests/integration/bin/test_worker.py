@@ -55,7 +55,9 @@ class AlwaysFailTask(Task):
         logger.info("🔥 ALWAYS_FAIL: About to raise TaskError...")
 
         error = TaskError(
-            "Task designed to always fail", error_code="ALWAYS_FAIL", error_type="TestError"
+            "Task designed to always fail",
+            error_code="ALWAYS_FAIL",
+            error_type="TestError",
         )
         logger.info(f"🔥 ALWAYS_FAIL: Created TaskError: {error}")
         logger.info("🔥 ALWAYS_FAIL: Raising TaskError now!")
@@ -152,7 +154,11 @@ class CountArgsTask(Task):
 
 
 async def run_single_task(
-    task_id: str, task_name: str, task_args: str, task_kwargs: str, orchestrator_endpoint: str
+    task_id: str,
+    task_name: str,
+    task_args: str,
+    task_kwargs: str,
+    orchestrator_endpoint: str,
 ) -> None:
     """Execute a single task (equivalent to Rust 'task' mode)."""
     logger.info(f"Running single task: {task_name} (ID: {task_id})")
@@ -244,7 +250,9 @@ async def run_worker_service(orchestrator_endpoint: str, domain: str) -> None:
     except KeyboardInterrupt:
         logger.info("Worker interrupted, shutting down...")
     except ConnectionError as e:
-        logger.error(f"Failed to connect to orchestrator at {orchestrator_endpoint}: {e}")
+        logger.error(
+            f"Failed to connect to orchestrator at {orchestrator_endpoint}: {e}"
+        )
         sys.exit(1)
     except Exception as e:
         logger.error(f"Worker error: {e}", exc_info=True)
@@ -255,7 +263,9 @@ async def run_worker_service(orchestrator_endpoint: str, domain: str) -> None:
 
 def main():
     """Main entry point."""
-    parser = argparse.ArgumentParser(description="Python test worker for Azolla integration tests")
+    parser = argparse.ArgumentParser(
+        description="Python test worker for Azolla integration tests"
+    )
 
     # Mode selection
     parser.add_argument(
@@ -271,13 +281,17 @@ def main():
         default="localhost:52710",
         help="Orchestrator endpoint (default: localhost:52710)",
     )
-    parser.add_argument("--domain", default="default", help="Task domain (default: default)")
+    parser.add_argument(
+        "--domain", default="default", help="Task domain (default: default)"
+    )
 
     # Task mode arguments
     parser.add_argument("--task-id", help="Task ID (for task mode)")
     parser.add_argument("--name", help="Task name (for task mode)")
     parser.add_argument("--args", help="Task arguments as JSON (for task mode)")
-    parser.add_argument("--kwargs", help="Task keyword arguments as JSON (for task mode)")
+    parser.add_argument(
+        "--kwargs", help="Task keyword arguments as JSON (for task mode)"
+    )
 
     args = parser.parse_args()
 

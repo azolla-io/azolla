@@ -74,7 +74,9 @@ async def test_task_error_preserved_as_is() -> None:
     worker.register_task(AlwaysFailWithTaskErrorTask())
 
     # Create test task protobuf
-    proto_task = common_pb2.Task(task_id="test-456", name="always_fail_task_error", args="[]")
+    proto_task = common_pb2.Task(
+        task_id="test-456", name="always_fail_task_error", args="[]"
+    )
 
     # Execute task
     result = await worker._execute_task(proto_task)
@@ -126,7 +128,9 @@ async def test_different_exception_types_wrapped_correctly() -> None:
         def name(self) -> str:
             return "custom_exception"
 
-        async def execute(self, args: Any, context: Optional[TaskContext] = None) -> str:
+        async def execute(
+            self, args: Any, context: Optional[TaskContext] = None
+        ) -> str:
             raise self.exception_type(self.exception_message)
 
     worker = Worker(WorkerConfig())
@@ -146,7 +150,9 @@ async def test_different_exception_types_wrapped_correctly() -> None:
 
         # Create test task protobuf
         proto_task = common_pb2.Task(
-            task_id=f"test-{exception_type.__name__}", name="custom_exception", args="[]"
+            task_id=f"test-{exception_type.__name__}",
+            name="custom_exception",
+            args="[]",
         )
 
         # Execute task
@@ -171,21 +177,27 @@ async def test_task_error_retryable_flag_preserved() -> None:
         def name(self) -> str:
             return "non_retryable"
 
-        async def execute(self, args: Any, context: Optional[TaskContext] = None) -> str:
+        async def execute(
+            self, args: Any, context: Optional[TaskContext] = None
+        ) -> str:
             raise TaskError("Non-retryable error", retryable=False)
 
     class RetryableTaskErrorTask(Task):
         def name(self) -> str:
             return "retryable"
 
-        async def execute(self, args: Any, context: Optional[TaskContext] = None) -> str:
+        async def execute(
+            self, args: Any, context: Optional[TaskContext] = None
+        ) -> str:
             raise TaskError("Retryable error", retryable=True)
 
     worker = Worker(WorkerConfig())
 
     # Test non-retryable TaskError
     worker.register_task(NonRetryableTaskErrorTask())
-    proto_task = common_pb2.Task(task_id="test-non-retryable", name="non_retryable", args="[]")
+    proto_task = common_pb2.Task(
+        task_id="test-non-retryable", name="non_retryable", args="[]"
+    )
     result = await worker._execute_task(proto_task)
     assert result.error.retriable is False
 

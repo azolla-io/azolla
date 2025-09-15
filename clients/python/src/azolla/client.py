@@ -10,9 +10,35 @@ import grpc
 from pydantic import BaseModel, Field
 
 from azolla._grpc import orchestrator_pb2, orchestrator_pb2_grpc
-from azolla.exceptions import ConnectionError, SerializationError
+from azolla.exceptions import (
+    ConnectionError,
+    SerializationError,
+    TaskError,
+    TaskInternalError,
+    TaskNotFoundError,
+    TaskWaitTimeoutError,
+)
 from azolla.retry import RetryPolicy
-from azolla.types import TaskResult, TaskStatus
+from azolla.types import TaskResult
+
+
+def _convert_any_value_to_json(any_value):
+    """Convert protobuf AnyValue to Python object."""
+    if any_value.HasField("string_value"):
+        return any_value.string_value
+    elif any_value.HasField("int_value"):
+        return any_value.int_value
+    elif any_value.HasField("double_value"):
+        return any_value.double_value
+    elif any_value.HasField("bool_value"):
+        return any_value.bool_value
+    elif any_value.HasField("json_value"):
+        try:
+            return json.loads(any_value.json_value)
+        except json.JSONDecodeError:
+            return any_value.json_value
+    else:
+        return None
 
 
 class ClientConfig(BaseModel):
@@ -122,11 +148,8 @@ class TaskHandle:
         while True:
             # Check if we've exceeded timeout
             if timeout and (datetime.now() - start_time).total_seconds() > timeout:
-                return TaskResult(
-                    task_id=self.task_id,
-                    status=TaskStatus.FAILED,
-                    error="Task wait timeout exceeded",
-                    error_code="TIMEOUT",
+                raise TaskWaitTimeoutError(
+                    f"Task wait timeout exceeded after {timeout} seconds"
                 )
 
             try:
@@ -138,13 +161,15 @@ class TaskHandle:
                 await asyncio.sleep(poll_interval)
                 poll_interval = min(poll_interval * 1.5, max_poll_interval)
 
+            except (TaskError, TaskNotFoundError, TaskInternalError):
+                # Re-raise task-related exceptions without wrapping
+                raise
+            except ConnectionError:
+                # Re-raise connection errors without wrapping
+                raise
             except Exception as e:
-                return TaskResult(
-                    task_id=self.task_id,
-                    status=TaskStatus.FAILED,
-                    error=str(e),
-                    error_code="CLIENT_ERROR",
-                )
+                # Wrap unexpected exceptions in a generic TaskError
+                raise TaskError(f"Unexpected error while waiting for task: {e}") from e
 
     async def try_result(self) -> Optional[TaskResult[Any]]:
         """Try to get result without blocking."""
@@ -155,6 +180,7 @@ class TaskHandle:
             request = orchestrator_pb2.WaitForTaskRequest(
                 task_id=self.task_id,
                 domain=self._client._config.domain,
+                timeout_ms=0,  # Non-blocking call
             )
 
             if self._client._stub is None:
@@ -163,38 +189,53 @@ class TaskHandle:
                 request, timeout=self._client._config.timeout
             )
 
-            if response.status.lower() == "completed":
-                # Parse result
-                result_value = None
-                if response.result:
-                    try:
-                        result_value = json.loads(response.result)
-                    except json.JSONDecodeError:
-                        result_value = response.result
+            # Check status code using enum values
+            if response.status_code == orchestrator_pb2.WAIT_FOR_TASK_STATUS_COMPLETED:
+                if response.HasField("success"):
+                    # Extract result value from SuccessResult
+                    result_value = None
+                    if response.success.result:
+                        result_value = _convert_any_value_to_json(
+                            response.success.result
+                        )
+                    return TaskResult(task_id=self.task_id, value=result_value)
+                elif response.HasField("error"):
+                    # Task completed but with error - raise TaskError with original exception data
+                    error_data = {}
+                    if response.error.data:
+                        try:
+                            error_data = json.loads(response.error.data)
+                        except json.JSONDecodeError:
+                            error_data = {"raw_data": response.error.data}
 
-                return TaskResult(
-                    task_id=self.task_id, status=TaskStatus.COMPLETED, value=result_value
+                    raise TaskError(
+                        message=response.error.message,
+                        error_type=response.error.type,
+                        retryable=response.error.retriable,
+                        **error_data,
+                    )
+                else:
+                    raise TaskInternalError("Task completed but no result provided")
+
+            elif (
+                response.status_code
+                == orchestrator_pb2.WAIT_FOR_TASK_STATUS_TASK_NOT_FOUND
+            ):
+                raise TaskNotFoundError(f"Task {self.task_id} not found")
+
+            elif response.status_code == orchestrator_pb2.WAIT_FOR_TASK_STATUS_TIMEOUT:
+                return (
+                    None  # Still running (timeout in non-blocking call means not ready)
                 )
 
-            elif response.status.lower() == "failed":
-                error_msg = response.error or "Task execution failed"
-                return TaskResult(
-                    task_id=self.task_id,
-                    status=TaskStatus.FAILED,
-                    error=error_msg,
-                    error_code="EXECUTION_ERROR",
-                )
-
-            elif response.status.lower() in ["pending", "running"]:
-                return None  # Still in progress
+            elif (
+                response.status_code
+                == orchestrator_pb2.WAIT_FOR_TASK_STATUS_INTERNAL_ERROR
+            ):
+                raise TaskInternalError("Internal server error")
 
             else:
-                return TaskResult(
-                    task_id=self.task_id,
-                    status=TaskStatus.FAILED,
-                    error=f"Unknown task status: {response.status}",
-                    error_code="UNKNOWN_STATUS",
-                )
+                return None  # Unspecified status, assume still running
 
         except grpc.RpcError as e:
             raise ConnectionError(f"Failed to get task result: {e.details()}") from e
@@ -224,7 +265,9 @@ class Client:
             config_params.update(kwargs)
             self._config = ClientConfig(**config_params)
         else:
-            raise ValueError("Either 'config' or 'orchestrator_endpoint' must be provided")
+            raise ValueError(
+                "Either 'config' or 'orchestrator_endpoint' must be provided"
+            )
 
         self._channel: Optional[grpc.aio.Channel] = None
         self._stub: Optional[Any] = None

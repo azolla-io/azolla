@@ -61,7 +61,11 @@ class ProcessManager:
     """Manages a subprocess with logging and cleanup."""
 
     def __init__(
-        self, name: str, cmd: list[str], cwd: Optional[Path] = None, env: Optional[dict] = None
+        self,
+        name: str,
+        cmd: list[str],
+        cwd: Optional[Path] = None,
+        env: Optional[dict] = None,
     ):
         self.name = name
         self.cmd = cmd
@@ -71,7 +75,9 @@ class ProcessManager:
         self._stdout_file: Optional[Path] = None
         self._stderr_file: Optional[Path] = None
 
-    def start(self, stdout_file: Optional[Path] = None, stderr_file: Optional[Path] = None) -> None:
+    def start(
+        self, stdout_file: Optional[Path] = None, stderr_file: Optional[Path] = None
+    ) -> None:
         """Start the process."""
         if self.process and self.process.poll() is None:
             raise RuntimeError(f"Process {self.name} is already running")
@@ -126,7 +132,9 @@ class ProcessManager:
                 logger.info(f"Process {self.name} stopped gracefully")
                 return True
             except subprocess.TimeoutExpired:
-                logger.warning(f"Process {self.name} did not stop gracefully, forcing...")
+                logger.warning(
+                    f"Process {self.name} did not stop gracefully, forcing..."
+                )
 
                 # Force kill
                 if os.name != "nt":
@@ -188,7 +196,10 @@ class OrchestratorManager:
         }
 
         self.process_manager = ProcessManager(
-            name="orchestrator", cmd=[str(self.binary_path)], cwd=self.project_root, env=self.env
+            name="orchestrator",
+            cmd=[str(self.binary_path)],
+            cwd=self.project_root,
+            env=self.env,
         )
 
     def _find_orchestrator_binary(self) -> Path:
@@ -225,7 +236,9 @@ class OrchestratorManager:
 
         if not await wait_for_port("localhost", self.port, timeout=timeout):
             _, stderr = self.process_manager.get_output()
-            error_msg = f"Orchestrator failed to start on port {self.port} within {timeout}s"
+            error_msg = (
+                f"Orchestrator failed to start on port {self.port} within {timeout}s"
+            )
             if stderr:
                 error_msg += f"\nSTDERR:\n{stderr}"
             raise RuntimeError(error_msg)
@@ -309,7 +322,10 @@ class WorkerManager:
             )
 
         worker = ProcessManager(
-            name=f"worker-{worker_id}", cmd=cmd, cwd=self.worker_script.parent, env=worker_env
+            name=f"worker-{worker_id}",
+            cmd=cmd,
+            cwd=self.worker_script.parent,
+            env=worker_env,
         )
 
         # Set up log files
@@ -323,10 +339,14 @@ class WorkerManager:
 
         # Wait for worker to be ready if requested
         if wait_for_ready:
-            if self._wait_for_worker_ready(worker_id, stdout_file, stderr_file, ready_timeout):
+            if self._wait_for_worker_ready(
+                worker_id, stdout_file, stderr_file, ready_timeout
+            ):
                 logger.info(f"Worker {worker_id} is ready")
             else:
-                logger.warning(f"Worker {worker_id} did not become ready within {ready_timeout}s")
+                logger.warning(
+                    f"Worker {worker_id} did not become ready within {ready_timeout}s"
+                )
 
         return worker
 
@@ -376,7 +396,9 @@ class WorkerManager:
                     content = orchestrator_stderr.read_text()
                     # Look for absence of "No shepherd available" message for our group
                     # or presence of successful task dispatch
-                    no_shepherd_msg = f"No shepherd available for group '{expected_group}'"
+                    no_shepherd_msg = (
+                        f"No shepherd available for group '{expected_group}'"
+                    )
 
                     # If we don't see the "no shepherd" message recently, shepherds might be available
                     lines = content.split("\n")
@@ -384,7 +406,10 @@ class WorkerManager:
 
                     if not any(no_shepherd_msg in line for line in recent_lines):
                         # Also check for positive indicators
-                        if any("dispatched" in line and "tasks" in line for line in recent_lines):
+                        if any(
+                            "dispatched" in line and "tasks" in line
+                            for line in recent_lines
+                        ):
                             return True
 
                 except OSError:
@@ -414,7 +439,13 @@ async def integration_test_environment(project_root: Path):
     """
     orchestrator = OrchestratorManager(project_root)
     worker_script = (
-        project_root / "clients" / "python" / "tests" / "integration" / "bin" / "test_worker.py"
+        project_root
+        / "clients"
+        / "python"
+        / "tests"
+        / "integration"
+        / "bin"
+        / "test_worker.py"
     )
 
     # Set up shared log directory for this test session

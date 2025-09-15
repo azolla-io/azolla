@@ -9,7 +9,9 @@ class TestBackoffStrategies:
 
     def test_exponential_backoff(self) -> None:
         """Test exponential backoff calculation."""
-        backoff = ExponentialBackoff(initial=1.0, multiplier=2.0, max_delay=30.0, jitter=False)
+        backoff = ExponentialBackoff(
+            initial=1.0, multiplier=2.0, max_delay=30.0, jitter=False
+        )
 
         # Test exponential growth
         assert backoff.get_delay(1) == 1.0  # 1.0 * 2^0

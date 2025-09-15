@@ -53,12 +53,24 @@ message CreateTaskResponse {
 message WaitForTaskRequest {
   string task_id = 1;
   string domain = 2;
+  // Optional timeout in milliseconds. If not set, will wait indefinitely until result becomes available.
+  optional uint64 timeout_ms = 3;
+}
+
+enum WaitForTaskStatus {
+  WAIT_FOR_TASK_STATUS_UNSPECIFIED = 0;
+  WAIT_FOR_TASK_STATUS_COMPLETED = 1;         // Task completed (check result_type for success/failure)
+  WAIT_FOR_TASK_STATUS_TIMEOUT = 2;           // Wait timeout exceeded
+  WAIT_FOR_TASK_STATUS_TASK_NOT_FOUND = 3;    // Task not found in TaskSet
+  WAIT_FOR_TASK_STATUS_INTERNAL_ERROR = 4;    // Internal server error
 }
 
 message WaitForTaskResponse {
-  string status = 1;
-  optional string result = 2;  // JSON result when status is "completed"
-  optional string error = 3;   // Error message when status is "failed"
+  WaitForTaskStatus status_code = 1;
+  oneof result_type {
+    azolla.common.SuccessResult success = 2;
+    azolla.common.ErrorResult error = 3;
+  }
 }
 
 message CreateFlowRequest {

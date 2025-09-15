@@ -514,6 +514,42 @@ impl TaskTestData {
         }
     }
 
+    pub fn math_add_task(a: f64, b: f64) -> CreateTaskRequest {
+        CreateTaskRequest {
+            name: "math_add".to_string(),
+            domain: "test".to_string(),
+            args: serde_json::to_string(&Vec::<String>::new()).unwrap(),
+            kwargs: json!({"a": a, "b": b}).to_string(),
+            retry_policy: json!({
+                "version": 1,
+                "stop": {"max_attempts": 1},
+                "wait": {"strategy": "fixed", "delay": 1},
+                "retry": {"include_errors": ["ValueError"]}
+            })
+            .to_string(),
+            flow_instance_id: None,
+            shepherd_group: None,
+        }
+    }
+
+    pub fn count_args_task(args: Vec<serde_json::Value>) -> CreateTaskRequest {
+        CreateTaskRequest {
+            name: "count_args".to_string(),
+            domain: "test".to_string(),
+            args: serde_json::to_string(&args).unwrap(),
+            kwargs: "{}".to_string(),
+            retry_policy: json!({
+                "version": 1,
+                "stop": {"max_attempts": 1},
+                "wait": {"strategy": "fixed", "delay": 1},
+                "retry": {"include_errors": ["ValueError"]}
+            })
+            .to_string(),
+            flow_instance_id: None,
+            shepherd_group: None,
+        }
+    }
+
     pub fn failing_task_with_retries() -> CreateTaskRequest {
         CreateTaskRequest {
             name: "always_fail".to_string(),
