@@ -61,10 +61,7 @@ class Task(ABC):
                     raise TaskValidationError(
                         f"Too many positional arguments: expected at most {len(field_names)}, got {len(json_args)}"
                     )
-                data = {
-                    name: json_args[i]
-                    for i, name in enumerate(field_names[: len(json_args)])
-                }
+                data = {name: json_args[i] for i, name in enumerate(field_names[: len(json_args)])}
                 return cls._args_type.model_validate(data)
             else:
                 # dict - treat as keyword arguments
@@ -123,13 +120,9 @@ def azolla_task(func: Callable[..., Any]) -> Callable[..., Any]:
     # Generate Task class
     class GeneratedTask(Task):
         Args = args_model
-        _original_func = staticmethod(
-            original_func
-        )  # Store as staticmethod to avoid self issues
+        _original_func = staticmethod(original_func)  # Store as staticmethod to avoid self issues
 
-        async def execute(
-            self, args: Any, context: Optional[TaskContext] = None
-        ) -> Any:
+        async def execute(self, args: Any, context: Optional[TaskContext] = None) -> Any:
             # Convert args back to function parameters
             kwargs = args.model_dump()
             if accepts_context:

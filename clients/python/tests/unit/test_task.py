@@ -88,9 +88,7 @@ class TestTaskDecorator:
         assert result == {"message": "Hello Test!", "count": 5}
 
         # Test with list args
-        result = await task_instance._execute_with_casting(
-            [{"name": "List", "count": 2}]
-        )
+        result = await task_instance._execute_with_casting([{"name": "List", "count": 2}])
         assert result == {"message": "Hello List!", "count": 2}
 
     async def test_task_argument_validation(self) -> None:
@@ -106,9 +104,7 @@ class TestTaskDecorator:
 
         # Invalid arguments - wrong type
         with pytest.raises(TaskValidationError):
-            await task_instance._execute_with_casting(
-                {"name": "Test", "count": "invalid"}
-            )
+            await task_instance._execute_with_casting({"name": "Test", "count": "invalid"})
 
     async def test_error_handling_in_decorated_task(self) -> None:
         """Test that errors in decorated tasks are properly handled."""
@@ -155,9 +151,7 @@ class TestExplicitTask:
 
         # Test with context
         context = TaskContext(task_id="test-123", attempt_number=1)
-        result = await task._execute_with_casting(
-            {"value": 6, "multiplier": 1.5}, context
-        )
+        result = await task._execute_with_casting({"value": 6, "multiplier": 1.5}, context)
 
         expected = {"input": 6, "multiplier": 1.5, "result": 9.0}
         assert result == expected
@@ -194,9 +188,7 @@ class TestExplicitTask:
         """Tasks without an Args model should receive raw args in execute()."""
 
         class NoArgsTask(Task):
-            async def execute(
-                self, args: object, context: Optional[TaskContext] = None
-            ) -> object:
+            async def execute(self, args: object, context: Optional[TaskContext] = None) -> object:
                 # Echo back what we got
                 return args
 

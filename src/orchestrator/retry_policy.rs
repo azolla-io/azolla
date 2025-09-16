@@ -184,6 +184,14 @@ pub fn should_retry_error(retry_config: &RetryConfig, error_type: &str) -> bool 
         return false;
     }
 
+    // Special-case: Treat "TaskError" as a wildcard for any task error type
+    // This allows client libraries to specify the base error to retry on,
+    // while concrete error_type values (e.g., "TestError", "ValidationError")
+    // still work as before. Exclude list takes precedence above.
+    if retry_config.include_errors.iter().any(|e| e == "TaskError") {
+        return true;
+    }
+
     // Check if error is in include list
     retry_config
         .include_errors

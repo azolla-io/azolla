@@ -23,15 +23,11 @@ async def mock_grpc_stub():
     """Provide a mock gRPC stub for testing."""
     stub = AsyncMock()
     # Mock successful task creation
-    stub.CreateTask.return_value = orchestrator_pb2.CreateTaskResponse(
-        task_id="test-task-123"
-    )
+    stub.CreateTask.return_value = orchestrator_pb2.CreateTaskResponse(task_id="test-task-123")
 
     # Mock task completion with new structure
     success_result = common_pb2.SuccessResult(
-        result=common_pb2.AnyValue(
-            json_value='{"status": "success", "message": "Task completed"}'
-        )
+        result=common_pb2.AnyValue(json_value='{"status": "success", "message": "Task completed"}')
     )
     stub.WaitForTask.return_value = orchestrator_pb2.WaitForTaskResponse(
         status_code=orchestrator_pb2.WAIT_FOR_TASK_STATUS_COMPLETED,

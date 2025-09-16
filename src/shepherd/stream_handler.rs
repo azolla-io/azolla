@@ -109,6 +109,9 @@ impl StreamHandler {
         );
 
         let channel = Channel::from_shared(self.config.orchestrator_endpoint.clone())?
+            .http2_keep_alive_interval(std::time::Duration::from_secs(30))
+            .keep_alive_timeout(std::time::Duration::from_secs(10))
+            .keep_alive_while_idle(true)
             .connect()
             .await?;
         let mut client = ClusterServiceClient::new(channel);

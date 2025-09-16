@@ -18,13 +18,31 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
-# Add the src directory to the path so we can import azolla
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
+# Add the project src directory to the path for service mode imports
+# __file__ path parents[3] points to clients/python
+PROJECT_SRC = Path(__file__).resolve().parents[3] / "src"
+sys.path.insert(0, str(PROJECT_SRC))
 
-from azolla import Task, Worker, WorkerConfig
-from azolla.exceptions import TaskError
+# Define a minimal TaskError to avoid importing the full azolla package in task mode
+
+
+class TaskError(Exception):
+    def __init__(
+        self,
+        message: str,
+        error_code: str = "TASK_ERROR",
+        error_type: Optional[str] = None,
+        retryable: bool = True,
+        **kwargs: Any,
+    ):
+        super().__init__(message)
+        self.message = message
+        self.error_code = error_code
+        self.error_type = error_type or self.__class__.__name__
+        self.retryable = retryable
+
 
 # Configure logging
 logging.basicConfig(
@@ -33,7 +51,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class EchoTask(Task):
+class EchoTaskSingle:
     """Echo task that returns the input unchanged."""
 
     def name(self) -> str:
@@ -41,10 +59,13 @@ class EchoTask(Task):
 
     async def execute(self, args: Any, context=None) -> Any:
         logger.info(f"Echo task executing with args: {args}")
+        if args is None:
+            return [None]
+        # In single-task mode, return input unchanged (tests expect this behavior)
         return args
 
 
-class AlwaysFailTask(Task):
+class AlwaysFailTaskSingle:
     """Task that always fails with an error."""
 
     def name(self) -> str:
@@ -64,7 +85,7 @@ class AlwaysFailTask(Task):
         raise error
 
 
-class FlakyTask(Task):
+class FlakyTaskSingle:
     """Task that fails on first attempt, succeeds on retry using file-based state."""
 
     def name(self) -> str:
@@ -101,7 +122,7 @@ class FlakyTask(Task):
         return "Flaky task succeeded on retry"
 
 
-class MathAddTask(Task):
+class MathAddTaskSingle:
     """Task that adds two numbers."""
 
     def name(self) -> str:
@@ -131,7 +152,7 @@ class MathAddTask(Task):
             ) from e
 
 
-class CountArgsTask(Task):
+class CountArgsTaskSingle:
     """Task that counts the number of arguments."""
 
     def name(self) -> str:
@@ -141,7 +162,15 @@ class CountArgsTask(Task):
         logger.info(f"Count args task executing with args: {args}")
 
         if isinstance(args, list):
-            count = len(args)
+            # Treat single-dict list (common client encoding) as a dict
+            if len(args) == 1 and isinstance(args[0], dict):
+                count = len(args[0])
+                args = args[0]
+            elif len(args) == 1:
+                count = 1
+                args = args[0]
+            else:
+                count = len(args)
         elif isinstance(args, dict):
             count = len(args)
         elif args is None:
@@ -163,8 +192,14 @@ async def run_single_task(
     """Execute a single task (equivalent to Rust 'task' mode)."""
     logger.info(f"Running single task: {task_name} (ID: {task_id})")
 
-    # Create task registry and register all test tasks
-    tasks = [EchoTask(), AlwaysFailTask(), FlakyTask(), MathAddTask(), CountArgsTask()]
+    # Create single-task-mode tasks (no azolla imports)
+    tasks = [
+        EchoTaskSingle(),
+        AlwaysFailTaskSingle(),
+        FlakyTaskSingle(),
+        MathAddTaskSingle(),
+        CountArgsTaskSingle(),
+    ]
 
     # Find the requested task
     task_instance = None
@@ -202,9 +237,122 @@ async def run_single_task(
         sys.exit(1)
 
 
+def _build_service_tasks():
+    """Build Task subclass instances for service mode (requires azolla)."""
+    # Import within function to ensure package is only loaded in service mode
+    from azolla.exceptions import TaskError as AzTaskError  # type: ignore
+    from azolla.task import Task as _Task  # type: ignore
+
+    class EchoTask(_Task):
+        def name(self) -> str:
+            return "echo"
+
+        async def execute(self, args: Any, context=None) -> Any:
+            logger.info(f"Echo task executing with args: {args}")
+            if args is None:
+                return [None]
+            if isinstance(args, list):
+                if len(args) == 1:
+                    return [args[0]]
+                return [args]
+            return [args]
+
+    class AlwaysFailTask(_Task):
+        def name(self) -> str:
+            return "always_fail"
+
+        async def execute(self, args: Any, context=None) -> Any:
+            logger.info(f"🔥 ALWAYS_FAIL: Task starting execution with args: {args}")
+            logger.info("🔥 ALWAYS_FAIL: About to raise TaskError...")
+            err = AzTaskError(
+                "Task designed to always fail",
+                error_code="ALWAYS_FAIL",
+                error_type="TestError",
+            )
+            logger.info(f"🔥 ALWAYS_FAIL: Created TaskError: {err}")
+            logger.info("🔥 ALWAYS_FAIL: Raising TaskError now!")
+            raise err
+
+    class FlakyTask(_Task):
+        def name(self) -> str:
+            return "flaky"
+
+        async def execute(self, args: Any, context=None) -> Any:
+            logger.info(f"Flaky task executing with args: {args}")
+            process_id = os.getpid()
+            state_file = Path(tempfile.gettempdir()) / f"flaky_task_state_{process_id}"
+            try:
+                attempt_count = int(state_file.read_text().strip())
+            except (FileNotFoundError, ValueError):
+                attempt_count = 0
+            new_attempt_count = attempt_count + 1
+            state_file.write_text(str(new_attempt_count))
+            logger.info(f"Flaky task attempt #{new_attempt_count}")
+            if new_attempt_count == 1:
+                raise AzTaskError(
+                    "First attempt failure",
+                    error_code="FLAKY_TASK_FIRST_ATTEMPT",
+                    error_type="TestError",
+                )
+            return "Flaky task succeeded on retry"
+
+    class MathAddTask(_Task):
+        def name(self) -> str:
+            return "math_add"
+
+        async def execute(self, args: Any, context=None) -> Any:
+            logger.info(f"Math add task executing with args: {args}")
+            if not isinstance(args, list) or len(args) != 2:
+                raise TaskError(
+                    f"Math add expects exactly 2 arguments, got {len(args) if isinstance(args, list) else 'non-list'}",
+                    error_code="INVALID_ARGS",
+                    error_type="ValidationError",
+                )
+            try:
+                a, b = float(args[0]), float(args[1])
+                result = a + b
+                logger.info(f"Math add: {a} + {b} = {result}")
+                return result
+            except (ValueError, TypeError) as e:
+                raise AzTaskError(
+                    f"Math add requires numeric arguments: {e}",
+                    error_code="INVALID_NUMBER",
+                    error_type="ValidationError",
+                ) from e
+
+    class CountArgsTask(_Task):
+        def name(self) -> str:
+            return "count_args"
+
+        async def execute(self, args: Any, context=None) -> Any:
+            logger.info(f"Count args task executing with args: {args}")
+            if isinstance(args, list):
+                if len(args) == 1 and isinstance(args[0], dict):
+                    count = len(args[0])
+                    args = args[0]
+                elif len(args) == 1:
+                    count = 1
+                    args = args[0]
+                else:
+                    count = len(args)
+            elif isinstance(args, dict):
+                count = len(args)
+            elif args is None:
+                count = 0
+            else:
+                count = 1
+            logger.info(f"Counted {count} arguments")
+            return {"count": count, "args": args}
+
+    return [EchoTask(), AlwaysFailTask(), FlakyTask(), MathAddTask(), CountArgsTask()]
+
+
 async def run_worker_service(orchestrator_endpoint: str, domain: str) -> None:
     """Run as a continuous worker service (equivalent to Rust 'service' mode)."""
     logger.info(f"Starting worker service: {orchestrator_endpoint}, domain: {domain}")
+
+    # Import worker components lazily to avoid grpc dependency for --mode task
+    from azolla import Worker, WorkerConfig  # type: ignore
 
     config = WorkerConfig(
         orchestrator_endpoint=orchestrator_endpoint,
@@ -217,7 +365,7 @@ async def run_worker_service(orchestrator_endpoint: str, domain: str) -> None:
     worker = Worker(config)
 
     # Register all test tasks
-    tasks = [EchoTask(), AlwaysFailTask(), FlakyTask(), MathAddTask(), CountArgsTask()]
+    tasks = _build_service_tasks()
 
     # Register tasks with error handling
     try:
@@ -250,9 +398,7 @@ async def run_worker_service(orchestrator_endpoint: str, domain: str) -> None:
     except KeyboardInterrupt:
         logger.info("Worker interrupted, shutting down...")
     except ConnectionError as e:
-        logger.error(
-            f"Failed to connect to orchestrator at {orchestrator_endpoint}: {e}"
-        )
+        logger.error(f"Failed to connect to orchestrator at {orchestrator_endpoint}: {e}")
         sys.exit(1)
     except Exception as e:
         logger.error(f"Worker error: {e}", exc_info=True)
@@ -263,9 +409,7 @@ async def run_worker_service(orchestrator_endpoint: str, domain: str) -> None:
 
 def main():
     """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="Python test worker for Azolla integration tests"
-    )
+    parser = argparse.ArgumentParser(description="Python test worker for Azolla integration tests")
 
     # Mode selection
     parser.add_argument(
@@ -281,17 +425,13 @@ def main():
         default="localhost:52710",
         help="Orchestrator endpoint (default: localhost:52710)",
     )
-    parser.add_argument(
-        "--domain", default="default", help="Task domain (default: default)"
-    )
+    parser.add_argument("--domain", default="default", help="Task domain (default: default)")
 
     # Task mode arguments
     parser.add_argument("--task-id", help="Task ID (for task mode)")
     parser.add_argument("--name", help="Task name (for task mode)")
     parser.add_argument("--args", help="Task arguments as JSON (for task mode)")
-    parser.add_argument(
-        "--kwargs", help="Task keyword arguments as JSON (for task mode)"
-    )
+    parser.add_argument("--kwargs", help="Task keyword arguments as JSON (for task mode)")
 
     args = parser.parse_args()
 

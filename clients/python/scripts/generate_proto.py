@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Generate gRPC code from proto files."""
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -32,22 +33,24 @@ def main():
     # Option 2: Try copying proto files to grpc directory temporarily
     # and compiling them locally to get relative imports
     original_cwd = os.getcwd()
+    copied_proto_paths = []
     try:
-        # Copy proto files to _grpc directory temporarily
         for proto_file in proto_files:
             src = proto_dir / proto_file
             dst = grpc_output_dir / proto_file
             dst.write_bytes(src.read_bytes())
+            copied_proto_paths.append(dst)
 
-        # Change to _grpc directory and run protoc from there
         os.chdir(grpc_output_dir)
 
         cmd = [
-            sys.executable, "-m", "grpc_tools.protoc",
+            sys.executable,
+            "-m",
+            "grpc_tools.protoc",
             "--proto_path=.",
             "--python_out=.",
             "--grpc_python_out=.",
-            "--pyi_out=.",  # Type stubs
+            "--pyi_out=.",
         ] + proto_files
 
         print(f"Running: {' '.join(cmd)}")
@@ -58,18 +61,38 @@ def main():
             print(result.stderr)
             sys.exit(1)
 
-        # Clean up copied proto files
-        for proto_file in proto_files:
-            (grpc_output_dir / proto_file).unlink()
+        _ensure_relative_imports(grpc_output_dir)
 
     finally:
         os.chdir(original_cwd)
+        for path in copied_proto_paths:
+            if path.exists():
+                path.unlink()
 
     # Create __init__.py in grpc module
     init_file = grpc_output_dir / "__init__.py"
     init_file.write_text('"""Generated gRPC code for Azolla protocol."""\n')
 
     print("✅ gRPC code generated successfully!")
+
+
+def _ensure_relative_imports(grpc_output_dir: Path) -> None:
+    """Convert imports in generated modules to package-relative imports."""
+
+    import_pattern = re.compile(r"^import (\w+_pb2)(\s+as\s+\w+)?$", re.MULTILINE)
+
+    for path in grpc_output_dir.glob("*.py"):
+        text = path.read_text()
+
+        def _replace(match: re.Match[str]) -> str:
+            module = match.group(1)
+            alias = match.group(2) or ""
+            return f"from . import {module}{alias}"
+
+        new_text, replacements = import_pattern.subn(_replace, text)
+
+        if replacements > 0:
+            path.write_text(new_text)
 
 if __name__ == "__main__":
     main()

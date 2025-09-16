@@ -219,6 +219,29 @@ impl ClientService for ClientServiceImpl {
 
         info!("Waiting for task {} in domain {}", task_id, req.domain);
 
+        // Fast path: Non-blocking check when timeout_ms == 0
+        if matches!(req.timeout_ms, Some(0)) {
+            let scheduler = self
+                .engine
+                .scheduler_registry
+                .get_or_create_scheduler(&req.domain);
+
+            return match scheduler.get_task_result(task_id).await {
+                Ok(Some(result)) => Ok(Response::new(WaitForTaskResponse {
+                    status_code: WaitForTaskStatus::Completed.into(),
+                    result_type: Some(self.convert_task_result_value_to_result_type(&result)),
+                })),
+                Ok(None) => Ok(Response::new(WaitForTaskResponse {
+                    status_code: WaitForTaskStatus::Timeout.into(),
+                    result_type: None,
+                })),
+                Err(_) => Ok(Response::new(WaitForTaskResponse {
+                    status_code: WaitForTaskStatus::InternalError.into(),
+                    result_type: None,
+                })),
+            };
+        }
+
         // Poll for task completion with 200ms intervals
         let poll_interval = Duration::from_millis(200);
 
@@ -235,7 +258,7 @@ impl ClientService for ClientServiceImpl {
             // Check if we've exceeded the maximum wait time
             if start_time.elapsed() > max_wait_time {
                 return Ok(Response::new(WaitForTaskResponse {
-                    status_code: WaitForTaskStatus::Timeout as i32,
+                    status_code: WaitForTaskStatus::Timeout.into(),
                     result_type: None,
                 }));
             }
@@ -250,7 +273,7 @@ impl ClientService for ClientServiceImpl {
                 Ok(Some(result)) => {
                     // Task has completed with a result
                     return Ok(Response::new(WaitForTaskResponse {
-                        status_code: WaitForTaskStatus::Completed as i32,
+                        status_code: WaitForTaskStatus::Completed.into(),
                         result_type: Some(self.convert_task_result_value_to_result_type(&result)),
                     }));
                 }
@@ -264,13 +287,13 @@ impl ClientService for ClientServiceImpl {
                         }
                         Ok(None) => {
                             return Ok(Response::new(WaitForTaskResponse {
-                                status_code: WaitForTaskStatus::TaskNotFound as i32,
+                                status_code: WaitForTaskStatus::TaskNotFound.into(),
                                 result_type: None,
                             }));
                         }
                         Err(_) => {
                             return Ok(Response::new(WaitForTaskResponse {
-                                status_code: WaitForTaskStatus::InternalError as i32,
+                                status_code: WaitForTaskStatus::InternalError.into(),
                                 result_type: None,
                             }));
                         }
@@ -278,7 +301,7 @@ impl ClientService for ClientServiceImpl {
                 }
                 Err(_) => {
                     return Ok(Response::new(WaitForTaskResponse {
-                        status_code: WaitForTaskStatus::InternalError as i32,
+                        status_code: WaitForTaskStatus::InternalError.into(),
                         result_type: None,
                     }));
                 }

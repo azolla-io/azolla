@@ -63,37 +63,27 @@ class TestClient:
         assert builder._args is None
 
         # Test builder configuration
-        builder = builder.args({"message": "hello", "count": 5}).shepherd_group(
-            "test-group"
-        )
+        builder = builder.args({"message": "hello", "count": 5}).shepherd_group("test-group")
 
         assert builder._args == {"message": "hello", "count": 5}
         assert builder._shepherd_group == "test-group"
 
-    async def test_task_submission_with_decorated_function(
-        self, mock_client: Client
-    ) -> None:
+    async def test_task_submission_with_decorated_function(self, mock_client: Client) -> None:
         """Test submitting a decorated function as a task."""
-        builder = mock_client.submit_task(
-            sample_client_task, {"message": "test", "count": 3}
-        )
+        builder = mock_client.submit_task(sample_client_task, {"message": "test", "count": 3})
 
         # Should extract task name from decorated function
         assert builder._task_name == "sample_client_task"
         assert builder._args == {"message": "test", "count": 3}
 
-    async def test_successful_task_submission(
-        self, mock_client: Client, mock_grpc_stub
-    ) -> None:
+    async def test_successful_task_submission(self, mock_client: Client, mock_grpc_stub) -> None:
         """Test successful task submission and handle creation."""
         # Configure mock to return task ID
         mock_grpc_stub.CreateTask.return_value = orchestrator_pb2.CreateTaskResponse(
             task_id="test-task-456"
         )
 
-        handle = (
-            await mock_client.submit_task("test_task").args({"key": "value"}).submit()
-        )
+        handle = await mock_client.submit_task("test_task").args({"key": "value"}).submit()
 
         assert isinstance(handle, TaskHandle)
         assert handle.task_id == "test-task-456"
@@ -130,9 +120,7 @@ class TestClient:
         """Test task submission with retry policy."""
         from azolla.retry import ExponentialBackoff, RetryPolicy
 
-        retry_policy = RetryPolicy(
-            max_attempts=5, backoff=ExponentialBackoff(initial=2.0)
-        )
+        retry_policy = RetryPolicy(max_attempts=5, backoff=ExponentialBackoff(initial=2.0))
 
         await mock_client.submit_task("test").retry_policy(retry_policy).submit()
 
@@ -153,9 +141,7 @@ class TestTaskHandle:
         assert handle.task_id == "test-task-789"
         assert handle._client == mock_client
 
-    async def test_successful_task_result(
-        self, mock_client: Client, mock_grpc_stub
-    ) -> None:
+    async def test_successful_task_result(self, mock_client: Client, mock_grpc_stub) -> None:
         """Test getting successful task result."""
         # Configure mock to return completed task with new structure
         success_result = common_pb2.SuccessResult(
@@ -173,9 +159,7 @@ class TestTaskHandle:
         assert result.task_id == "test-task"
         assert result.value == {"status": "success", "value": 42}
 
-    async def test_failed_task_result(
-        self, mock_client: Client, mock_grpc_stub
-    ) -> None:
+    async def test_failed_task_result(self, mock_client: Client, mock_grpc_stub) -> None:
         """Test getting failed task result."""
         # Configure mock to return failed task with new structure
         error_result = common_pb2.ErrorResult(
@@ -191,20 +175,16 @@ class TestTaskHandle:
 
         handle = TaskHandle("test-task", mock_client)
 
-        # Expect TaskError to be raised
-        from azolla.exceptions import TaskError
+        result = await handle.try_result()
 
-        try:
-            await handle.try_result()
-            raise AssertionError("Expected TaskError to be raised")
-        except TaskError as e:
-            assert e.error_type == "ValueError"
-            assert e.message == "Task execution failed with error"
-            assert e.retryable
+        assert result is not None
+        assert result.success is False
+        assert result.error is not None
+        assert result.error.error_type == "ValueError"
+        assert result.error.message == "Task execution failed with error"
+        assert result.error.retriable is True
 
-    async def test_pending_task_result(
-        self, mock_client: Client, mock_grpc_stub
-    ) -> None:
+    async def test_pending_task_result(self, mock_client: Client, mock_grpc_stub) -> None:
         """Test getting result for pending task."""
         # Mock task that's still running (timeout status in try_result means not ready)
         mock_grpc_stub.WaitForTask.return_value = orchestrator_pb2.WaitForTaskResponse(
@@ -216,9 +196,7 @@ class TestTaskHandle:
 
         assert result is None  # Still running
 
-    async def test_task_wait_with_timeout(
-        self, mock_client: Client, mock_grpc_stub
-    ) -> None:
+    async def test_task_wait_with_timeout(self, mock_client: Client, mock_grpc_stub) -> None:
         """Test task wait with timeout."""
         # Mock task that never completes
         mock_grpc_stub.WaitForTask.return_value = orchestrator_pb2.WaitForTaskResponse(
@@ -240,9 +218,7 @@ class TestTaskHandle:
 class TestTaskResultRetrieval:
     """Test comprehensive task result retrieval scenarios."""
 
-    async def test_success_result_string_value(
-        self, mock_client: Client, mock_grpc_stub
-    ) -> None:
+    async def test_success_result_string_value(self, mock_client: Client, mock_grpc_stub) -> None:
         """Test getting successful task result with string value."""
         # Configure mock to return string result
         success_result = common_pb2.SuccessResult(
@@ -260,14 +236,10 @@ class TestTaskResultRetrieval:
         assert result.task_id == "test-task"
         assert result.value == "Hello, World!"
 
-    async def test_success_result_numeric_values(
-        self, mock_client: Client, mock_grpc_stub
-    ) -> None:
+    async def test_success_result_numeric_values(self, mock_client: Client, mock_grpc_stub) -> None:
         """Test getting successful task result with numeric values."""
         # Test integer result
-        success_result = common_pb2.SuccessResult(
-            result=common_pb2.AnyValue(int_value=42)
-        )
+        success_result = common_pb2.SuccessResult(result=common_pb2.AnyValue(int_value=42))
         mock_grpc_stub.WaitForTask.return_value = orchestrator_pb2.WaitForTaskResponse(
             status_code=orchestrator_pb2.WAIT_FOR_TASK_STATUS_COMPLETED,
             success=success_result,
@@ -280,9 +252,7 @@ class TestTaskResultRetrieval:
         assert result.value == 42
 
         # Test float result
-        success_result = common_pb2.SuccessResult(
-            result=common_pb2.AnyValue(double_value=3.14159)
-        )
+        success_result = common_pb2.SuccessResult(result=common_pb2.AnyValue(double_value=3.14159))
         mock_grpc_stub.WaitForTask.return_value = orchestrator_pb2.WaitForTaskResponse(
             status_code=orchestrator_pb2.WAIT_FOR_TASK_STATUS_COMPLETED,
             success=success_result,
@@ -294,14 +264,10 @@ class TestTaskResultRetrieval:
         assert result is not None
         assert abs(result.value - 3.14159) < 1e-5
 
-    async def test_success_result_boolean_values(
-        self, mock_client: Client, mock_grpc_stub
-    ) -> None:
+    async def test_success_result_boolean_values(self, mock_client: Client, mock_grpc_stub) -> None:
         """Test getting successful task result with boolean values."""
         # Test true result
-        success_result = common_pb2.SuccessResult(
-            result=common_pb2.AnyValue(bool_value=True)
-        )
+        success_result = common_pb2.SuccessResult(result=common_pb2.AnyValue(bool_value=True))
         mock_grpc_stub.WaitForTask.return_value = orchestrator_pb2.WaitForTaskResponse(
             status_code=orchestrator_pb2.WAIT_FOR_TASK_STATUS_COMPLETED,
             success=success_result,
@@ -314,9 +280,7 @@ class TestTaskResultRetrieval:
         assert result.value is True
 
         # Test false result
-        success_result = common_pb2.SuccessResult(
-            result=common_pb2.AnyValue(bool_value=False)
-        )
+        success_result = common_pb2.SuccessResult(result=common_pb2.AnyValue(bool_value=False))
         mock_grpc_stub.WaitForTask.return_value = orchestrator_pb2.WaitForTaskResponse(
             status_code=orchestrator_pb2.WAIT_FOR_TASK_STATUS_COMPLETED,
             success=success_result,
@@ -358,13 +322,9 @@ class TestTaskResultRetrieval:
         assert result.value["settings"]["theme"] == "dark"
         assert "admin" in result.value["tags"]
 
-    async def test_success_result_none_values(
-        self, mock_client: Client, mock_grpc_stub
-    ) -> None:
+    async def test_success_result_none_values(self, mock_client: Client, mock_grpc_stub) -> None:
         """Test getting successful task result with None/null values."""
-        success_result = common_pb2.SuccessResult(
-            result=common_pb2.AnyValue(json_value="null")
-        )
+        success_result = common_pb2.SuccessResult(result=common_pb2.AnyValue(json_value="null"))
         mock_grpc_stub.WaitForTask.return_value = orchestrator_pb2.WaitForTaskResponse(
             status_code=orchestrator_pb2.WAIT_FOR_TASK_STATUS_COMPLETED,
             success=success_result,
@@ -376,9 +336,7 @@ class TestTaskResultRetrieval:
         assert result is not None
         assert result.value is None
 
-    async def test_success_result_list_values(
-        self, mock_client: Client, mock_grpc_stub
-    ) -> None:
+    async def test_success_result_list_values(self, mock_client: Client, mock_grpc_stub) -> None:
         """Test getting successful task result with list/array values."""
         list_data = [1, "two", True, None, {"nested": "object"}]
 
@@ -421,21 +379,17 @@ class TestTaskResultRetrieval:
 
         handle = TaskHandle("test-task", mock_client)
 
-        from azolla.exceptions import TaskError
+        result = await handle.try_result()
 
-        try:
-            await handle.try_result()
-            raise AssertionError("Expected TaskError to be raised")
-        except TaskError as e:
-            assert e.error_type == "ValidationError"
-            assert "Invalid argument" in e.message
-            assert e.retryable is False
-            # Check that error data was included in the exception
-            assert hasattr(e, "extra_data")
+        assert result is not None
+        assert result.success is False
+        assert result.error is not None
+        assert result.error.error_type == "ValidationError"
+        assert "Invalid argument" in result.error.message
+        assert result.error.retriable is False
+        assert result.error.data == error_data
 
-    async def test_type_error_with_detailed_data(
-        self, mock_client: Client, mock_grpc_stub
-    ) -> None:
+    async def test_type_error_with_detailed_data(self, mock_client: Client, mock_grpc_stub) -> None:
         """Test TypeError with detailed error data."""
         error_data = {"expected_type": "string", "actual_type": "integer", "value": 42}
 
@@ -452,19 +406,17 @@ class TestTaskResultRetrieval:
 
         handle = TaskHandle("test-task", mock_client)
 
-        from azolla.exceptions import TaskError
+        result = await handle.try_result()
 
-        try:
-            await handle.try_result()
-            raise AssertionError("Expected TaskError to be raised")
-        except TaskError as e:
-            assert e.error_type == "TypeError"
-            assert "Expected string" in e.message
-            assert e.retryable is False
+        assert result is not None
+        assert result.success is False
+        assert result.error is not None
+        assert result.error.error_type == "TypeError"
+        assert "Expected string" in result.error.message
+        assert result.error.retriable is False
+        assert result.error.data == error_data
 
-    async def test_runtime_error_retryable(
-        self, mock_client: Client, mock_grpc_stub
-    ) -> None:
+    async def test_runtime_error_retryable(self, mock_client: Client, mock_grpc_stub) -> None:
         """Test RuntimeError that is retryable."""
         error_data = {"timeout_seconds": 30, "retry_count": 2, "database": "user_db"}
 
@@ -481,19 +433,17 @@ class TestTaskResultRetrieval:
 
         handle = TaskHandle("test-task", mock_client)
 
-        from azolla.exceptions import TaskError
+        result = await handle.try_result()
 
-        try:
-            await handle.try_result()
-            raise AssertionError("Expected TaskError to be raised")
-        except TaskError as e:
-            assert e.error_type == "RuntimeError"
-            assert "Database connection" in e.message
-            assert e.retryable is True
+        assert result is not None
+        assert result.success is False
+        assert result.error is not None
+        assert result.error.error_type == "RuntimeError"
+        assert "Database connection" in result.error.message
+        assert result.error.retriable is True
+        assert result.error.data == error_data
 
-    async def test_resource_error_retryable(
-        self, mock_client: Client, mock_grpc_stub
-    ) -> None:
+    async def test_resource_error_retryable(self, mock_client: Client, mock_grpc_stub) -> None:
         """Test ResourceError that is retryable."""
         error_data = {
             "requested_memory_mb": 1024,
@@ -514,19 +464,17 @@ class TestTaskResultRetrieval:
 
         handle = TaskHandle("test-task", mock_client)
 
-        from azolla.exceptions import TaskError
+        result = await handle.try_result()
 
-        try:
-            await handle.try_result()
-            raise AssertionError("Expected TaskError to be raised")
-        except TaskError as e:
-            assert e.error_type == "ResourceError"
-            assert "Insufficient memory" in e.message
-            assert e.retryable is True
+        assert result is not None
+        assert result.success is False
+        assert result.error is not None
+        assert result.error.error_type == "ResourceError"
+        assert "Insufficient memory" in result.error.message
+        assert result.error.retriable is True
+        assert result.error.data == error_data
 
-    async def test_timeout_error_retryable(
-        self, mock_client: Client, mock_grpc_stub
-    ) -> None:
+    async def test_timeout_error_retryable(self, mock_client: Client, mock_grpc_stub) -> None:
         """Test TimeoutError that is retryable."""
         error_data = {
             "timeout_seconds": 300,
@@ -547,15 +495,15 @@ class TestTaskResultRetrieval:
 
         handle = TaskHandle("test-task", mock_client)
 
-        from azolla.exceptions import TaskError
+        result = await handle.try_result()
 
-        try:
-            await handle.try_result()
-            raise AssertionError("Expected TaskError to be raised")
-        except TaskError as e:
-            assert e.error_type == "TimeoutError"
-            assert "exceeded 300 seconds" in e.message
-            assert e.retryable is True
+        assert result is not None
+        assert result.success is False
+        assert result.error is not None
+        assert result.error.error_type == "TimeoutError"
+        assert "exceeded 300 seconds" in result.error.message
+        assert result.error.retriable is True
+        assert result.error.data == error_data
 
     async def test_custom_business_error_with_complex_data(
         self, mock_client: Client, mock_grpc_stub
@@ -583,15 +531,15 @@ class TestTaskResultRetrieval:
 
         handle = TaskHandle("test-task", mock_client)
 
-        from azolla.exceptions import TaskError
+        result = await handle.try_result()
 
-        try:
-            await handle.try_result()
-            raise AssertionError("Expected TaskError to be raised")
-        except TaskError as e:
-            assert e.error_type == "BusinessLogicError"
-            assert "Order cannot be processed" in e.message
-            assert e.retryable is False
+        assert result is not None
+        assert result.success is False
+        assert result.error is not None
+        assert result.error.error_type == "BusinessLogicError"
+        assert "Order cannot be processed" in result.error.message
+        assert result.error.retriable is False
+        assert result.error.data == error_data
 
 
 class TestClientBuilder:

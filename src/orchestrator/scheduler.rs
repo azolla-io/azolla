@@ -69,7 +69,7 @@ impl SchedulerConfig {
 pub enum SchedulerCommand {
     StartTask {
         task_id: Uuid,
-        task: Option<Task>, // StartTask can be used for starting a new Task, or an existing Task (none)
+        task: Box<Option<Task>>, // StartTask can be used for starting a new Task, or an existing Task (none)
         respond_to: oneshot::Sender<Result<()>>,
     },
     HandleTaskResult {
@@ -139,7 +139,7 @@ impl SchedulerActor {
                                 info!("Scheduler received StartTask command for task {} in domain {}", task_id, scheduler_state.domain);
 
                                 // If task is provided, upsert it first
-                                if let Some(task) = task {
+                                if let Some(task) = *task {
                                     scheduler_state.task_set.upsert_task(task);
                                 }
 
@@ -242,7 +242,7 @@ impl SchedulerActor {
         let (tx, _rx) = oneshot::channel();
         let cmd = SchedulerCommand::StartTask {
             task_id,
-            task,
+            task: Box::new(task),
             respond_to: tx,
         };
 

@@ -425,7 +425,7 @@ async fn test_wait_for_task_with_complex_results() {
     assert!(registered, "Shepherd should register within 5 seconds");
 
     // Test 1: Math task with floating point numbers
-    let math_request = TaskTestData::math_add_task(3.14, 2.86);
+    let math_request = TaskTestData::math_add_task(std::f64::consts::PI, 2.86);
     let math_response = harness
         .client
         .create_task(tonic::Request::new(math_request))

@@ -84,14 +84,16 @@ impl Task for ConditionalTask {
                     "Task was asked to fail",
                 )),
                 "validation_error" => Err(azolla_client::error::TaskError::validation_error(
-                    "Invalid input format provided"
+                    "Invalid input format provided",
                 )),
                 "timeout_error" => Err(azolla_client::error::TaskError::timeout_error(
-                    "Task execution exceeded time limit"
+                    "Task execution exceeded time limit",
                 )),
-                "resource_error" => Err(azolla_client::error::TaskError::new("Insufficient memory available")
-                    .with_error_type("ResourceError")
-                    .with_retryable(true)),
+                "resource_error" => Err(azolla_client::error::TaskError::new(
+                    "Insufficient memory available",
+                )
+                .with_error_type("ResourceError")
+                .with_retryable(true)),
                 "timeout" => {
                     tokio::time::sleep(Duration::from_secs(10)).await; // Long delay
                     Ok(json!({"status": "completed_after_delay"}))
@@ -114,14 +116,17 @@ impl Task for TypeTestTask {
         "type_test_task"
     }
 
-    fn execute(&self, test_type: Self::Args) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+    fn execute(
+        &self,
+        test_type: Self::Args,
+    ) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
         Box::pin(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
 
             match test_type.as_str() {
                 "string" => Ok(json!("Hello, E2E World!")),
                 "integer" => Ok(json!(42)),
-                "float" => Ok(json!(3.14159)),
+                "float" => Ok(json!(std::f64::consts::PI)),
                 "boolean_true" => Ok(json!(true)),
                 "boolean_false" => Ok(json!(false)),
                 "null" => Ok(json!(null)),
@@ -159,33 +164,44 @@ impl Task for ErrorTestTask {
         "error_test_task"
     }
 
-    fn execute(&self, error_type: Self::Args) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+    fn execute(
+        &self,
+        error_type: Self::Args,
+    ) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
         Box::pin(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
 
             match error_type.as_str() {
                 "validation" => Err(azolla_client::error::TaskError::validation_error(
-                    "Field validation failed: email format invalid"
+                    "Field validation failed: email format invalid",
                 )),
-                "type_error" => Err(azolla_client::error::TaskError::new("Expected string, got integer")
-                    .with_error_type("TypeError")
-                    .with_error_code("TYPE_MISMATCH")
-                    .with_retryable(false)),
-                "runtime" => Err(azolla_client::error::TaskError::new("Database connection timeout")
-                    .with_error_type("RuntimeError")
-                    .with_error_code("DB_TIMEOUT")
-                    .with_retryable(true)),
-                "resource" => Err(azolla_client::error::TaskError::new("Insufficient memory available")
-                    .with_error_type("ResourceError")
-                    .with_error_code("OUT_OF_MEMORY")
-                    .with_retryable(true)),
+                "type_error" => Err(azolla_client::error::TaskError::new(
+                    "Expected string, got integer",
+                )
+                .with_error_type("TypeError")
+                .with_error_code("TYPE_MISMATCH")
+                .with_retryable(false)),
+                "runtime" => Err(azolla_client::error::TaskError::new(
+                    "Database connection timeout",
+                )
+                .with_error_type("RuntimeError")
+                .with_error_code("DB_TIMEOUT")
+                .with_retryable(true)),
+                "resource" => Err(azolla_client::error::TaskError::new(
+                    "Insufficient memory available",
+                )
+                .with_error_type("ResourceError")
+                .with_error_code("OUT_OF_MEMORY")
+                .with_retryable(true)),
                 "timeout" => Err(azolla_client::error::TaskError::timeout_error(
-                    "Task execution exceeded maximum allowed time"
+                    "Task execution exceeded maximum allowed time",
                 )),
-                "business_logic" => Err(azolla_client::error::TaskError::new("Order cannot be processed: payment method expired")
-                    .with_error_type("BusinessLogicError")
-                    .with_error_code("PAYMENT_EXPIRED")
-                    .with_retryable(false)),
+                "business_logic" => Err(azolla_client::error::TaskError::new(
+                    "Order cannot be processed: payment method expired",
+                )
+                .with_error_type("BusinessLogicError")
+                .with_error_code("PAYMENT_EXPIRED")
+                .with_retryable(false)),
                 _ => Err(azolla_client::error::TaskError::invalid_args(&format!(
                     "Unknown error type: {error_type}"
                 ))),
@@ -259,13 +275,16 @@ async fn test_complete_workflow() {
 
                             // Comprehensive result validation
                             assert!(value.get("processed").is_some());
-                            assert_eq!(value["processed"].as_bool().unwrap(), true);
+                            assert!(value["processed"].as_bool().unwrap());
                             assert_eq!(value["task_name"].as_str().unwrap(), "e2e_test_task");
 
                             // Verify input data was processed correctly
                             let input = &value["input"];
                             assert_eq!(input["test_data"].as_str().unwrap(), "hello world");
-                            assert_eq!(input["timestamp"].as_str().unwrap(), "2023-01-01T00:00:00Z");
+                            assert_eq!(
+                                input["timestamp"].as_str().unwrap(),
+                                "2023-01-01T00:00:00Z"
+                            );
 
                             // Verify worker metadata is present
                             assert!(value.get("worker_id").is_some());
@@ -344,7 +363,7 @@ async fn test_data_processing_workflow() {
                             // Validate specific data transformations
                             assert_eq!(value["text_length"].as_u64().unwrap(), 11); // "test string".len()
                             assert_eq!(value["number_doubled"].as_i64().unwrap(), 84); // 42 * 2
-                            assert_eq!(value["flag_negated"].as_bool().unwrap(), false); // !true
+                            assert!(!value["flag_negated"].as_bool().unwrap()); // !true
                             assert_eq!(value["combined"].as_str().unwrap(), "test string-42-true");
                             assert_eq!(value["processing_time_ms"].as_u64().unwrap(), 100);
 
@@ -682,13 +701,13 @@ async fn test_comprehensive_data_type_workflow() {
                         assert_eq!(value.as_i64().unwrap(), 42);
                     }
                     "float" => {
-                        assert!((value.as_f64().unwrap() - 3.14159).abs() < f64::EPSILON);
+                        assert!((value.as_f64().unwrap() - std::f64::consts::PI).abs() < f64::EPSILON);
                     }
                     "boolean_true" => {
-                        assert_eq!(value.as_bool().unwrap(), true);
+                        assert!(value.as_bool().unwrap());
                     }
                     "boolean_false" => {
-                        assert_eq!(value.as_bool().unwrap(), false);
+                        assert!(!value.as_bool().unwrap());
                     }
                     "null" => {
                         assert!(value.is_null());
@@ -698,16 +717,19 @@ async fn test_comprehensive_data_type_workflow() {
                         assert_eq!(arr.len(), 5);
                         assert_eq!(arr[0].as_i64().unwrap(), 1);
                         assert_eq!(arr[1].as_str().unwrap(), "two");
-                        assert_eq!(arr[2].as_bool().unwrap(), true);
+                        assert!(arr[2].as_bool().unwrap());
                         assert!(arr[3].is_null());
                         assert_eq!(arr[4]["nested"].as_str().unwrap(), "value");
                     }
                     "complex_object" => {
                         assert_eq!(value["user_id"].as_u64().unwrap(), 12345);
                         assert_eq!(value["username"].as_str().unwrap(), "e2e_test_user");
-                        assert_eq!(value["active"].as_bool().unwrap(), true);
+                        assert!(value["active"].as_bool().unwrap());
                         assert_eq!(value["metadata"]["tags"].as_array().unwrap().len(), 3);
-                        assert_eq!(value["metadata"]["settings"]["theme"].as_str().unwrap(), "dark");
+                        assert_eq!(
+                            value["metadata"]["settings"]["theme"].as_str().unwrap(),
+                            "dark"
+                        );
                         assert_eq!(value["scores"].as_array().unwrap().len(), 3);
                         assert!(value["permissions"].is_null());
                     }
@@ -756,15 +778,46 @@ async fn test_comprehensive_error_scenario_workflow() {
 
     // Test different error types
     let error_test_cases = [
-        ("validation", "TaskValidationError", "Field validation failed: email format invalid", false),
-        ("type_error", "TypeError", "Expected string, got integer", false),
-        ("runtime", "RuntimeError", "Database connection timeout", true),
-        ("resource", "ResourceError", "Insufficient memory available", true),
-        ("timeout", "TaskTimeoutError", "Task execution exceeded maximum allowed time", true),
-        ("business_logic", "BusinessLogicError", "Order cannot be processed: payment method expired", false),
+        (
+            "validation",
+            "TaskValidationError",
+            "Field validation failed: email format invalid",
+            false,
+        ),
+        (
+            "type_error",
+            "TypeError",
+            "Expected string, got integer",
+            false,
+        ),
+        (
+            "runtime",
+            "RuntimeError",
+            "Database connection timeout",
+            true,
+        ),
+        (
+            "resource",
+            "ResourceError",
+            "Insufficient memory available",
+            true,
+        ),
+        (
+            "timeout",
+            "TaskTimeoutError",
+            "Task execution exceeded maximum allowed time",
+            true,
+        ),
+        (
+            "business_logic",
+            "BusinessLogicError",
+            "Order cannot be processed: payment method expired",
+            false,
+        ),
     ];
 
-    for (error_type, expected_error_type, expected_message, expected_retryable) in error_test_cases {
+    for (error_type, expected_error_type, expected_message, expected_retryable) in error_test_cases
+    {
         println!("Testing error type: {error_type}");
 
         let result = client
@@ -795,7 +848,9 @@ async fn test_comprehensive_error_scenario_workflow() {
                     "type_error" => assert_eq!(task_error.code.as_ref().unwrap(), "TYPE_MISMATCH"),
                     "runtime" => assert_eq!(task_error.code.as_ref().unwrap(), "DB_TIMEOUT"),
                     "resource" => assert_eq!(task_error.code.as_ref().unwrap(), "OUT_OF_MEMORY"),
-                    "business_logic" => assert_eq!(task_error.code.as_ref().unwrap(), "PAYMENT_EXPIRED"),
+                    "business_logic" => {
+                        assert_eq!(task_error.code.as_ref().unwrap(), "PAYMENT_EXPIRED")
+                    }
                     _ => {} // Other error types don't have specific codes
                 }
 
@@ -840,9 +895,29 @@ async fn test_enhanced_conditional_task_workflow() {
     // Test enhanced error scenarios
     let enhanced_test_cases = [
         ("succeed", true, None),
-        ("validation_error", false, Some(("TaskValidationError", "Invalid input format provided", false))),
-        ("timeout_error", false, Some(("TaskTimeoutError", "Task execution exceeded time limit", true))),
-        ("resource_error", false, Some(("ResourceError", "Insufficient memory available", true))),
+        (
+            "validation_error",
+            false,
+            Some((
+                "TaskValidationError",
+                "Invalid input format provided",
+                false,
+            )),
+        ),
+        (
+            "timeout_error",
+            false,
+            Some((
+                "TaskTimeoutError",
+                "Task execution exceeded time limit",
+                true,
+            )),
+        ),
+        (
+            "resource_error",
+            false,
+            Some(("ResourceError", "Insufficient memory available", true)),
+        ),
     ];
 
     for (command, should_succeed, error_info) in enhanced_test_cases {

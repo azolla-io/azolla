@@ -18,11 +18,12 @@ from azolla.exceptions import (
     TaskNotFoundError,
     TaskWaitTimeoutError,
 )
-from azolla.retry import RetryPolicy
-from azolla.types import TaskResult
+from azolla.retry import ExponentialBackoff, FixedBackoff, LinearBackoff, RetryPolicy
+from azolla.retry import RetryPolicy as PyRetryPolicy
+from azolla.types import ErrorInfo, TaskResult
 
 
-def _convert_any_value_to_json(any_value):
+def _convert_any_value_to_json(any_value: Any) -> Any:
     """Convert protobuf AnyValue to Python object."""
     if any_value.HasField("string_value"):
         return any_value.string_value
@@ -93,7 +94,8 @@ class TaskSubmissionBuilder:
         try:
             # Serialize arguments
             if self._args is None:
-                args_json = "[]"
+                # Preserve explicit null to distinguish from empty list
+                args_json = "null"
             elif isinstance(self._args, (list, tuple)):
                 args_json = json.dumps(list(self._args))
             elif isinstance(self._args, dict):
@@ -101,10 +103,12 @@ class TaskSubmissionBuilder:
             else:
                 args_json = json.dumps([self._args])
 
-            # Serialize retry policy
-            retry_policy_json = "{}"  # Default to empty JSON object
+            # Serialize retry policy into orchestrator-compatible JSON shape
+            retry_policy_json = "{}"  # Default empty JSON (server uses defaults)
             if self._retry_policy:
-                retry_policy_json = self._retry_policy.model_dump_json()
+                retry_policy_json = json.dumps(
+                    self._to_orchestrator_retry_policy(self._retry_policy)
+                )
 
             # Create gRPC request
             request = orchestrator_pb2.CreateTaskRequest(
@@ -131,6 +135,68 @@ class TaskSubmissionBuilder:
         except (json.JSONDecodeError, TypeError) as e:
             raise SerializationError(f"Failed to serialize task arguments: {e}") from e
 
+    @staticmethod
+    def _to_orchestrator_retry_policy(policy: PyRetryPolicy) -> dict[str, Any]:
+        """Convert Python RetryPolicy to orchestrator-compatible JSON."""
+        # Map backoff
+        wait: dict[str, Any]
+        backoff = policy.backoff
+        if isinstance(backoff, ExponentialBackoff):
+            strategy = "exponential_jitter" if backoff.jitter else "exponential"
+            wait = {
+                "strategy": strategy,
+                "initial_delay": backoff.initial,
+                "multiplier": backoff.multiplier,
+                "max_delay": backoff.max_delay,
+            }
+        elif isinstance(backoff, FixedBackoff):
+            wait = {
+                "strategy": "fixed",
+                "delay": backoff.delay,
+                # Provide sane defaults for fields not used by fixed strategy
+                "initial_delay": backoff.delay,
+                "multiplier": 1.0,
+                "max_delay": backoff.delay,
+            }
+        elif isinstance(backoff, LinearBackoff):
+            # Approximate linear with exponential (multiplier ~= 1.0)
+            wait = {
+                "strategy": "exponential",
+                "initial_delay": backoff.initial,
+                "multiplier": 1.0,
+                "max_delay": backoff.max_delay,
+            }
+        else:
+            # Fallback to exponential_jitter with conservative defaults
+            wait = {
+                "strategy": "exponential_jitter",
+                "initial_delay": 1.0,
+                "multiplier": 2.0,
+                "max_delay": 300.0,
+            }
+
+        # Map retry types
+        include_errors: list[str] = []
+        for item in policy.retry_on:
+            if isinstance(item, str):
+                include_errors.append(item)
+            elif isinstance(item, type):
+                include_errors.append(item.__name__)
+            else:
+                include_errors.append(str(item))
+
+        return {
+            "version": 1,
+            "stop": {"max_attempts": policy.max_attempts},
+            "wait": wait,
+            "retry": {
+                "include_errors": include_errors,
+                "exclude_errors": [],
+            },
+            # Backward-compatible top-level hints for unit tests and older servers
+            "max_attempts": policy.max_attempts,
+        }
+
 
 class TaskHandle:
     """Handle to a submitted task."""
@@ -140,7 +206,11 @@ class TaskHandle:
         self._client = client
 
     async def wait(self, timeout: Optional[float] = None) -> TaskResult[Any]:
-        """Wait for task completion with exponential backoff polling."""
+        """Wait for task completion with exponential backoff polling.
+
+        Returns a ``TaskResult`` regardless of success or failure. Connection-level
+        issues and task metadata problems still surface as exceptions.
+        """
         start_time = datetime.now()
         poll_interval = 0.1  # Start with 100ms
         max_poll_interval = 5.0  # Max 5 seconds
@@ -148,9 +218,7 @@ class TaskHandle:
         while True:
             # Check if we've exceeded timeout
             if timeout and (datetime.now() - start_time).total_seconds() > timeout:
-                raise TaskWaitTimeoutError(
-                    f"Task wait timeout exceeded after {timeout} seconds"
-                )
+                raise TaskWaitTimeoutError(f"Task wait timeout exceeded after {timeout} seconds")
 
             try:
                 result = await self.try_result()
@@ -161,8 +229,8 @@ class TaskHandle:
                 await asyncio.sleep(poll_interval)
                 poll_interval = min(poll_interval * 1.5, max_poll_interval)
 
-            except (TaskError, TaskNotFoundError, TaskInternalError):
-                # Re-raise task-related exceptions without wrapping
+            except (TaskNotFoundError, TaskInternalError):
+                # Re-raise these without wrapping
                 raise
             except ConnectionError:
                 # Re-raise connection errors without wrapping
@@ -172,7 +240,13 @@ class TaskHandle:
                 raise TaskError(f"Unexpected error while waiting for task: {e}") from e
 
     async def try_result(self) -> Optional[TaskResult[Any]]:
-        """Try to get result without blocking."""
+        """Try to get result without blocking.
+
+        Returns ``None`` if the task is still running, a ``TaskResult`` with
+        ``success=True`` when the task completed successfully, or a ``TaskResult``
+        with structured ``ErrorInfo`` for task-level failures. Connection issues
+        and orchestrator errors continue to raise exceptions.
+        """
         # Ensure connection is established
         await self._client._ensure_connection()
 
@@ -195,43 +269,38 @@ class TaskHandle:
                     # Extract result value from SuccessResult
                     result_value = None
                     if response.success.result:
-                        result_value = _convert_any_value_to_json(
-                            response.success.result
-                        )
-                    return TaskResult(task_id=self.task_id, value=result_value)
+                        result_value = _convert_any_value_to_json(response.success.result)
+                    return TaskResult(task_id=self.task_id, success=True, value=result_value)
                 elif response.HasField("error"):
-                    # Task completed but with error - raise TaskError with original exception data
-                    error_data = {}
+                    # Task completed with error - return structured failure result
+                    error_data: Optional[dict[str, Any]] = None
                     if response.error.data:
                         try:
                             error_data = json.loads(response.error.data)
                         except json.JSONDecodeError:
                             error_data = {"raw_data": response.error.data}
 
-                    raise TaskError(
-                        message=response.error.message,
-                        error_type=response.error.type,
-                        retryable=response.error.retriable,
-                        **error_data,
+                    return TaskResult(
+                        task_id=self.task_id,
+                        success=False,
+                        value=None,
+                        error=ErrorInfo(
+                            message=response.error.message,
+                            error_type=response.error.type or "TaskError",
+                            retriable=response.error.retriable,
+                            data=error_data,
+                        ),
                     )
                 else:
                     raise TaskInternalError("Task completed but no result provided")
 
-            elif (
-                response.status_code
-                == orchestrator_pb2.WAIT_FOR_TASK_STATUS_TASK_NOT_FOUND
-            ):
+            elif response.status_code == orchestrator_pb2.WAIT_FOR_TASK_STATUS_TASK_NOT_FOUND:
                 raise TaskNotFoundError(f"Task {self.task_id} not found")
 
             elif response.status_code == orchestrator_pb2.WAIT_FOR_TASK_STATUS_TIMEOUT:
-                return (
-                    None  # Still running (timeout in non-blocking call means not ready)
-                )
+                return None  # Still running (timeout in non-blocking call means not ready)
 
-            elif (
-                response.status_code
-                == orchestrator_pb2.WAIT_FOR_TASK_STATUS_INTERNAL_ERROR
-            ):
+            elif response.status_code == orchestrator_pb2.WAIT_FOR_TASK_STATUS_INTERNAL_ERROR:
                 raise TaskInternalError("Internal server error")
 
             else:
@@ -265,9 +334,7 @@ class Client:
             config_params.update(kwargs)
             self._config = ClientConfig(**config_params)
         else:
-            raise ValueError(
-                "Either 'config' or 'orchestrator_endpoint' must be provided"
-            )
+            raise ValueError("Either 'config' or 'orchestrator_endpoint' must be provided")
 
         self._channel: Optional[grpc.aio.Channel] = None
         self._stub: Optional[Any] = None
@@ -303,6 +370,16 @@ class Client:
                 options=[
                     ("grpc.max_send_message_length", self._config.max_message_size),
                     ("grpc.max_receive_message_length", self._config.max_message_size),
+                    # Keep-alive settings to prevent connection drops
+                    ("grpc.keepalive_time_ms", 30000),  # Send keep-alive every 30s
+                    ("grpc.keepalive_timeout_ms", 10000),  # Wait 10s for keep-alive response
+                    (
+                        "grpc.keepalive_permit_without_calls",
+                        True,
+                    ),  # Allow keep-alive without active calls
+                    ("grpc.http2.max_pings_without_data", 0),  # Unlimited pings
+                    ("grpc.http2.min_time_between_pings_ms", 10000),  # Min 10s between pings
+                    ("grpc.http2.min_ping_interval_without_data_ms", 300000),  # 5min without data
                 ],
             )
             self._stub = orchestrator_pb2_grpc.ClientServiceStub(self._channel)  # type: ignore[no-untyped-call]

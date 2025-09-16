@@ -14,7 +14,6 @@ class WaitForTaskStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     WAIT_FOR_TASK_STATUS_TIMEOUT: _ClassVar[WaitForTaskStatus]
     WAIT_FOR_TASK_STATUS_TASK_NOT_FOUND: _ClassVar[WaitForTaskStatus]
     WAIT_FOR_TASK_STATUS_INTERNAL_ERROR: _ClassVar[WaitForTaskStatus]
-
 WAIT_FOR_TASK_STATUS_UNSPECIFIED: WaitForTaskStatus
 WAIT_FOR_TASK_STATUS_COMPLETED: WaitForTaskStatus
 WAIT_FOR_TASK_STATUS_TIMEOUT: WaitForTaskStatus
@@ -22,15 +21,7 @@ WAIT_FOR_TASK_STATUS_TASK_NOT_FOUND: WaitForTaskStatus
 WAIT_FOR_TASK_STATUS_INTERNAL_ERROR: WaitForTaskStatus
 
 class CreateTaskRequest(_message.Message):
-    __slots__ = (
-        "name",
-        "domain",
-        "retry_policy",
-        "args",
-        "kwargs",
-        "flow_instance_id",
-        "shepherd_group",
-    )
+    __slots__ = ("name", "domain", "retry_policy", "args", "kwargs", "flow_instance_id", "shepherd_group")
     NAME_FIELD_NUMBER: _ClassVar[int]
     DOMAIN_FIELD_NUMBER: _ClassVar[int]
     RETRY_POLICY_FIELD_NUMBER: _ClassVar[int]
@@ -45,16 +36,7 @@ class CreateTaskRequest(_message.Message):
     kwargs: str
     flow_instance_id: str
     shepherd_group: str
-    def __init__(
-        self,
-        name: _Optional[str] = ...,
-        domain: _Optional[str] = ...,
-        retry_policy: _Optional[str] = ...,
-        args: _Optional[str] = ...,
-        kwargs: _Optional[str] = ...,
-        flow_instance_id: _Optional[str] = ...,
-        shepherd_group: _Optional[str] = ...,
-    ) -> None: ...
+    def __init__(self, name: _Optional[str] = ..., domain: _Optional[str] = ..., retry_policy: _Optional[str] = ..., args: _Optional[str] = ..., kwargs: _Optional[str] = ..., flow_instance_id: _Optional[str] = ..., shepherd_group: _Optional[str] = ...) -> None: ...
 
 class CreateTaskResponse(_message.Message):
     __slots__ = ("task_id",)
@@ -70,12 +52,7 @@ class WaitForTaskRequest(_message.Message):
     task_id: str
     domain: str
     timeout_ms: int
-    def __init__(
-        self,
-        task_id: _Optional[str] = ...,
-        domain: _Optional[str] = ...,
-        timeout_ms: _Optional[int] = ...,
-    ) -> None: ...
+    def __init__(self, task_id: _Optional[str] = ..., domain: _Optional[str] = ..., timeout_ms: _Optional[int] = ...) -> None: ...
 
 class WaitForTaskResponse(_message.Message):
     __slots__ = ("status_code", "success", "error")
@@ -85,12 +62,7 @@ class WaitForTaskResponse(_message.Message):
     status_code: WaitForTaskStatus
     success: _common_pb2.SuccessResult
     error: _common_pb2.ErrorResult
-    def __init__(
-        self,
-        status_code: _Optional[_Union[WaitForTaskStatus, str]] = ...,
-        success: _Optional[_Union[_common_pb2.SuccessResult, _Mapping]] = ...,
-        error: _Optional[_Union[_common_pb2.ErrorResult, _Mapping]] = ...,
-    ) -> None: ...
+    def __init__(self, status_code: _Optional[_Union[WaitForTaskStatus, str]] = ..., success: _Optional[_Union[_common_pb2.SuccessResult, _Mapping]] = ..., error: _Optional[_Union[_common_pb2.ErrorResult, _Mapping]] = ...) -> None: ...
 
 class CreateFlowRequest(_message.Message):
     __slots__ = ("name", "domain", "dag")
@@ -100,12 +72,7 @@ class CreateFlowRequest(_message.Message):
     name: str
     domain: str
     dag: str
-    def __init__(
-        self,
-        name: _Optional[str] = ...,
-        domain: _Optional[str] = ...,
-        dag: _Optional[str] = ...,
-    ) -> None: ...
+    def __init__(self, name: _Optional[str] = ..., domain: _Optional[str] = ..., dag: _Optional[str] = ...) -> None: ...
 
 class CreateFlowResponse(_message.Message):
     __slots__ = ("flow_id",)
@@ -119,9 +86,7 @@ class WaitForFlowRequest(_message.Message):
     DOMAIN_FIELD_NUMBER: _ClassVar[int]
     flow_id: str
     domain: str
-    def __init__(
-        self, flow_id: _Optional[str] = ..., domain: _Optional[str] = ...
-    ) -> None: ...
+    def __init__(self, flow_id: _Optional[str] = ..., domain: _Optional[str] = ...) -> None: ...
 
 class WaitForFlowResponse(_message.Message):
     __slots__ = ("status",)
@@ -139,13 +104,7 @@ class PublishTaskEventRequest(_message.Message):
     domain: str
     event_type: int
     metadata: str
-    def __init__(
-        self,
-        task_instance_id: _Optional[str] = ...,
-        domain: _Optional[str] = ...,
-        event_type: _Optional[int] = ...,
-        metadata: _Optional[str] = ...,
-    ) -> None: ...
+    def __init__(self, task_instance_id: _Optional[str] = ..., domain: _Optional[str] = ..., event_type: _Optional[int] = ..., metadata: _Optional[str] = ...) -> None: ...
 
 class PublishTaskEventResponse(_message.Message):
     __slots__ = ("success",)
@@ -163,13 +122,7 @@ class PublishFlowEventRequest(_message.Message):
     domain: str
     event_type: int
     metadata: str
-    def __init__(
-        self,
-        flow_instance_id: _Optional[str] = ...,
-        domain: _Optional[str] = ...,
-        event_type: _Optional[int] = ...,
-        metadata: _Optional[str] = ...,
-    ) -> None: ...
+    def __init__(self, flow_instance_id: _Optional[str] = ..., domain: _Optional[str] = ..., event_type: _Optional[int] = ..., metadata: _Optional[str] = ...) -> None: ...
 
 class PublishFlowEventResponse(_message.Message):
     __slots__ = ("success",)
@@ -187,13 +140,7 @@ class ClientMsg(_message.Message):
     ack: Ack
     status: Status
     task_result: _common_pb2.TaskResult
-    def __init__(
-        self,
-        hello: _Optional[_Union[Hello, _Mapping]] = ...,
-        ack: _Optional[_Union[Ack, _Mapping]] = ...,
-        status: _Optional[_Union[Status, _Mapping]] = ...,
-        task_result: _Optional[_Union[_common_pb2.TaskResult, _Mapping]] = ...,
-    ) -> None: ...
+    def __init__(self, hello: _Optional[_Union[Hello, _Mapping]] = ..., ack: _Optional[_Union[Ack, _Mapping]] = ..., status: _Optional[_Union[Status, _Mapping]] = ..., task_result: _Optional[_Union[_common_pb2.TaskResult, _Mapping]] = ...) -> None: ...
 
 class ServerMsg(_message.Message):
     __slots__ = ("task", "ping")
@@ -201,11 +148,7 @@ class ServerMsg(_message.Message):
     PING_FIELD_NUMBER: _ClassVar[int]
     task: _common_pb2.Task
     ping: Ping
-    def __init__(
-        self,
-        task: _Optional[_Union[_common_pb2.Task, _Mapping]] = ...,
-        ping: _Optional[_Union[Ping, _Mapping]] = ...,
-    ) -> None: ...
+    def __init__(self, task: _Optional[_Union[_common_pb2.Task, _Mapping]] = ..., ping: _Optional[_Union[Ping, _Mapping]] = ...) -> None: ...
 
 class Hello(_message.Message):
     __slots__ = ("shepherd_uuid", "max_concurrency", "domain", "shepherd_group")
@@ -217,13 +160,7 @@ class Hello(_message.Message):
     max_concurrency: int
     domain: str
     shepherd_group: str
-    def __init__(
-        self,
-        shepherd_uuid: _Optional[str] = ...,
-        max_concurrency: _Optional[int] = ...,
-        domain: _Optional[str] = ...,
-        shepherd_group: _Optional[str] = ...,
-    ) -> None: ...
+    def __init__(self, shepherd_uuid: _Optional[str] = ..., max_concurrency: _Optional[int] = ..., domain: _Optional[str] = ..., shepherd_group: _Optional[str] = ...) -> None: ...
 
 class Ack(_message.Message):
     __slots__ = ("task_id",)
@@ -237,11 +174,7 @@ class Status(_message.Message):
     AVAILABLE_CAPACITY_FIELD_NUMBER: _ClassVar[int]
     current_load: int
     available_capacity: int
-    def __init__(
-        self,
-        current_load: _Optional[int] = ...,
-        available_capacity: _Optional[int] = ...,
-    ) -> None: ...
+    def __init__(self, current_load: _Optional[int] = ..., available_capacity: _Optional[int] = ...) -> None: ...
 
 class Ping(_message.Message):
     __slots__ = ("timestamp",)
