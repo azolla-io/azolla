@@ -6,9 +6,16 @@
 
 #![cfg(feature = "test-harness")]
 
+use azolla::orchestrator::retry_policy::RetryPolicy as InternalRetryPolicy;
+use azolla::proto::common::RetryPolicy as ProtoRetryPolicy;
 use azolla::proto::orchestrator::CreateTaskRequest;
 use azolla::test_harness::IntegrationTestEnvironment;
 use serde_json::json;
+
+fn build_retry_policy(json: serde_json::Value) -> Option<ProtoRetryPolicy> {
+    let policy = InternalRetryPolicy::from_json(&json).expect("invalid retry policy json");
+    Some(policy.to_proto())
+}
 
 /// Tests the complete end-to-end retry mechanism.
 ///
@@ -482,16 +489,15 @@ impl RetryTestData {
             domain: "test".to_string(),
             args: serde_json::to_string(&Vec::<String>::new()).unwrap(),
             kwargs: r#"{"should_fail": true}"#.to_string(),
-            retry_policy: json!({
+            retry_policy: build_retry_policy(json!({
                 "version": 1,
                 "stop": {"max_attempts": 3},
                 "wait": {
                     "strategy": "fixed",
-                    "delay": 5.0  // 5 second delay for taskA
+                    "delay": 5.0
                 },
                 "retry": {"include_errors": ["TestError", "ValueError", "RuntimeError"]}
-            })
-            .to_string(),
+            })),
             flow_instance_id: None,
             shepherd_group: None,
         }
@@ -505,16 +511,15 @@ impl RetryTestData {
             domain: "test".to_string(),
             args: serde_json::to_string(&Vec::<String>::new()).unwrap(),
             kwargs: r#"{"should_fail": true}"#.to_string(),
-            retry_policy: json!({
+            retry_policy: build_retry_policy(json!({
                 "version": 1,
                 "stop": {"max_attempts": 3},
                 "wait": {
                     "strategy": "fixed",
-                    "delay": 1.0  // 1 second delay for predictable retry timing
+                    "delay": 1.0
                 },
                 "retry": {"include_errors": ["TestError", "ValueError", "RuntimeError"]}
-            })
-            .to_string(),
+            })),
             flow_instance_id: None,
             shepherd_group: None,
         }

@@ -203,8 +203,7 @@ Located in `clients/rust/azolla-client/`:
 # Run all Rust client tests (must run sequentially to avoid port conflicts)
 cargo test -- --test-threads=1
 
-# Run with strict CI-equivalent linting (catches all warnings as errors)
-cargo clippy --all-targets --all-features -- -D warnings
+# Note: See "Pre-Commit Validation" section below for strict CI-equivalent linting
 
 # Run tests with all features enabled (including macros)
 cargo test --all-features -- --test-threads=1
@@ -218,8 +217,7 @@ cargo test --test integration_tests -- --test-threads=1
 # Run only unit test suite
 cargo test --test unit_tests
 
-# Format code (must run before CI)
-cargo fmt
+# Note: See "Pre-Commit Validation" section below for complete CI-equivalent commands
 ```
 
 **Important Notes for Rust Client Tests:**
@@ -232,27 +230,43 @@ cargo fmt
 To ensure your changes pass CI, run these commands before committing:
 
 ```bash
-# Format code (required)
-cargo fmt
+# STEP 1: Auto-format code (fixes formatting issues)
+cargo fmt --all
+cd clients/rust/azolla-macros && cargo fmt --all
+cd clients/rust/azolla-client && cargo fmt --all
+cd ../../../  # Return to project root
 
-# Check for compilation errors with all features
+# STEP 2: Verify formatting matches CI exactly (strict check - must pass)
+cargo fmt --all -- --check
+cd clients/rust/azolla-macros && cargo fmt --all -- --check
+cd clients/rust/azolla-client && cargo fmt --all -- --check
+cd ../../../  # Return to project root
+
+# STEP 2.5: Check for compilation errors with all features
 cargo check --all-targets --all-features
 
-# Run strict linting (CI equivalent - treats warnings as errors)
+# STEP 3: Run strict linting (CI equivalent - treats warnings as errors)
 cargo clippy --all-targets --all-features -- -D warnings
 
-# Run all tests sequentially (required for integration tests)
+# STEP 4: Run client crate linting (CI equivalent)
+cd clients/rust/azolla-macros && cargo clippy --all-targets --all-features -- -D warnings
+cd clients/rust/azolla-client && cargo clippy --all-targets --all-features -- -D warnings
+cd ../../../  # Return to project root
+
+# STEP 5: Run all tests sequentially (required for integration tests)
 cargo test --all-features -- --test-threads=1
 
-# Verify macro functionality specifically
+# STEP 6: Verify macro functionality specifically
 cargo test --features macros -- --test-threads=1
 ```
 
 **CI Strictness:**
+- **Formatting enforcement**: CI uses `cargo fmt --check` which fails if any code is not perfectly formatted
 - **Warnings as errors**: `-D warnings` flag treats all warnings as compilation errors
 - **All features tested**: CI runs with `--all-features` to test macro functionality
 - **Clippy rules**: Stricter clippy rules than default local setup
 - **Feature gates**: Code using `azolla_task` must be behind `#[cfg(feature = "macros")]`
+- **Client crate isolation**: Each client crate (azolla-client, azolla-macros) has separate formatting/linting checks
 
 ### Test Environment Setup
 
@@ -347,13 +361,7 @@ This command performs an intelligent git commit by analyzing changes and followi
 1. **Analyze current state**: Run `git status` and `git diff` to understand all changes
 2. **Remove unnecessary comments**: Make sure no new comments are added for simple logic or self-explanatory code.
 3. **Stage relevant files**: Add untracked and modified files that should be committed
-4. **Linting**: Run linting commands for all relevant languages:
-   - **Rust**: Run `cargo fmt` and `cargo clippy`, accept formatting changes and fix violations
-   - **Python**: For Python client changes, run:
-     - `ruff check src tests --fix` (fix auto-fixable issues)
-     - `black src tests` (format code)
-     - `ruff check src tests` (verify all issues resolved)
-     - Run these from the `clients/python/` directory
+4. **Linting**: Follow the "Pre-Commit Validation (CI-Equivalent)" section above for complete commands
 5. **Generate commit message**: Create a commit message with a concise one-sentence title describing the main change. No other information should be added to the commit message.
 6. **Create commit**: Create the commit, never use the `--no-verify` option to bypass hooks and handle all pre-commit failures.
 

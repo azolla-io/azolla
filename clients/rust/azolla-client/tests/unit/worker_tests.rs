@@ -42,7 +42,7 @@ fn test_worker_config_default() {
     let config = WorkerConfig::default();
     assert_eq!(config.orchestrator_endpoint, "localhost:52710");
     assert_eq!(config.domain, "default");
-    assert_eq!(config.shepherd_group, "rust-workers");
+    assert_eq!(config.shepherd_group, "default");
     assert_eq!(config.max_concurrency, 10);
     assert_eq!(config.heartbeat_interval, Duration::from_secs(30));
 }

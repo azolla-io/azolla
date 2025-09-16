@@ -371,7 +371,11 @@ class TestE2EOrchestrator:
                 (None, 0, "null value"),
                 ("single_value", 1, "single string"),
                 ([1, 2.5, True, None], 4, "mixed type list"),
-                ({"nested": {"deep": "value"}, "array": [1, 2, 3]}, 2, "complex nested structure"),
+                (
+                    {"nested": {"deep": "value"}, "array": [1, 2, 3]},
+                    2,
+                    "complex nested structure",
+                ),
                 (42, 1, "single integer"),
                 (3.14159, 1, "single float"),
                 (True, 1, "single boolean"),
@@ -832,7 +836,10 @@ class TestE2EOrchestrator:
                         "metadata": {
                             "created_at": "2024-01-01T00:00:00Z",
                             "tags": ["integration", "test", "data_types"],
-                            "settings": {"theme": "dark", "notifications_enabled": False},
+                            "settings": {
+                                "theme": "dark",
+                                "notifications_enabled": False,
+                            },
                         },
                         "scores": [95.5, 87.2, 92.8],
                         "permissions": None,
@@ -848,7 +855,11 @@ class TestE2EOrchestrator:
                     list,
                 ),
                 (
-                    {"numbers": [1, 2, 3], "strings": ["a", "b"], "mixed": [1, "x", True]},
+                    {
+                        "numbers": [1, 2, 3],
+                        "strings": ["a", "b"],
+                        "mixed": [1, "x", True],
+                    },
                     "object_with_arrays",
                     dict,
                 ),
@@ -898,7 +909,11 @@ class TestE2EOrchestrator:
                     assert echoed_data["user_id"] == 12345
                     assert echoed_data["username"] == "test_user"
                     assert echoed_data["active"] is True
-                    assert echoed_data["metadata"]["tags"] == ["integration", "test", "data_types"]
+                    assert echoed_data["metadata"]["tags"] == [
+                        "integration",
+                        "test",
+                        "data_types",
+                    ]
                     assert echoed_data["metadata"]["settings"]["theme"] == "dark"
                     assert echoed_data["metadata"]["settings"]["notifications_enabled"] is False
                     assert echoed_data["scores"] == [95.5, 87.2, 92.8]
@@ -933,7 +948,10 @@ class TestE2EOrchestrator:
                     {"complex": {"nested": [1, 2, {"deep": True}]}, "array": [1, 2, 3]},
                     "complex_args_structure",
                 ),
-                ([{"a": 1}, {"b": [2, 3]}, {"c": {"d": 4}}], "array_of_complex_objects"),
+                (
+                    [{"a": 1}, {"b": [2, 3]}, {"c": {"d": 4}}],
+                    "array_of_complex_objects",
+                ),
                 (
                     {
                         "strings": ["hello", "world"],

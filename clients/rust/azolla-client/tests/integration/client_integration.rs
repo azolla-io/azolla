@@ -74,10 +74,16 @@ async fn test_client_connection_lifecycle() {
         .expect("Failed to set args")
         .shepherd_group("test-group");
 
-    // We expect this to fail since no tasks are registered, but connection should work
     let result = task_submission.submit().await;
-    // Connection succeeded if we get here, even if task execution fails
-    assert!(result.is_err()); // Expected - no task registered
+    // Submission should succeed even if no workers are registered
+    let handle = result.expect("Task submission should succeed without workers");
+
+    // Without workers, waiting on the task should time out rather than completing
+    let wait_outcome = tokio::time::timeout(Duration::from_millis(200), handle.wait()).await;
+    assert!(
+        wait_outcome.is_err(),
+        "Task wait unexpectedly completed without workers"
+    );
 }
 
 /// Test task submission with retry policy
@@ -132,7 +138,10 @@ async fn test_task_submission_with_args() {
         .expect("Failed to set args")
         .submit()
         .await;
-    assert!(simple_args_result.is_err()); // Expected - no task registered
+    assert!(simple_args_result
+        .as_ref()
+        .map(|handle| !handle.id().is_empty())
+        .unwrap_or(false));
 
     let complex_args_result = client
         .submit_task("test_task")
@@ -140,7 +149,10 @@ async fn test_task_submission_with_args() {
         .expect("Failed to set args")
         .submit()
         .await;
-    assert!(complex_args_result.is_err()); // Expected - no task registered
+    assert!(complex_args_result
+        .as_ref()
+        .map(|handle| !handle.id().is_empty())
+        .unwrap_or(false));
 
     let array_args_result = client
         .submit_task("test_task")
@@ -148,7 +160,10 @@ async fn test_task_submission_with_args() {
         .expect("Failed to set args")
         .submit()
         .await;
-    assert!(array_args_result.is_err()); // Expected - no task registered
+    assert!(array_args_result
+        .as_ref()
+        .map(|handle| !handle.id().is_empty())
+        .unwrap_or(false));
 }
 
 /// Test task submission with shepherd group
@@ -172,8 +187,10 @@ async fn test_task_submission_with_shepherd_group() {
         .submit()
         .await;
 
-    // Should fail but test shepherd group logic
-    assert!(result.is_err());
+    assert!(result
+        .as_ref()
+        .map(|handle| !handle.id().is_empty())
+        .unwrap_or(false));
 }
 
 /// Test task wait operations
@@ -197,8 +214,12 @@ async fn test_task_wait_operations() {
         .submit()
         .await;
 
-    // This will likely fail at submission, but tests the submission path
-    assert!(task_result.is_err());
+    let handle = task_result.expect("Task submission should succeed without workers");
+    let wait_outcome = tokio::time::timeout(Duration::from_millis(200), handle.wait()).await;
+    assert!(
+        wait_outcome.is_err(),
+        "Task wait unexpectedly completed without workers"
+    );
 }
 
 /// Test client connection timeouts in various scenarios
@@ -242,8 +263,11 @@ async fn test_task_submission_serialization_errors() {
         .submit()
         .await;
 
-    // Should fail due to no task registered, not serialization
-    assert!(result.is_err());
+    // Submission succeeds; serialization errors would surface before this point
+    assert!(result
+        .as_ref()
+        .map(|handle| !handle.id().is_empty())
+        .unwrap_or(false));
 }
 
 /// Test retry policy JSON serialization in submission
@@ -275,6 +299,9 @@ async fn test_retry_policy_serialization_in_submission() {
         .submit()
         .await;
 
-    // Should fail but test complex retry policy serialization
-    assert!(result.is_err());
+    // Submission should succeed even if task execution ultimately fails
+    assert!(result
+        .as_ref()
+        .map(|handle| !handle.id().is_empty())
+        .unwrap_or(false));
 }

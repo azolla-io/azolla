@@ -34,15 +34,3 @@ class TaskResult(BaseModel, Generic[T]):
     success: bool
     value: Optional[T] = None
     error: Optional[ErrorInfo] = None
-
-
-class TaskContext(BaseModel):
-    """Task execution context."""
-
-    task_id: str
-    attempt_number: int
-    max_attempts: Optional[int] = None
-
-    def is_final_attempt(self) -> bool:
-        """Check if this is the final retry attempt."""
-        return self.max_attempts is not None and self.attempt_number >= self.max_attempts

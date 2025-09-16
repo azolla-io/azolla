@@ -276,7 +276,7 @@ async fn main() -> Result<()> {
                 .long("shepherd-group")
                 .value_name("GROUP")
                 .help("Shepherd group (for service mode)")
-                .default_value("rust-workers"),
+                .default_value("default"),
         )
         .arg(
             Arg::new("max-concurrency")

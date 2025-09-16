@@ -6,13 +6,6 @@ use std::pin::Pin;
 
 pub type TaskResult = Result<Value, TaskError>;
 
-/// Task execution context
-pub struct TaskContext {
-    pub task_id: String,
-    pub attempt_number: u32,
-    pub max_attempts: Option<u32>,
-}
-
 /// Type-safe task trait with associated argument types
 pub trait Task: Send + Sync {
     /// The type of arguments this task expects
@@ -187,33 +180,6 @@ mod tests {
         ) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
             Box::pin(async move { Err(TaskError::execution_failed("Task intentionally failed")) })
         }
-    }
-
-    /// Test TaskContext creation and properties
-    #[test]
-    fn test_task_context_creation() {
-        let context = TaskContext {
-            task_id: "test-task-123".to_string(),
-            attempt_number: 1,
-            max_attempts: Some(3),
-        };
-
-        assert_eq!(context.task_id, "test-task-123");
-        assert_eq!(context.attempt_number, 1);
-        assert_eq!(context.max_attempts, Some(3));
-    }
-
-    /// Test TaskContext with no max attempts
-    #[test]
-    fn test_task_context_no_max_attempts() {
-        let context = TaskContext {
-            task_id: "unlimited-task".to_string(),
-            attempt_number: 5,
-            max_attempts: None,
-        };
-
-        assert_eq!(context.max_attempts, None);
-        assert_eq!(context.attempt_number, 5);
     }
 
     /// Test parse_args with empty arguments for unit type

@@ -6,7 +6,15 @@
 
 #![cfg(feature = "test-harness")]
 
+use azolla::orchestrator::retry_policy::RetryPolicy as InternalRetryPolicy;
+use azolla::proto::common::RetryPolicy as ProtoRetryPolicy;
 use azolla::test_harness::{IntegrationTestEnvironment, TaskTestData};
+use serde_json::json;
+
+fn build_retry_policy(json: serde_json::Value) -> Option<ProtoRetryPolicy> {
+    let policy = InternalRetryPolicy::from_json(&json).expect("invalid retry policy json");
+    Some(policy.to_proto())
+}
 
 /// Tests the complete end-to-end task execution flow.
 ///
@@ -259,7 +267,7 @@ async fn test_wait_for_task_with_failing_task() {
     let request = tonic::Request::new(azolla::proto::orchestrator::CreateTaskRequest {
         name: "always_fail".to_string(),
         domain: harness.shepherd_config.domain.clone(),
-        retry_policy: r#"{"stop": {"max_attempts": 1}}"#.to_string(),
+        retry_policy: build_retry_policy(json!({"stop": {"max_attempts": 1}})),
         args: r#"[]"#.to_string(),
         kwargs: r#"{"should_fail": true}"#.to_string(),
         flow_instance_id: None,
@@ -347,7 +355,7 @@ async fn test_wait_for_task_timeout_functionality() {
     let request = tonic::Request::new(azolla::proto::orchestrator::CreateTaskRequest {
         name: "slow_task".to_string(),
         domain: harness.shepherd_config.domain.clone(),
-        retry_policy: r#"{"stop": {"max_attempts": 1}}"#.to_string(),
+        retry_policy: build_retry_policy(json!({"stop": {"max_attempts": 1}})),
         args: r#"[]"#.to_string(),
         kwargs: r#"{"execution_time": 3.0}"#.to_string(), // 3 seconds execution time
         flow_instance_id: None,
@@ -498,9 +506,10 @@ async fn test_wait_for_task_with_complex_results() {
             if let Some(ref any_value) = success.result {
                 match &any_value.value {
                     Some(azolla::proto::common::any_value::Value::DoubleValue(d)) => {
+                        let expected = std::f64::consts::PI + 2.86;
                         assert!(
-                            (d - 6.0).abs() < 0.001,
-                            "Math result should be 6.0, got {d}"
+                            (d - expected).abs() < 0.001,
+                            "Math result should be {expected}, got {d}"
                         );
                     }
                     _ => panic!("Expected double value in math result, got: {any_value:?}"),
@@ -618,7 +627,7 @@ async fn test_concurrent_wait_for_task() {
     let request = tonic::Request::new(azolla::proto::orchestrator::CreateTaskRequest {
         name: "slow_task".to_string(),
         domain: harness.shepherd_config.domain.clone(),
-        retry_policy: r#"{"stop": {"max_attempts": 1}}"#.to_string(),
+        retry_policy: build_retry_policy(json!({"stop": {"max_attempts": 1}})),
         args: r#"[]"#.to_string(),
         kwargs: r#"{"execution_time": 2.0}"#.to_string(), // 2 seconds execution time
         flow_instance_id: None,

@@ -19,7 +19,7 @@ from azolla.exceptions import (
 )
 from azolla.retry import ExponentialBackoff, FixedBackoff, LinearBackoff, RetryPolicy
 from azolla.task import Task, azolla_task
-from azolla.types import TaskContext, TaskResult, TaskStatus
+from azolla.types import TaskResult, TaskStatus
 from azolla.worker import Worker, WorkerConfig
 
 __all__ = [
@@ -35,7 +35,6 @@ __all__ = [
     "RetryPolicy",
     "SerializationError",
     "Task",
-    "TaskContext",
     "TaskError",
     "TaskHandle",
     "TaskResult",

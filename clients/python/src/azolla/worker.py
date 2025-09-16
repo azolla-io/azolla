@@ -15,7 +15,6 @@ from pydantic import BaseModel, Field
 from azolla._grpc import common_pb2, orchestrator_pb2, orchestrator_pb2_grpc
 from azolla.exceptions import TaskError, WorkerError
 from azolla.task import Task
-from azolla.types import TaskContext
 
 logger = logging.getLogger(__name__)
 
@@ -666,16 +665,9 @@ class Worker:
                     ),
                 )
 
-            # Create task context
-            context = TaskContext(
-                task_id=task_id,
-                attempt_number=1,  # TODO: Get from retry info
-                max_attempts=None,  # TODO: Get from retry policy
-            )
-
             # Execute task
             logger.info(f"🚀 WORKER: About to execute task with args: {args}")
-            result = await task_impl._execute_with_casting(args, context)
+            result = await task_impl._execute_with_casting(args)
             execution_time = time.time() - start_time
 
             logger.info(

@@ -176,15 +176,12 @@ impl<'a> TaskSubmissionBuilder<'a> {
     /// Submit the task and get a handle
     pub async fn submit(self) -> Result<TaskHandle, AzollaError> {
         let args_json = serde_json::to_string(&self.args)?;
-        let retry_policy_json = match self.retry_policy {
-            Some(policy) => serde_json::to_string(&policy)?,
-            None => "{}".to_string(), // Send empty JSON object instead of empty string
-        };
+        let retry_policy_proto = self.retry_policy.map(|policy| policy.to_proto());
 
         let request = CreateTaskRequest {
             name: self.name.clone(),
             domain: self.client.inner.config.domain.clone(),
-            retry_policy: retry_policy_json,
+            retry_policy: retry_policy_proto,
             args: args_json,
             kwargs: "{}".to_string(), // Not used in Rust client
             flow_instance_id: None,
@@ -262,13 +259,12 @@ impl TaskHandle {
                                 error,
                             ),
                         ) => {
+                            let (code, data) = parse_error_payload(&error.data);
                             let task_error = TaskError {
                                 error_type: error.r#type.clone(),
                                 message: error.message.clone(),
-                                code: None,
-                                data: Some(serde_json::from_str(&error.data).unwrap_or_else(
-                                    |_| serde_json::Value::String(error.data.clone()),
-                                )),
+                                code,
+                                data,
                                 retryable: error.retriable,
                             };
                             return Ok(TaskExecutionResult::Failed(task_error));
@@ -334,14 +330,12 @@ impl TaskHandle {
                 Some(crate::proto::orchestrator::wait_for_task_response::ResultType::Error(
                     error,
                 )) => {
+                    let (code, data) = parse_error_payload(&error.data);
                     let task_error = TaskError {
                         error_type: error.r#type.clone(),
                         message: error.message.clone(),
-                        code: None,
-                        data: Some(
-                            serde_json::from_str(&error.data)
-                                .unwrap_or_else(|_| serde_json::Value::String(error.data.clone())),
-                        ),
+                        code,
+                        data,
                         retryable: error.retriable,
                     };
                     Ok(Some(TaskExecutionResult::Failed(task_error)))
@@ -359,6 +353,29 @@ impl TaskHandle {
             }
             _ => Ok(None), // Still running or unspecified status
         }
+    }
+}
+
+fn parse_error_payload(payload: &str) -> (Option<String>, Option<Value>) {
+    match serde_json::from_str::<Value>(payload) {
+        Ok(Value::Object(mut map)) => {
+            let code = map
+                .remove("code")
+                .and_then(|value| value.as_str().map(|s| s.to_string()));
+
+            let data_value = map.remove("data").or_else(|| {
+                if map.is_empty() {
+                    None
+                } else {
+                    Some(Value::Object(map))
+                }
+            });
+
+            (code, data_value)
+        }
+        Ok(Value::Null) => (None, None),
+        Ok(other) => (None, Some(other)),
+        Err(_) => (None, Some(Value::String(payload.to_string()))),
     }
 }
 
@@ -447,11 +464,17 @@ mod tests {
     #[test]
     fn test_task_submission_retry_policy_serialization() {
         let retry_policy = crate::retry_policy::RetryPolicy::default();
-        let serialized = serde_json::to_string(&retry_policy).unwrap();
+        let proto = retry_policy.to_proto();
 
-        // Verify it can be serialized and is not empty
-        assert!(!serialized.is_empty());
-        assert!(serialized.contains("max_attempts"));
+        // Verify structured proto fields are populated with defaults
+        assert_eq!(proto.version, 1);
+        assert_eq!(proto.stop.as_ref().and_then(|s| s.max_attempts), Some(5));
+        assert!(proto
+            .retry
+            .as_ref()
+            .unwrap()
+            .include_errors
+            .contains(&"ValueError".to_string()));
     }
 
     /// Test TaskSubmissionBuilder shepherd group configuration

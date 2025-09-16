@@ -701,7 +701,9 @@ async fn test_comprehensive_data_type_workflow() {
                         assert_eq!(value.as_i64().unwrap(), 42);
                     }
                     "float" => {
-                        assert!((value.as_f64().unwrap() - std::f64::consts::PI).abs() < f64::EPSILON);
+                        assert!(
+                            (value.as_f64().unwrap() - std::f64::consts::PI).abs() < f64::EPSILON
+                        );
                     }
                     "boolean_true" => {
                         assert!(value.as_bool().unwrap());

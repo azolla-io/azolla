@@ -7,10 +7,17 @@
 
 #![cfg(feature = "test-harness")]
 
+use azolla::orchestrator::retry_policy::RetryPolicy as InternalRetryPolicy;
+use azolla::proto::common::RetryPolicy as ProtoRetryPolicy;
 use azolla::proto::orchestrator::CreateTaskRequest;
 use azolla::test_harness::IntegrationTestEnvironment;
 use serde_json::json;
 use std::time::{Duration, Instant};
+
+fn build_retry_policy(json: serde_json::Value) -> Option<ProtoRetryPolicy> {
+    let policy = InternalRetryPolicy::from_json(&json).expect("invalid retry policy json");
+    Some(policy.to_proto())
+}
 
 /// Creates a task that always fails and has retry configuration for testing shutdown scenarios.
 ///
@@ -24,7 +31,7 @@ fn create_failing_task_with_long_retry() -> CreateTaskRequest {
         domain: "lifecycle_test".to_string(),
         args: serde_json::to_string(&Vec::<String>::new()).unwrap(),
         kwargs: r#"{"should_fail": true}"#.to_string(),
-        retry_policy: json!({
+        retry_policy: build_retry_policy(json!({
             "version": 1,
             "stop": {"max_attempts": 5},  // Multiple attempts to ensure retries
             "wait": {
@@ -32,8 +39,7 @@ fn create_failing_task_with_long_retry() -> CreateTaskRequest {
                 "delay": 60.0  // 60 second delay - ensures retries are pending during shutdown
             },
             "retry": {"include_errors": ["TestError", "ValueError", "RuntimeError"]}
-        })
-        .to_string(),
+        })),
         flow_instance_id: None,
         shepherd_group: None,
     }

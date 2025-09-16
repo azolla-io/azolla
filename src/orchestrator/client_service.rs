@@ -117,16 +117,17 @@ impl ClientService for ClientServiceImpl {
         info!("Creating task: {} in domain: {}", req.name, req.domain);
 
         let task_id = Uuid::new_v4();
-        let retry_policy: serde_json::Value = serde_json::from_str(&req.retry_policy)
-            .map_err(|e| Status::invalid_argument(format!("Invalid retry_policy JSON: {e}")))?;
-
-        // Validate retry policy
-        let parsed_retry_policy = RetryPolicy::from_json(&retry_policy)
-            .map_err(|e| Status::invalid_argument(format!("Invalid retry policy: {e}")))?;
+        let parsed_retry_policy = match req.retry_policy.as_ref() {
+            Some(policy) => RetryPolicy::from_proto(policy)
+                .map_err(|e| Status::invalid_argument(format!("Invalid retry policy: {e}")))?,
+            None => RetryPolicy::default(),
+        };
 
         parsed_retry_policy.validate().map_err(|e| {
             Status::invalid_argument(format!("Retry policy validation failed: {e}"))
         })?;
+        let retry_policy = serde_json::to_value(&parsed_retry_policy)
+            .map_err(|e| Status::internal(format!("Failed to serialize retry policy: {e}")))?;
         let kwargs: serde_json::Value = serde_json::from_str(&req.kwargs)
             .map_err(|e| Status::invalid_argument(format!("Invalid kwargs JSON: {e}")))?;
 

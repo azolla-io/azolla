@@ -1,6 +1,7 @@
+from google.protobuf.internal import containers as _containers
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from collections.abc import Mapping as _Mapping
+from collections.abc import Iterable as _Iterable, Mapping as _Mapping
 from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
@@ -18,6 +19,70 @@ class AnyValue(_message.Message):
     bool_value: bool
     json_value: str
     def __init__(self, string_value: _Optional[str] = ..., int_value: _Optional[int] = ..., double_value: _Optional[float] = ..., bool_value: bool = ..., json_value: _Optional[str] = ...) -> None: ...
+
+class RetryPolicyStop(_message.Message):
+    __slots__ = ("max_attempts", "max_delay")
+    MAX_ATTEMPTS_FIELD_NUMBER: _ClassVar[int]
+    MAX_DELAY_FIELD_NUMBER: _ClassVar[int]
+    max_attempts: int
+    max_delay: float
+    def __init__(self, max_attempts: _Optional[int] = ..., max_delay: _Optional[float] = ...) -> None: ...
+
+class RetryPolicyFixedWait(_message.Message):
+    __slots__ = ("delay",)
+    DELAY_FIELD_NUMBER: _ClassVar[int]
+    delay: float
+    def __init__(self, delay: _Optional[float] = ...) -> None: ...
+
+class RetryPolicyExponentialWait(_message.Message):
+    __slots__ = ("initial_delay", "multiplier", "max_delay")
+    INITIAL_DELAY_FIELD_NUMBER: _ClassVar[int]
+    MULTIPLIER_FIELD_NUMBER: _ClassVar[int]
+    MAX_DELAY_FIELD_NUMBER: _ClassVar[int]
+    initial_delay: float
+    multiplier: float
+    max_delay: float
+    def __init__(self, initial_delay: _Optional[float] = ..., multiplier: _Optional[float] = ..., max_delay: _Optional[float] = ...) -> None: ...
+
+class RetryPolicyExponentialJitterWait(_message.Message):
+    __slots__ = ("initial_delay", "multiplier", "max_delay")
+    INITIAL_DELAY_FIELD_NUMBER: _ClassVar[int]
+    MULTIPLIER_FIELD_NUMBER: _ClassVar[int]
+    MAX_DELAY_FIELD_NUMBER: _ClassVar[int]
+    initial_delay: float
+    multiplier: float
+    max_delay: float
+    def __init__(self, initial_delay: _Optional[float] = ..., multiplier: _Optional[float] = ..., max_delay: _Optional[float] = ...) -> None: ...
+
+class RetryPolicyWait(_message.Message):
+    __slots__ = ("fixed", "exponential", "exponential_jitter")
+    FIXED_FIELD_NUMBER: _ClassVar[int]
+    EXPONENTIAL_FIELD_NUMBER: _ClassVar[int]
+    EXPONENTIAL_JITTER_FIELD_NUMBER: _ClassVar[int]
+    fixed: RetryPolicyFixedWait
+    exponential: RetryPolicyExponentialWait
+    exponential_jitter: RetryPolicyExponentialJitterWait
+    def __init__(self, fixed: _Optional[_Union[RetryPolicyFixedWait, _Mapping]] = ..., exponential: _Optional[_Union[RetryPolicyExponentialWait, _Mapping]] = ..., exponential_jitter: _Optional[_Union[RetryPolicyExponentialJitterWait, _Mapping]] = ...) -> None: ...
+
+class RetryPolicyRetry(_message.Message):
+    __slots__ = ("include_errors", "exclude_errors")
+    INCLUDE_ERRORS_FIELD_NUMBER: _ClassVar[int]
+    EXCLUDE_ERRORS_FIELD_NUMBER: _ClassVar[int]
+    include_errors: _containers.RepeatedScalarFieldContainer[str]
+    exclude_errors: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, include_errors: _Optional[_Iterable[str]] = ..., exclude_errors: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class RetryPolicy(_message.Message):
+    __slots__ = ("version", "stop", "wait", "retry")
+    VERSION_FIELD_NUMBER: _ClassVar[int]
+    STOP_FIELD_NUMBER: _ClassVar[int]
+    WAIT_FIELD_NUMBER: _ClassVar[int]
+    RETRY_FIELD_NUMBER: _ClassVar[int]
+    version: int
+    stop: RetryPolicyStop
+    wait: RetryPolicyWait
+    retry: RetryPolicyRetry
+    def __init__(self, version: _Optional[int] = ..., stop: _Optional[_Union[RetryPolicyStop, _Mapping]] = ..., wait: _Optional[_Union[RetryPolicyWait, _Mapping]] = ..., retry: _Optional[_Union[RetryPolicyRetry, _Mapping]] = ...) -> None: ...
 
 class StructValue(_message.Message):
     __slots__ = ("json_data",)

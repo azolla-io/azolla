@@ -1,4 +1,11 @@
+use crate::proto::common::{
+    retry_policy_wait::Kind as ProtoWaitKind, RetryPolicy as ProtoRetryPolicy,
+    RetryPolicyExponentialJitterWait as ProtoExpJitterWait,
+    RetryPolicyExponentialWait as ProtoExpWait, RetryPolicyFixedWait as ProtoFixedWait,
+    RetryPolicyRetry as ProtoRetry, RetryPolicyStop as ProtoStop, RetryPolicyWait as ProtoWait,
+};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::time::Duration;
 
 /// Retry policy configuration  
@@ -38,6 +45,100 @@ impl RetryPolicy {
             delay: Duration::from_secs(0),
         })
         .max_attempts(1)
+    }
+
+    /// Convert the retry policy into the JSON structure expected by the orchestrator API
+    pub fn to_submission_json(&self) -> serde_json::Value {
+        let stop_max_delay_seconds = self.stop.max_delay.map(|delay| delay.as_secs_f64());
+
+        let stop = json!({
+            "max_attempts": self.stop.max_attempts,
+            "max_delay": stop_max_delay_seconds,
+        });
+
+        let wait = match &self.wait {
+            WaitStrategy::Fixed { delay } => json!({
+                "strategy": "fixed",
+                "delay": delay.as_secs_f64(),
+            }),
+            WaitStrategy::Exponential {
+                initial_delay,
+                multiplier,
+                max_delay,
+            } => json!({
+                "strategy": "exponential",
+                "initial_delay": initial_delay.as_secs_f64(),
+                "multiplier": *multiplier,
+                "max_delay": max_delay.as_secs_f64(),
+            }),
+            WaitStrategy::ExponentialJitter {
+                initial_delay,
+                multiplier,
+                max_delay,
+            } => json!({
+                "strategy": "exponential_jitter",
+                "initial_delay": initial_delay.as_secs_f64(),
+                "multiplier": *multiplier,
+                "max_delay": max_delay.as_secs_f64(),
+            }),
+        };
+
+        json!({
+            "version": self.version,
+            "stop": stop,
+            "wait": wait,
+            "retry": {
+                "include_errors": self.retry.include_errors.clone(),
+                "exclude_errors": self.retry.exclude_errors.clone(),
+            }
+        })
+    }
+
+    pub fn to_proto(&self) -> ProtoRetryPolicy {
+        let stop = ProtoStop {
+            max_attempts: self.stop.max_attempts,
+            max_delay: self.stop.max_delay.map(|d| d.as_secs_f64()),
+        };
+
+        let wait_kind = match &self.wait {
+            WaitStrategy::Fixed { delay } => ProtoWaitKind::Fixed(ProtoFixedWait {
+                delay: delay.as_secs_f64(),
+            }),
+            WaitStrategy::Exponential {
+                initial_delay,
+                multiplier,
+                max_delay,
+            } => ProtoWaitKind::Exponential(ProtoExpWait {
+                initial_delay: initial_delay.as_secs_f64(),
+                multiplier: *multiplier,
+                max_delay: max_delay.as_secs_f64(),
+            }),
+            WaitStrategy::ExponentialJitter {
+                initial_delay,
+                multiplier,
+                max_delay,
+            } => ProtoWaitKind::ExponentialJitter(ProtoExpJitterWait {
+                initial_delay: initial_delay.as_secs_f64(),
+                multiplier: *multiplier,
+                max_delay: max_delay.as_secs_f64(),
+            }),
+        };
+
+        let wait = ProtoWait {
+            kind: Some(wait_kind),
+        };
+
+        let retry = ProtoRetry {
+            include_errors: self.retry.include_errors.clone(),
+            exclude_errors: self.retry.exclude_errors.clone(),
+        };
+
+        ProtoRetryPolicy {
+            version: self.version,
+            stop: Some(stop),
+            wait: Some(wait),
+            retry: Some(retry),
+        }
     }
 }
 

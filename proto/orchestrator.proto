@@ -36,9 +36,7 @@ service ClusterService {
 message CreateTaskRequest {
   string name = 1;
   string domain = 2;
-  // Using string for JSON representation for simplicity in proto.
-  // The server will parse this into JSONB.
-  string retry_policy = 3; 
+  azolla.common.RetryPolicy retry_policy = 3;
   string args = 4; // JSON array of arguments for type safety
   string kwargs = 5;
   optional string flow_instance_id = 6;

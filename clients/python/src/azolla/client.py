@@ -9,7 +9,7 @@ from typing import Any, Callable, Optional, Union
 import grpc
 from pydantic import BaseModel, Field
 
-from azolla._grpc import orchestrator_pb2, orchestrator_pb2_grpc
+from azolla._grpc import common_pb2, orchestrator_pb2, orchestrator_pb2_grpc
 from azolla.exceptions import (
     ConnectionError,
     SerializationError,
@@ -103,23 +103,24 @@ class TaskSubmissionBuilder:
             else:
                 args_json = json.dumps([self._args])
 
-            # Serialize retry policy into orchestrator-compatible JSON shape
-            retry_policy_json = "{}"  # Default empty JSON (server uses defaults)
+            retry_policy_msg: Optional[common_pb2.RetryPolicy] = None
             if self._retry_policy:
-                retry_policy_json = json.dumps(
-                    self._to_orchestrator_retry_policy(self._retry_policy)
-                )
+                retry_policy_msg = self._to_proto_retry_policy(self._retry_policy)
 
             # Create gRPC request
-            request = orchestrator_pb2.CreateTaskRequest(
-                name=self._task_name,
-                domain=self._client._config.domain,
-                retry_policy=retry_policy_json,
-                args=args_json,
-                kwargs="{}",  # Not used in Python client
-                flow_instance_id=self._flow_instance_id,
-                shepherd_group=self._shepherd_group,
-            )
+            request_kwargs: dict[str, Any] = {
+                "name": self._task_name,
+                "domain": self._client._config.domain,
+                "args": args_json,
+                "kwargs": "{}",  # Not used in Python client
+                "flow_instance_id": self._flow_instance_id,
+                "shepherd_group": self._shepherd_group,
+            }
+
+            if retry_policy_msg is not None:
+                request_kwargs["retry_policy"] = retry_policy_msg
+
+            request = orchestrator_pb2.CreateTaskRequest(**request_kwargs)
 
             # Submit task
             if self._client._stub is None:
@@ -136,46 +137,46 @@ class TaskSubmissionBuilder:
             raise SerializationError(f"Failed to serialize task arguments: {e}") from e
 
     @staticmethod
-    def _to_orchestrator_retry_policy(policy: PyRetryPolicy) -> dict[str, Any]:
-        """Convert Python RetryPolicy to orchestrator-compatible JSON."""
-        # Map backoff
-        wait: dict[str, Any]
+    def _to_proto_retry_policy(policy: PyRetryPolicy) -> common_pb2.RetryPolicy:
+        """Convert Python RetryPolicy to orchestrator RetryPolicy proto."""
+        wait = common_pb2.RetryPolicyWait()
         backoff = policy.backoff
         if isinstance(backoff, ExponentialBackoff):
-            strategy = "exponential_jitter" if backoff.jitter else "exponential"
-            wait = {
-                "strategy": strategy,
-                "initial_delay": backoff.initial,
-                "multiplier": backoff.multiplier,
-                "max_delay": backoff.max_delay,
-            }
+            if backoff.jitter:
+                wait.exponential_jitter.CopyFrom(
+                    common_pb2.RetryPolicyExponentialJitterWait(
+                        initial_delay=backoff.initial,
+                        multiplier=backoff.multiplier,
+                        max_delay=backoff.max_delay,
+                    )
+                )
+            else:
+                wait.exponential.CopyFrom(
+                    common_pb2.RetryPolicyExponentialWait(
+                        initial_delay=backoff.initial,
+                        multiplier=backoff.multiplier,
+                        max_delay=backoff.max_delay,
+                    )
+                )
         elif isinstance(backoff, FixedBackoff):
-            wait = {
-                "strategy": "fixed",
-                "delay": backoff.delay,
-                # Provide sane defaults for fields not used by fixed strategy
-                "initial_delay": backoff.delay,
-                "multiplier": 1.0,
-                "max_delay": backoff.delay,
-            }
+            wait.fixed.CopyFrom(common_pb2.RetryPolicyFixedWait(delay=backoff.delay))
         elif isinstance(backoff, LinearBackoff):
-            # Approximate linear with exponential (multiplier ~= 1.0)
-            wait = {
-                "strategy": "exponential",
-                "initial_delay": backoff.initial,
-                "multiplier": 1.0,
-                "max_delay": backoff.max_delay,
-            }
+            wait.exponential.CopyFrom(
+                common_pb2.RetryPolicyExponentialWait(
+                    initial_delay=backoff.initial,
+                    multiplier=1.0,
+                    max_delay=backoff.max_delay,
+                )
+            )
         else:
-            # Fallback to exponential_jitter with conservative defaults
-            wait = {
-                "strategy": "exponential_jitter",
-                "initial_delay": 1.0,
-                "multiplier": 2.0,
-                "max_delay": 300.0,
-            }
+            wait.exponential_jitter.CopyFrom(
+                common_pb2.RetryPolicyExponentialJitterWait(
+                    initial_delay=1.0,
+                    multiplier=2.0,
+                    max_delay=300.0,
+                )
+            )
 
-        # Map retry types
         include_errors: list[str] = []
         for item in policy.retry_on:
             if isinstance(item, str):
@@ -184,18 +185,19 @@ class TaskSubmissionBuilder:
                 include_errors.append(item.__name__)
             else:
                 include_errors.append(str(item))
+        retry = common_pb2.RetryPolicyRetry(
+            include_errors=include_errors,
+            exclude_errors=list(policy.stop_on_codes),
+        )
 
-        return {
-            "version": 1,
-            "stop": {"max_attempts": policy.max_attempts},
-            "wait": wait,
-            "retry": {
-                "include_errors": include_errors,
-                "exclude_errors": [],
-            },
-            # Backward-compatible top-level hints for unit tests and older servers
-            "max_attempts": policy.max_attempts,
-        }
+        stop = common_pb2.RetryPolicyStop(max_attempts=policy.max_attempts)
+
+        return common_pb2.RetryPolicy(
+            version=1,
+            stop=stop,
+            wait=wait,
+            retry=retry,
+        )
 
 
 class TaskHandle:
@@ -372,14 +374,23 @@ class Client:
                     ("grpc.max_receive_message_length", self._config.max_message_size),
                     # Keep-alive settings to prevent connection drops
                     ("grpc.keepalive_time_ms", 30000),  # Send keep-alive every 30s
-                    ("grpc.keepalive_timeout_ms", 10000),  # Wait 10s for keep-alive response
+                    (
+                        "grpc.keepalive_timeout_ms",
+                        10000,
+                    ),  # Wait 10s for keep-alive response
                     (
                         "grpc.keepalive_permit_without_calls",
                         True,
                     ),  # Allow keep-alive without active calls
                     ("grpc.http2.max_pings_without_data", 0),  # Unlimited pings
-                    ("grpc.http2.min_time_between_pings_ms", 10000),  # Min 10s between pings
-                    ("grpc.http2.min_ping_interval_without_data_ms", 300000),  # 5min without data
+                    (
+                        "grpc.http2.min_time_between_pings_ms",
+                        10000,
+                    ),  # Min 10s between pings
+                    (
+                        "grpc.http2.min_ping_interval_without_data_ms",
+                        300000,
+                    ),  # 5min without data
                 ],
             )
             self._stub = orchestrator_pb2_grpc.ClientServiceStub(self._channel)  # type: ignore[no-untyped-call]

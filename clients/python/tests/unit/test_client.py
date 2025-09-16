@@ -125,11 +125,8 @@ class TestClient:
         await mock_client.submit_task("test").retry_policy(retry_policy).submit()
 
         call_args = mock_grpc_stub.CreateTask.call_args[0][0]
-        assert call_args.retry_policy != ""
-
-        # Should be valid JSON
-        retry_data = json.loads(call_args.retry_policy)
-        assert retry_data["max_attempts"] == 5
+        assert call_args.HasField("retry_policy")
+        assert call_args.retry_policy.stop.max_attempts == 5
 
 
 class TestTaskHandle:
@@ -363,7 +360,7 @@ class TestTaskResultRetrieval:
     async def test_validation_error_with_detailed_data(
         self, mock_client: Client, mock_grpc_stub
     ) -> None:
-        """Test TaskValidationError with detailed error data."""
+        """Test ValidationError with detailed error data."""
         error_data = {"field": "count", "value": -5, "expected": "positive integer"}
 
         error_result = common_pb2.ErrorResult(

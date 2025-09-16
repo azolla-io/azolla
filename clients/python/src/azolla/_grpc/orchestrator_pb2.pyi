@@ -31,12 +31,12 @@ class CreateTaskRequest(_message.Message):
     SHEPHERD_GROUP_FIELD_NUMBER: _ClassVar[int]
     name: str
     domain: str
-    retry_policy: str
+    retry_policy: _common_pb2.RetryPolicy
     args: str
     kwargs: str
     flow_instance_id: str
     shepherd_group: str
-    def __init__(self, name: _Optional[str] = ..., domain: _Optional[str] = ..., retry_policy: _Optional[str] = ..., args: _Optional[str] = ..., kwargs: _Optional[str] = ..., flow_instance_id: _Optional[str] = ..., shepherd_group: _Optional[str] = ...) -> None: ...
+    def __init__(self, name: _Optional[str] = ..., domain: _Optional[str] = ..., retry_policy: _Optional[_Union[_common_pb2.RetryPolicy, _Mapping]] = ..., args: _Optional[str] = ..., kwargs: _Optional[str] = ..., flow_instance_id: _Optional[str] = ..., shepherd_group: _Optional[str] = ...) -> None: ...
 
 class CreateTaskResponse(_message.Message):
     __slots__ = ("task_id",)
