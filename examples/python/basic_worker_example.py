@@ -10,7 +10,6 @@ from typing import Dict, Any, List, Optional
 
 from azolla import azolla_task, Task, Worker, WorkerConfig
 from azolla.exceptions import TaskError
-from azolla.types import TaskContext
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -62,12 +61,10 @@ class ProcessDataTask(Task):
                 raise ValueError(f"Operation must be one of: {allowed}")
             return v
     
-    async def execute(self, args: Args, context: Optional[TaskContext] = None) -> Dict[str, Any]:
+    async def execute(self, args: Args) -> Dict[str, Any]:
         """Execute the data processing task."""
         logger.info(f"🔄 Processing {len(args.data)} items with operation: {args.operation}")
         
-        if context:
-            logger.info(f"Task context - ID: {context.task_id}, Attempt: {context.attempt_number}")
         
         if args.operation == "sum":
             total = sum(item.get("value", 0) for item in args.data)

@@ -27,7 +27,7 @@ pub use client::{Client, ClientBuilder, TaskHandle, TaskSubmissionBuilder};
 pub use convert::{ConversionError, FromJsonValue};
 pub use error::{AzollaError, TaskError};
 pub use retry_policy::{RetryPolicy, RetryPolicyBuilder, StopCondition, WaitStrategy};
-pub use task::{BoxedTask, Task, TaskContext, TaskResult};
+pub use task::{BoxedTask, Task, TaskResult};
 pub use worker::{Worker, WorkerBuilder};
 
 // Re-export proc macro (only when macros feature is enabled)

@@ -46,6 +46,17 @@ pub struct TaskAttempt {
 }
 
 #[derive(Debug, Clone)]
+pub enum TaskResultValue {
+    Success(serde_json::Value),
+    Error {
+        error_type: String,
+        message: String,
+        data: serde_json::Value,
+        retriable: bool,
+    },
+}
+
+#[derive(Debug, Clone)]
 pub struct Task {
     pub id: Uuid,
     pub name: String,
@@ -57,6 +68,8 @@ pub struct Task {
     pub status: i16,
     pub attempts: Vec<TaskAttempt>,
     pub shepherd_group: Option<String>,
+    pub result: Option<TaskResultValue>,
+    pub result_stored_at: Option<DateTime<Utc>>,
 }
 
 impl Default for Task {
@@ -76,6 +89,9 @@ impl Task {
         self.kwargs = JsonValue::Null;
         self.status = 0;
         self.attempts.clear();
+        self.shepherd_group = None;
+        self.result = None;
+        self.result_stored_at = None;
     }
 
     pub fn is_empty(&self) -> bool {
@@ -94,6 +110,8 @@ impl Task {
             status: 0,
             attempts: Vec::new(),
             shepherd_group: None,
+            result: None,
+            result_stored_at: None,
         }
     }
 
@@ -254,6 +272,36 @@ impl TaskSet {
 
         due_tasks
     }
+
+    pub fn store_task_result(&mut self, task_id: Uuid, result: TaskResultValue) -> bool {
+        if let Some(task) = self.get_task_mut(task_id) {
+            task.result = Some(result);
+            task.result_stored_at = Some(Utc::now());
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn purge_old_results(&mut self, retention_duration: chrono::Duration) {
+        let cutoff_time = Utc::now() - retention_duration;
+
+        let tasks_to_remove: Vec<Uuid> = self
+            .tasks
+            .iter()
+            .filter(|task| !task.is_empty())
+            .filter(|task| {
+                task.result_stored_at
+                    .map(|stored_at| stored_at < cutoff_time)
+                    .unwrap_or(false)
+            })
+            .map(|task| task.id)
+            .collect();
+
+        for task_id in tasks_to_remove {
+            self.delete_task(task_id);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -400,6 +448,17 @@ impl TaskSetRegistry {
         }
 
         f(domains.get_mut(domain).unwrap())
+    }
+
+    pub fn store_task_result(&self, domain: &str, task_id: Uuid, result: TaskResultValue) -> bool {
+        self.with_domain_mut(domain, |taskset| taskset.store_task_result(task_id, result))
+    }
+
+    pub fn purge_old_results(&self, domain: &str, retention_duration: chrono::Duration) {
+        let mut domains = self.domains.lock().unwrap();
+        if let Some(taskset) = domains.get_mut(domain) {
+            taskset.purge_old_results(retention_duration);
+        }
     }
 
     pub fn with_domain<F, R>(&self, domain: &str, f: F) -> Option<R>
@@ -667,6 +726,8 @@ impl TaskSetRegistry {
                             status: row.get("status"),
                             attempts: Vec::new(),
                             shepherd_group: None,
+                            result: None,
+                            result_stored_at: None,
                         };
                         task_set.upsert_task(task);
                     }
@@ -943,6 +1004,8 @@ mod tests {
             status: 1,
             attempts: Vec::new(),
             shepherd_group: None,
+            result: None,
+            result_stored_at: None,
         };
 
         task_set.upsert_task(task);
@@ -968,6 +1031,8 @@ mod tests {
             status: 1,
             attempts: Vec::new(),
             shepherd_group: None,
+            result: None,
+            result_stored_at: None,
         };
 
         task_set.upsert_task(task);
@@ -996,6 +1061,8 @@ mod tests {
             status: 1,
             attempts: Vec::new(),
             shepherd_group: None,
+            result: None,
+            result_stored_at: None,
         };
 
         task_set.upsert_task(task1);
@@ -1013,6 +1080,8 @@ mod tests {
             status: 1,
             attempts: Vec::new(),
             shepherd_group: None,
+            result: None,
+            result_stored_at: None,
         };
 
         task_set.upsert_task(task2);
@@ -1128,5 +1197,262 @@ mod tests {
 
         // Should not exceed 2.0 second limit
         assert!(!task.has_exceeded_max_delay(Some(2.0)));
+    }
+
+    #[test]
+    fn test_store_task_result_success() {
+        let mut task_set = TaskSet::new("test_domain".to_string());
+
+        let task_id = Uuid::new_v4();
+        let task = Task {
+            id: task_id,
+            name: "test_task".to_string(),
+            created_at: Utc::now(),
+            flow_instance_id: None,
+            retry_policy: JsonValue::Null,
+            args: String::new(),
+            kwargs: JsonValue::Null,
+            status: 1,
+            attempts: Vec::new(),
+            shepherd_group: None,
+            result: None,
+            result_stored_at: None,
+        };
+
+        task_set.upsert_task(task);
+
+        let result_value = TaskResultValue::Success(serde_json::json!({"output": "test success"}));
+        let success = task_set.store_task_result(task_id, result_value.clone());
+
+        assert!(success);
+
+        let stored_task = task_set.get_task(task_id).unwrap();
+        assert!(stored_task.result.is_some());
+        assert!(stored_task.result_stored_at.is_some());
+
+        match &stored_task.result {
+            Some(TaskResultValue::Success(data)) => {
+                assert_eq!(data, &serde_json::json!({"output": "test success"}));
+            }
+            _ => panic!("Expected success result"),
+        }
+    }
+
+    #[test]
+    fn test_store_task_result_error() {
+        let mut task_set = TaskSet::new("test_domain".to_string());
+
+        let task_id = Uuid::new_v4();
+        let task = Task {
+            id: task_id,
+            name: "test_task".to_string(),
+            created_at: Utc::now(),
+            flow_instance_id: None,
+            retry_policy: JsonValue::Null,
+            args: String::new(),
+            kwargs: JsonValue::Null,
+            status: 1,
+            attempts: Vec::new(),
+            shepherd_group: None,
+            result: None,
+            result_stored_at: None,
+        };
+
+        task_set.upsert_task(task);
+
+        let result_value = TaskResultValue::Error {
+            error_type: "ValueError".to_string(),
+            message: "Invalid input".to_string(),
+            data: serde_json::json!({"error_code": 400}),
+            retriable: false,
+        };
+
+        let success = task_set.store_task_result(task_id, result_value.clone());
+
+        assert!(success);
+
+        let stored_task = task_set.get_task(task_id).unwrap();
+        assert!(stored_task.result.is_some());
+        assert!(stored_task.result_stored_at.is_some());
+
+        match &stored_task.result {
+            Some(TaskResultValue::Error {
+                error_type,
+                message,
+                data,
+                retriable,
+            }) => {
+                assert_eq!(error_type, "ValueError");
+                assert_eq!(message, "Invalid input");
+                assert_eq!(data, &serde_json::json!({"error_code": 400}));
+                assert!(!retriable);
+            }
+            _ => panic!("Expected error result"),
+        }
+    }
+
+    #[test]
+    fn test_store_task_result_nonexistent_task() {
+        let mut task_set = TaskSet::new("test_domain".to_string());
+
+        let task_id = Uuid::new_v4();
+        let result_value = TaskResultValue::Success(serde_json::json!({"output": "test"}));
+
+        let success = task_set.store_task_result(task_id, result_value);
+
+        assert!(!success);
+    }
+
+    #[test]
+    fn test_purge_old_results() {
+        let mut task_set = TaskSet::new("test_domain".to_string());
+
+        // Create two tasks
+        let task1_id = Uuid::new_v4();
+        let task2_id = Uuid::new_v4();
+
+        let task1 = Task {
+            id: task1_id,
+            name: "task1".to_string(),
+            created_at: Utc::now(),
+            flow_instance_id: None,
+            retry_policy: JsonValue::Null,
+            args: String::new(),
+            kwargs: JsonValue::Null,
+            status: 1,
+            attempts: Vec::new(),
+            shepherd_group: None,
+            result: Some(TaskResultValue::Success(
+                serde_json::json!({"output": "task1"}),
+            )),
+            result_stored_at: Some(Utc::now() - chrono::Duration::hours(2)), // 2 hours ago
+        };
+
+        let task2 = Task {
+            id: task2_id,
+            name: "task2".to_string(),
+            created_at: Utc::now(),
+            flow_instance_id: None,
+            retry_policy: JsonValue::Null,
+            args: String::new(),
+            kwargs: JsonValue::Null,
+            status: 1,
+            attempts: Vec::new(),
+            shepherd_group: None,
+            result: Some(TaskResultValue::Success(
+                serde_json::json!({"output": "task2"}),
+            )),
+            result_stored_at: Some(Utc::now() - chrono::Duration::minutes(30)), // 30 minutes ago
+        };
+
+        task_set.upsert_task(task1);
+        task_set.upsert_task(task2);
+
+        assert_eq!(task_set.len(), 2);
+
+        // Purge tasks older than 1 hour
+        task_set.purge_old_results(chrono::Duration::hours(1));
+
+        // Only task1 should be purged (2 hours old), task2 should remain (30 minutes old)
+        assert_eq!(task_set.len(), 1);
+        assert!(task_set.get_task(task1_id).is_none());
+        assert!(task_set.get_task(task2_id).is_some());
+    }
+
+    #[test]
+    fn test_purge_old_results_no_result_stored_at() {
+        let mut task_set = TaskSet::new("test_domain".to_string());
+
+        let task_id = Uuid::new_v4();
+        let task = Task {
+            id: task_id,
+            name: "test_task".to_string(),
+            created_at: Utc::now(),
+            flow_instance_id: None,
+            retry_policy: JsonValue::Null,
+            args: String::new(),
+            kwargs: JsonValue::Null,
+            status: 1,
+            attempts: Vec::new(),
+            shepherd_group: None,
+            result: Some(TaskResultValue::Success(
+                serde_json::json!({"output": "test"}),
+            )),
+            result_stored_at: None, // No result_stored_at
+        };
+
+        task_set.upsert_task(task);
+        assert_eq!(task_set.len(), 1);
+
+        // Purge should not affect tasks without result_stored_at
+        task_set.purge_old_results(chrono::Duration::hours(1));
+
+        assert_eq!(task_set.len(), 1);
+        assert!(task_set.get_task(task_id).is_some());
+    }
+
+    #[test]
+    fn test_task_set_registry_store_result() {
+        let registry = TaskSetRegistry::new();
+
+        let domain = "test_domain";
+        let task_id = Uuid::new_v4();
+        let task = Task {
+            id: task_id,
+            name: "test_task".to_string(),
+            created_at: Utc::now(),
+            flow_instance_id: None,
+            retry_policy: JsonValue::Null,
+            args: String::new(),
+            kwargs: JsonValue::Null,
+            status: 1,
+            attempts: Vec::new(),
+            shepherd_group: None,
+            result: None,
+            result_stored_at: None,
+        };
+
+        registry.upsert_task(domain, task);
+
+        let result_value = TaskResultValue::Success(serde_json::json!({"output": "registry test"}));
+        let success = registry.store_task_result(domain, task_id, result_value);
+
+        assert!(success);
+
+        let stored_task = registry.get_task(domain, task_id).unwrap();
+        assert!(stored_task.result.is_some());
+        assert!(stored_task.result_stored_at.is_some());
+    }
+
+    #[test]
+    fn test_task_set_registry_purge_old_results() {
+        let registry = TaskSetRegistry::new();
+
+        let domain = "test_domain";
+        let task_id = Uuid::new_v4();
+        let task = Task {
+            id: task_id,
+            name: "test_task".to_string(),
+            created_at: Utc::now(),
+            flow_instance_id: None,
+            retry_policy: JsonValue::Null,
+            args: String::new(),
+            kwargs: JsonValue::Null,
+            status: 1,
+            attempts: Vec::new(),
+            shepherd_group: None,
+            result: Some(TaskResultValue::Success(
+                serde_json::json!({"output": "test"}),
+            )),
+            result_stored_at: Some(Utc::now() - chrono::Duration::hours(2)), // 2 hours ago
+        };
+
+        registry.upsert_task(domain, task);
+        assert_eq!(registry.len(domain), 1);
+
+        // Purge tasks older than 1 hour
+        registry.purge_old_results(domain, chrono::Duration::hours(1));
+
+        assert_eq!(registry.len(domain), 0);
     }
 }

@@ -2,6 +2,7 @@
 //! Tests retry policy configuration, serialization, and behavior
 
 use azolla_client::retry_policy::{RetryPolicy, WaitStrategy};
+use serde_json::json;
 use std::time::Duration;
 
 /// Test RetryPolicy default implementation
@@ -101,6 +102,52 @@ fn test_retry_policy_serialization() {
         policy.retry.include_errors,
         deserialized.retry.include_errors
     );
+}
+
+/// Test JSON payload conversion for orchestrator submission
+#[test]
+fn test_retry_policy_submission_json_conversion() {
+    let policy = RetryPolicy::builder()
+        .max_attempts(3)
+        .max_delay(Duration::from_secs(90))
+        .initial_delay(Duration::from_millis(250))
+        .retry_on(&["NetworkError", "TimeoutError"])
+        .exclude_errors(&["FatalError"])
+        .build();
+
+    let submission_json = policy.to_submission_json();
+
+    assert_eq!(submission_json["version"], json!(1));
+    assert_eq!(submission_json["stop"]["max_attempts"], json!(3));
+    assert_eq!(submission_json["stop"]["max_delay"], json!(90.0));
+    assert_eq!(
+        submission_json["wait"]["strategy"],
+        json!("exponential_jitter")
+    );
+    assert_eq!(submission_json["wait"]["initial_delay"], json!(0.25));
+    assert_eq!(submission_json["wait"]["multiplier"], json!(2.0));
+    assert_eq!(submission_json["wait"]["max_delay"], json!(300.0));
+    assert_eq!(
+        submission_json["retry"]["include_errors"],
+        json!(["NetworkError", "TimeoutError"])
+    );
+    assert_eq!(
+        submission_json["retry"]["exclude_errors"],
+        json!(["FatalError"])
+    );
+}
+
+/// Test fixed wait strategy conversion to submission JSON
+#[test]
+fn test_fixed_wait_strategy_submission_json_conversion() {
+    let policy = RetryPolicy::fixed(Duration::from_secs(5))
+        .retry_on(&["TransientError"])
+        .build();
+
+    let submission_json = policy.to_submission_json();
+
+    assert_eq!(submission_json["wait"]["strategy"], json!("fixed"));
+    assert_eq!(submission_json["wait"]["delay"], json!(5.0));
 }
 
 /// Test RetryPolicy with no retry (disabled)

@@ -61,7 +61,7 @@ impl Default for WorkerConfig {
         Self {
             orchestrator_endpoint: "localhost:52710".to_string(),
             domain: "default".to_string(),
-            shepherd_group: "rust-workers".to_string(),
+            shepherd_group: "default".to_string(),
             max_concurrency: 10,
             heartbeat_interval: Duration::from_secs(30),
         }
@@ -178,7 +178,12 @@ impl Worker {
 
     /// Connect to the orchestrator
     async fn connect(&self) -> Result<ClusterServiceClient<Channel>, AzollaError> {
-        let endpoint = format!("http://{}", self.config.orchestrator_endpoint);
+        let endpoint = if self.config.orchestrator_endpoint.contains("://") {
+            self.config.orchestrator_endpoint.clone()
+        } else {
+            format!("http://{}", self.config.orchestrator_endpoint)
+        };
+
         let client = ClusterServiceClient::connect(endpoint).await.map_err(|e| {
             AzollaError::ConnectionError(format!("Failed to connect to orchestrator: {e}"))
         })?;
@@ -338,18 +343,37 @@ impl Worker {
             },
             Err(e) => {
                 log::error!("Task {task_id} failed: {e}");
+
+                let crate::error::TaskError {
+                    error_type,
+                    message,
+                    code,
+                    data,
+                    retryable,
+                } = e;
+
+                let mut payload = serde_json::Map::new();
+                if let Some(code_value) = code {
+                    payload.insert("code".to_string(), Value::String(code_value));
+                }
+                if let Some(data_value) = data {
+                    payload.insert("data".to_string(), data_value);
+                }
+
+                let data_json = if payload.is_empty() {
+                    "{}".to_string()
+                } else {
+                    Value::Object(payload).to_string()
+                };
+
                 ProtoTaskResult {
                     task_id,
                     result_type: Some(crate::proto::common::task_result::ResultType::Error(
                         ErrorResult {
-                            r#type: e.error_type().to_string(),
-                            message: e.to_string(),
-                            data: e
-                                .data
-                                .as_ref()
-                                .and_then(|d| serde_json::to_string(d).ok())
-                                .unwrap_or_else(|| "{}".to_string()),
-                            retriable: e.retryable,
+                            r#type: error_type,
+                            message,
+                            data: data_json,
+                            retriable: retryable,
                         },
                     )),
                 }

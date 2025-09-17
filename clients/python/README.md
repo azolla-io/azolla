@@ -170,22 +170,6 @@ linear_retry = RetryPolicy(
 )
 ```
 
-### Task Context and Metadata
-
-```python
-from azolla import TaskContext
-
-@azolla_task  
-async def process_order(order_id: str, context: TaskContext = None) -> dict:
-    """Process an order with context information."""
-    print(f"Processing order {order_id} (attempt {context.attempt_number})")
-    
-    if context.is_final_attempt():
-        print("This is the final retry attempt!")
-    
-    # Your processing logic
-    return {"order_id": order_id, "status": "processed"}
-```
 
 ### Error Handling
 

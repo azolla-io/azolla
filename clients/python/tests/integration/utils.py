@@ -14,6 +14,7 @@ import os
 import signal
 import socket
 import subprocess
+import sys
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -61,7 +62,11 @@ class ProcessManager:
     """Manages a subprocess with logging and cleanup."""
 
     def __init__(
-        self, name: str, cmd: list[str], cwd: Optional[Path] = None, env: Optional[dict] = None
+        self,
+        name: str,
+        cmd: list[str],
+        cwd: Optional[Path] = None,
+        env: Optional[dict] = None,
     ):
         self.name = name
         self.cmd = cmd
@@ -184,11 +189,14 @@ class OrchestratorManager:
         self.env = {
             "AZOLLA__DATABASE__URL": "postgres://postgres:postgres@localhost:5432/azolla",
             "RUST_LOG": "info",
-            "AZOLLA_CLUSTER_BIND": f"0.0.0.0:{self.port}",
+            "AZOLLA__SERVER__PORT": str(self.port),
         }
 
         self.process_manager = ProcessManager(
-            name="orchestrator", cmd=[str(self.binary_path)], cwd=self.project_root, env=self.env
+            name="orchestrator",
+            cmd=[str(self.binary_path)],
+            cwd=self.project_root,
+            env=self.env,
         )
 
     def _find_orchestrator_binary(self) -> Path:
@@ -271,7 +279,7 @@ class WorkerManager:
         log_dir.mkdir(exist_ok=True)
 
         cmd = [
-            "python3",
+            sys.executable,  # Use the same Python interpreter as the test
             str(self.worker_script),
             "--mode",
             "service",
@@ -286,14 +294,19 @@ class WorkerManager:
 
         worker_env = os.environ.copy()
 
-        # Add the src directory to PYTHONPATH for the worker process
+        # Add the src directory and grpc directory to PYTHONPATH for the worker process
         # Path: tests/integration/bin/test_worker.py -> ../../src
         azolla_src_dir = str(self.worker_script.parent.parent.parent.parent / "src")
+        azolla_grpc_dir = str(
+            self.worker_script.parent.parent.parent.parent / "src" / "azolla" / "_grpc"
+        )
         existing_pythonpath = worker_env.get("PYTHONPATH", "")
+
+        # Build PYTHONPATH with both src and _grpc directories
+        pythonpath_parts = [azolla_src_dir, azolla_grpc_dir]
         if existing_pythonpath:
-            worker_env["PYTHONPATH"] = f"{azolla_src_dir}:{existing_pythonpath}"
-        else:
-            worker_env["PYTHONPATH"] = azolla_src_dir
+            pythonpath_parts.append(existing_pythonpath)
+        worker_env["PYTHONPATH"] = ":".join(pythonpath_parts)
 
         logger.info(f"Setting worker PYTHONPATH to: {worker_env['PYTHONPATH']}")
         logger.info(f"Azolla src directory: {azolla_src_dir}")
@@ -309,7 +322,10 @@ class WorkerManager:
             )
 
         worker = ProcessManager(
-            name=f"worker-{worker_id}", cmd=cmd, cwd=self.worker_script.parent, env=worker_env
+            name=f"worker-{worker_id}",
+            cmd=cmd,
+            cwd=self.worker_script.parent,
+            env=worker_env,
         )
 
         # Set up log files
@@ -340,6 +356,8 @@ class WorkerManager:
         ready_indicators = [
             "registered successfully",
             "Worker started successfully and connected to orchestrator",
+            "Worker is now READY to receive tasks",
+            "First server message received - marking worker as READY",
         ]
 
         while time.time() - start_time < timeout:

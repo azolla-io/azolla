@@ -3,7 +3,7 @@ repos:
     hooks:
       - id: cargo-fmt
         name: cargo fmt
-        entry: cargo fmt
+        entry: bash -c 'cargo fmt --all -- --check'
         language: system
         types: [rust]
         pass_filenames: false
@@ -12,6 +12,30 @@ repos:
         entry: cargo clippy --all-targets --all-features -- -D warnings
         language: system
         types: [rust]
+        pass_filenames: false
+      - id: rust-client-fmt-macros
+        name: cargo fmt (azolla-macros)
+        entry: bash -c 'cd clients/rust/azolla-macros && cargo fmt --all -- --check'
+        language: system
+        files: ^clients/rust/azolla-macros/.*\.rs$
+        pass_filenames: false
+      - id: rust-client-clippy-macros
+        name: cargo clippy (azolla-macros)
+        entry: bash -c 'cd clients/rust/azolla-macros && cargo clippy --all-targets --all-features -- -D warnings'
+        language: system
+        files: ^clients/rust/azolla-macros/.*\.rs$
+        pass_filenames: false
+      - id: rust-client-fmt-client
+        name: cargo fmt (azolla-client)
+        entry: bash -c 'cd clients/rust/azolla-client && cargo fmt --all -- --check'
+        language: system
+        files: ^clients/rust/azolla-client/.*\.rs$
+        pass_filenames: false
+      - id: rust-client-clippy-client
+        name: cargo clippy (azolla-client)
+        entry: bash -c 'cd clients/rust/azolla-client && cargo clippy --all-targets --all-features -- -D warnings'
+        language: system
+        files: ^clients/rust/azolla-client/.*\.rs$
         pass_filenames: false
       - id: python-ruff-check
         name: ruff check

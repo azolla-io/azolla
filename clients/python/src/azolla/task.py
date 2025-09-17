@@ -8,8 +8,7 @@ from typing import Any, Callable, Optional, Union, get_type_hints
 from pydantic import BaseModel, create_model
 from pydantic import ValidationError as PydanticValidationError
 
-from azolla.exceptions import TaskValidationError
-from azolla.types import TaskContext
+from azolla.exceptions import ValidationError
 
 
 class Task(ABC):
@@ -24,28 +23,29 @@ class Task(ABC):
         super().__init_subclass__()
 
     @abstractmethod
-    async def execute(self, args: Any, context: Optional[TaskContext] = None) -> Any:
+    async def execute(self, args: Any) -> Any:
         """Execute the task with typed arguments."""
         pass
 
     async def _execute_with_casting(
-        self, raw_args: Union[dict[str, Any], list[Any]], context: Optional[TaskContext] = None
+        self,
+        raw_args: Union[dict[str, Any], list[Any]],
     ) -> Any:
         """Internal method that handles automatic casting."""
         if self._args_type:
             try:
                 typed_args = self.parse_args(raw_args)
             except Exception as e:
-                raise TaskValidationError(f"Failed to parse task arguments: {e}") from e
-            return await self.execute(typed_args, context)
+                raise ValidationError(f"Failed to parse task arguments: {e}") from e
+            return await self.execute(typed_args)
         # No typed Args model: pass through raw args unchanged
-        return await self.execute(raw_args, context)
+        return await self.execute(raw_args)
 
     @classmethod
     def parse_args(cls, json_args: Union[list[Any], dict[str, Any]]) -> BaseModel:
         """Parse JSON arguments into typed arguments."""
         if not cls._args_type:
-            raise TaskValidationError("Task has no Args type defined")
+            raise ValidationError("Task has no Args type defined")
 
         try:
             if isinstance(json_args, list):
@@ -56,7 +56,7 @@ class Task(ABC):
                 # Map positional list to fields by order
                 field_names = list(cls._args_type.model_fields.keys())
                 if len(json_args) > len(field_names):
-                    raise TaskValidationError(
+                    raise ValidationError(
                         f"Too many positional arguments: expected at most {len(field_names)}, got {len(json_args)}"
                     )
                 data = {name: json_args[i] for i, name in enumerate(field_names[: len(json_args)])}
@@ -65,7 +65,7 @@ class Task(ABC):
                 # dict - treat as keyword arguments
                 return cls._args_type.model_validate(json_args)
         except PydanticValidationError as e:
-            raise TaskValidationError(f"Argument validation failed: {e}") from e
+            raise ValidationError(f"Argument validation failed: {e}") from e
 
     def name(self) -> str:
         """Task name for registration."""
@@ -85,11 +85,9 @@ def azolla_task(func: Callable[..., Any]) -> Callable[..., Any]:
     sig = inspect.signature(func)
     type_hints = get_type_hints(func)
 
-    # Create Pydantic model from function parameters (exclude execution context)
+    # Create Pydantic model from function parameters
     fields = {}
     for param_name, param in sig.parameters.items():
-        if param_name == "context":
-            continue
         param_type = type_hints.get(param_name, str)
 
         if param.default == param.empty:
@@ -109,9 +107,6 @@ def azolla_task(func: Callable[..., Any]) -> Callable[..., Any]:
     # Type ignore the create_model call as pydantic's type annotation is incomplete
     args_model = create_model(args_model_name, **model_fields)  # type: ignore[call-overload]
 
-    # Determine if the original function accepts context
-    accepts_context = any(p.name == "context" for p in sig.parameters.values())
-
     # Store original function separately
     original_func = func
 
@@ -120,11 +115,9 @@ def azolla_task(func: Callable[..., Any]) -> Callable[..., Any]:
         Args = args_model
         _original_func = staticmethod(original_func)  # Store as staticmethod to avoid self issues
 
-        async def execute(self, args: Any, context: Optional[TaskContext] = None) -> Any:
+        async def execute(self, args: Any) -> Any:
             # Convert args back to function parameters
             kwargs = args.model_dump()
-            if accepts_context:
-                return await self._original_func(**kwargs, context=context)
             return await self._original_func(**kwargs)
 
         def name(self) -> str:

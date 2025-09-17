@@ -15,7 +15,6 @@ from pydantic import BaseModel, Field
 from azolla._grpc import common_pb2, orchestrator_pb2, orchestrator_pb2_grpc
 from azolla.exceptions import TaskError, WorkerError
 from azolla.task import Task
-from azolla.types import TaskContext
 
 logger = logging.getLogger(__name__)
 
@@ -209,24 +208,42 @@ class Worker:
 
     async def _run_connection(self) -> None:
         """Run a single connection to the orchestrator."""
+        logger.info(
+            f"🔗 WORKER: Starting connection to orchestrator at {self._config.orchestrator_endpoint}"
+        )
+        logger.info(
+            f"🔗 WORKER: Worker configuration - Domain: {self._config.domain}, Group: {self._config.shepherd_group}"
+        )
+
         # Clear ready state at start of connection attempt
         self._ready_event.clear()
+        logger.info("🔗 WORKER: Cleared ready state, worker is NOT READY")
 
         # Create gRPC channel with proper options for bidirectional streaming
         endpoint = self._config.orchestrator_endpoint
         options = [
             ("grpc.keepalive_time_ms", 10000),  # Send keepalive every 10 seconds
             ("grpc.keepalive_timeout_ms", 1000),  # Wait 1 second for keepalive response
-            ("grpc.keepalive_permit_without_calls", True),  # Allow keepalive without calls
+            (
+                "grpc.keepalive_permit_without_calls",
+                True,
+            ),  # Allow keepalive without calls
             ("grpc.http2.max_pings_without_data", 0),  # Allow pings without data
-            ("grpc.http2.min_time_between_pings_ms", 5000),  # Min 5 seconds between pings
+            (
+                "grpc.http2.min_time_between_pings_ms",
+                5000,
+            ),  # Min 5 seconds between pings
         ]
+        logger.info(f"🔗 WORKER: Creating gRPC channel to {endpoint}")
         self._channel = grpc.aio.insecure_channel(endpoint, options=options)
         self._stub = orchestrator_pb2_grpc.ClusterServiceStub(self._channel)  # type: ignore[no-untyped-call]
+        logger.info("🔗 WORKER: gRPC channel and stub created successfully")
 
         try:
             # Create the bidirectional stream using the proper pattern
+            logger.info("🔗 WORKER: Starting bidirectional stream...")
             await self._run_bidirectional_stream()
+            logger.info("🔗 WORKER: Bidirectional stream completed")
 
         finally:
             if self._channel:
@@ -298,6 +315,12 @@ class Worker:
         request_queue: asyncio.Queue[orchestrator_pb2.ClientMsg] = asyncio.Queue(maxsize=1000)
 
         # Send hello message first to queue
+        logger.info(f"🔗 WORKER: Preparing Hello message with UUID: {self._shepherd_uuid}")
+        logger.info(
+            f"🔗 WORKER: Domain: {self._config.domain}, Group: {self._config.shepherd_group}"
+        )
+        logger.info(f"🔗 WORKER: Max concurrency: {self._config.max_concurrency}")
+
         hello_msg = orchestrator_pb2.ClientMsg(
             hello=orchestrator_pb2.Hello(
                 shepherd_uuid=self._shepherd_uuid,
@@ -307,23 +330,30 @@ class Worker:
             )
         )
         await request_queue.put(hello_msg)
+        logger.info("🔗 WORKER: Hello message queued for sending")
 
         # Create the stream call with the request generator
         logger.info("🔗 WORKER: Creating gRPC stream call")
         if self._stub is None:
             raise RuntimeError("gRPC stub is not initialized")
+
+        logger.info("🔗 WORKER: Calling orchestrator Stream method...")
         stream_call = self._stub.Stream(self._request_generator(request_queue))
+        logger.info("🔗 WORKER: Stream call created, waiting for connection establishment...")
 
         # Wait a moment for the stream to establish the connection
         await asyncio.sleep(0.1)
 
-        logger.info(f"Shepherd {self._shepherd_uuid} registered successfully")
+        logger.info(f"🔗 WORKER: Shepherd {self._shepherd_uuid} starting registration process")
 
         # Start heartbeat task
         heartbeat_task = asyncio.create_task(self._heartbeat_loop(request_queue))
 
         # Create response reader task with timeout detection
-        response_task = asyncio.create_task(self._read_responses_with_recovery(stream_call))
+        # Pass request_queue so task ACKs/results can be sent back to orchestrator
+        response_task = asyncio.create_task(
+            self._read_responses_with_recovery(stream_call, request_queue)
+        )
 
         try:
             # Wait for either task to complete or fail
@@ -376,7 +406,11 @@ class Worker:
         finally:
             logger.info("🔄 WORKER: Request generator ended")
 
-    async def _read_responses(self, stream_call: Any) -> None:
+    async def _read_responses(
+        self,
+        stream_call: Any,
+        request_queue: Optional[asyncio.Queue[orchestrator_pb2.ClientMsg]] = None,
+    ) -> None:
         """
         Read responses from the gRPC stream with timeout/retry workaround.
 
@@ -393,7 +427,11 @@ class Worker:
 
         # Timeout detection for stuck streams due to gRPC incompatibility
         last_activity = asyncio.get_event_loop().time()
-        stream_timeout = 5.0  # 5 seconds without messages = likely stuck due to protocol error
+        stream_timeout = 30.0  # Consider stream stuck only after 30s of inactivity
+
+        # Backward compatibility: create a local queue if none provided (used by unit tests)
+        if request_queue is None:
+            request_queue = asyncio.Queue(maxsize=1000)
 
         try:
             while not self._shutdown_event.is_set():
@@ -410,13 +448,17 @@ class Worker:
                     last_activity = asyncio.get_event_loop().time()
                     # Mark ready upon receiving the first valid server message
                     if not self._ready_event.is_set():
+                        logger.info(
+                            "🔄 WORKER: First server message received - marking worker as READY"
+                        )
                         self._ready_event.set()
+                        logger.info("🔄 WORKER: Worker is now READY to receive tasks")
                     logger.info(f"🔄 WORKER: Received message: {message}")
 
                     if message.HasField("task"):
                         logger.info(f"🔄 WORKER: Processing task: {message.task.name}")
-                        # Create a task to handle this message without blocking the stream
-                        task = asyncio.create_task(self._handle_task_async(message.task))
+                        # Handle task and send ACK/result via request queue without blocking the stream
+                        task = asyncio.create_task(self._handle_task(message.task, request_queue))
                         # Store reference to prevent garbage collection
                         task.add_done_callback(lambda t: None)
                     elif message.HasField("ping"):
@@ -476,9 +518,13 @@ class Worker:
         except StopAsyncIteration:
             return None
 
-    async def _read_responses_with_recovery(self, stream_call: Any) -> None:
+    async def _read_responses_with_recovery(
+        self,
+        stream_call: Any,
+        request_queue: Optional[asyncio.Queue[orchestrator_pb2.ClientMsg]] = None,
+    ) -> None:
         """Read responses with recovery - wrapper around the timeout-aware reader."""
-        return await self._read_responses(stream_call)
+        return await self._read_responses(stream_call, request_queue)
 
     async def _handle_task_async(self, proto_task: common_pb2.Task) -> None:
         """Handle a task asynchronously without blocking the response stream."""
@@ -494,7 +540,8 @@ class Worker:
 
         except Exception as e:
             logger.error(
-                f"🔄 WORKER: Error executing task {proto_task.task_id}: {e}", exc_info=True
+                f"🔄 WORKER: Error executing task {proto_task.task_id}: {e}",
+                exc_info=True,
             )
 
     async def _process_messages_concurrent(
@@ -532,13 +579,17 @@ class Worker:
             logger.info("🔄 WORKER: Message processing ended")
 
     async def _process_messages(
-        self, response_stream: Any, request_queue: asyncio.Queue[orchestrator_pb2.ClientMsg]
+        self,
+        response_stream: Any,
+        request_queue: asyncio.Queue[orchestrator_pb2.ClientMsg],
     ) -> None:
         """Legacy message processor - kept for compatibility."""
         await self._process_messages_concurrent(response_stream, request_queue)
 
     async def _handle_task(
-        self, proto_task: common_pb2.Task, request_queue: asyncio.Queue[orchestrator_pb2.ClientMsg]
+        self,
+        proto_task: common_pb2.Task,
+        request_queue: asyncio.Queue[orchestrator_pb2.ClientMsg],
     ) -> None:
         """Handle incoming task from orchestrator."""
         logger.info(f"Received task: {proto_task.name} ({proto_task.task_id})")
@@ -549,10 +600,16 @@ class Worker:
 
         # Execute task asynchronously
         # Store reference to prevent task from being garbage collected
-        asyncio.create_task(self._execute_task_wrapper(proto_task, request_queue))  # noqa: RUF006
+        task = asyncio.create_task(self._execute_task_wrapper(proto_task, request_queue))
+        # Store reference to prevent garbage collection
+        self._background_tasks: set[Any] = getattr(self, "_background_tasks", set())
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     async def _execute_task_wrapper(
-        self, proto_task: common_pb2.Task, request_queue: asyncio.Queue[orchestrator_pb2.ClientMsg]
+        self,
+        proto_task: common_pb2.Task,
+        request_queue: asyncio.Queue[orchestrator_pb2.ClientMsg],
     ) -> None:
         """Wrapper for task execution with load tracking."""
         async with self._load_tracker.track_task():
@@ -608,16 +665,9 @@ class Worker:
                     ),
                 )
 
-            # Create task context
-            context = TaskContext(
-                task_id=task_id,
-                attempt_number=1,  # TODO: Get from retry info
-                max_attempts=None,  # TODO: Get from retry policy
-            )
-
             # Execute task
             logger.info(f"🚀 WORKER: About to execute task with args: {args}")
-            result = await task_impl._execute_with_casting(args, context)
+            result = await task_impl._execute_with_casting(args)
             execution_time = time.time() - start_time
 
             logger.info(
@@ -685,7 +735,9 @@ class Worker:
             )
 
     async def _handle_ping(
-        self, ping: orchestrator_pb2.Ping, request_queue: asyncio.Queue[orchestrator_pb2.ClientMsg]
+        self,
+        ping: orchestrator_pb2.Ping,
+        request_queue: asyncio.Queue[orchestrator_pb2.ClientMsg],
     ) -> None:
         """Handle ping from orchestrator."""
         # Pings are handled automatically by gRPC layer

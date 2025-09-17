@@ -1,11 +1,9 @@
 """Unit tests for task functionality."""
 
-from typing import Optional
-
 import pytest
 from pydantic import BaseModel
 
-from azolla import Task, TaskContext, TaskValidationError, azolla_task
+from azolla import Task, ValidationError, azolla_task
 
 
 # Test tasks for decorator approach
@@ -31,7 +29,7 @@ class ExplicitTask(Task):
         value: int
         multiplier: float = 2.0
 
-    async def execute(self, args: Args, context: Optional[TaskContext] = None) -> dict:
+    async def execute(self, args: Args) -> dict:
         result = args.value * args.multiplier
         return {"input": args.value, "multiplier": args.multiplier, "result": result}
 
@@ -63,22 +61,6 @@ class TestTaskDecorator:
         result = await simple_task("World", count=3)
         assert result == {"message": "Hello World!", "count": 3}
 
-    async def test_decorator_passes_context(self) -> None:
-        """Decorator should pass TaskContext when function accepts it and exclude it from Args."""
-
-        @azolla_task
-        async def fn_with_ctx(x: int, context: Optional[TaskContext] = None) -> int:  # type: ignore[unused-variable]
-            assert context is not None
-            return x + context.attempt_number
-
-        task_instance = fn_with_ctx.__azolla_task_instance__
-        # Context should not be part of the args model fields
-        assert "context" not in fn_with_ctx.__azolla_args_model__.model_fields
-
-        ctx = TaskContext(task_id="t", attempt_number=2)
-        result = await task_instance._execute_with_casting({"x": 5}, ctx)
-        assert result == 7
-
     async def test_task_execution_via_instance(self) -> None:
         """Test task execution through task instance."""
         task_instance = simple_task.__azolla_task_instance__
@@ -99,11 +81,11 @@ class TestTaskDecorator:
         await task_instance._execute_with_casting({"name": "Valid"})
 
         # Invalid arguments - missing required field
-        with pytest.raises(TaskValidationError):
+        with pytest.raises(ValidationError):
             await task_instance._execute_with_casting({"count": 5})  # Missing 'name'
 
         # Invalid arguments - wrong type
-        with pytest.raises(TaskValidationError):
+        with pytest.raises(ValidationError):
             await task_instance._execute_with_casting({"name": "Test", "count": "invalid"})
 
     async def test_error_handling_in_decorated_task(self) -> None:
@@ -142,16 +124,14 @@ class TestExplicitTask:
         assert args.multiplier == 2.0  # Default value
 
         # Test validation error
-        with pytest.raises(TaskValidationError):
+        with pytest.raises(ValidationError):
             task.parse_args({"value": "invalid"})  # Wrong type
 
     async def test_explicit_task_execution(self) -> None:
         """Test execution of explicit task."""
         task = ExplicitTask()
 
-        # Test with context
-        context = TaskContext(task_id="test-123", attempt_number=1)
-        result = await task._execute_with_casting({"value": 6, "multiplier": 1.5}, context)
+        result = await task._execute_with_casting({"value": 6, "multiplier": 1.5})
 
         expected = {"input": 6, "multiplier": 1.5, "result": 9.0}
         assert result == expected
@@ -173,9 +153,7 @@ class TestExplicitTask:
                 a: int
                 b: int
 
-            async def execute(
-                self, args: "TwoArgTask.Args", context: Optional[TaskContext] = None
-            ) -> int:  # type: ignore[name-defined]
+            async def execute(self, args: "TwoArgTask.Args") -> int:  # type: ignore[name-defined]
                 return args.a + args.b
 
         # Parse positional list should map to fields by order
@@ -188,7 +166,7 @@ class TestExplicitTask:
         """Tasks without an Args model should receive raw args in execute()."""
 
         class NoArgsTask(Task):
-            async def execute(self, args: object, context: Optional[TaskContext] = None) -> object:
+            async def execute(self, args: object) -> object:
                 # Echo back what we got
                 return args
 
@@ -197,29 +175,3 @@ class TestExplicitTask:
         assert result1 == [1, 2, 3]
         result2 = await task._execute_with_casting({"k": "v"})
         assert result2 == {"k": "v"}
-
-
-class TestTaskContext:
-    """Test TaskContext functionality."""
-
-    def test_task_context_creation(self) -> None:
-        """Test TaskContext can be created with required fields."""
-        context = TaskContext(task_id="test-456", attempt_number=2, max_attempts=3)
-
-        assert context.task_id == "test-456"
-        assert context.attempt_number == 2
-        assert context.max_attempts == 3
-
-    def test_is_final_attempt(self) -> None:
-        """Test final attempt detection."""
-        # Final attempt
-        context = TaskContext(task_id="test", attempt_number=3, max_attempts=3)
-        assert context.is_final_attempt() is True
-
-        # Not final attempt
-        context = TaskContext(task_id="test", attempt_number=2, max_attempts=3)
-        assert context.is_final_attempt() is False
-
-        # No max attempts set
-        context = TaskContext(task_id="test", attempt_number=5)
-        assert context.is_final_attempt() is False

@@ -1,6 +1,6 @@
 """Unit tests for retry policy functionality."""
 
-from azolla.exceptions import TaskError, TaskValidationError
+from azolla.exceptions import TaskError, ValidationError
 from azolla.retry import ExponentialBackoff, FixedBackoff, LinearBackoff, RetryPolicy
 
 
@@ -104,7 +104,7 @@ class TestRetryPolicy:
         policy = RetryPolicy(stop_on_codes=["VALIDATION_ERROR", "AUTH_ERROR"])
 
         # Should not retry validation errors
-        validation_error = TaskValidationError("Invalid input")
+        validation_error = ValidationError("Invalid input")
         assert policy.should_retry(1, validation_error, "VALIDATION_ERROR") is False
 
         # Should not retry auth errors

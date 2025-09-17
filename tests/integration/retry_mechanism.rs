@@ -6,9 +6,16 @@
 
 #![cfg(feature = "test-harness")]
 
+use azolla::orchestrator::retry_policy::RetryPolicy as InternalRetryPolicy;
+use azolla::proto::common::RetryPolicy as ProtoRetryPolicy;
 use azolla::proto::orchestrator::CreateTaskRequest;
 use azolla::test_harness::IntegrationTestEnvironment;
 use serde_json::json;
+
+fn build_retry_policy(json: serde_json::Value) -> Option<ProtoRetryPolicy> {
+    let policy = InternalRetryPolicy::from_json(&json).expect("invalid retry policy json");
+    Some(policy.to_proto())
+}
 
 /// Tests the complete end-to-end retry mechanism.
 ///
@@ -156,6 +163,44 @@ async fn test_task_retry_handling() {
             3,
             "Should have exactly 3 attempts (max_attempts reached)"
         );
+    }
+
+    // Verify final task result is properly stored after all retries exhausted
+    let wait_request = tonic::Request::new(azolla::proto::orchestrator::WaitForTaskRequest {
+        task_id: task_id.clone(),
+        domain: harness.shepherd_config.domain.clone(),
+        timeout_ms: Some(1000), // Short timeout since task is already failed
+    });
+
+    let wait_response = harness.client.wait_for_task(wait_request).await.unwrap();
+    let wait_result = wait_response.into_inner();
+
+    // Verify the response indicates completion with error result
+    assert_eq!(
+        wait_result.status_code,
+        azolla::proto::orchestrator::WaitForTaskStatus::Completed as i32,
+        "Failed task should be completed with stored error result"
+    );
+
+    // Verify the error result contains proper error information
+    match &wait_result.result_type {
+        Some(azolla::proto::orchestrator::wait_for_task_response::ResultType::Error(error)) => {
+            assert_eq!(error.r#type, "TestError", "Error type should be TestError");
+            assert_eq!(
+                error.message, "This task always fails",
+                "Error message should match expected failure message"
+            );
+            assert!(
+                error.retriable,
+                "Error should be marked as retriable since it's a TestError"
+            );
+        }
+        Some(azolla::proto::orchestrator::wait_for_task_response::ResultType::Success(_)) => {
+            panic!("Expected error result for failed task, got success");
+        }
+        None => {
+            panic!("Expected result_type to be present for failed task with stored result");
+        }
     }
 
     harness.shutdown().await.unwrap();
@@ -444,16 +489,15 @@ impl RetryTestData {
             domain: "test".to_string(),
             args: serde_json::to_string(&Vec::<String>::new()).unwrap(),
             kwargs: r#"{"should_fail": true}"#.to_string(),
-            retry_policy: json!({
+            retry_policy: build_retry_policy(json!({
                 "version": 1,
                 "stop": {"max_attempts": 3},
                 "wait": {
                     "strategy": "fixed",
-                    "delay": 5.0  // 5 second delay for taskA
+                    "delay": 5.0
                 },
                 "retry": {"include_errors": ["TestError", "ValueError", "RuntimeError"]}
-            })
-            .to_string(),
+            })),
             flow_instance_id: None,
             shepherd_group: None,
         }
@@ -467,16 +511,15 @@ impl RetryTestData {
             domain: "test".to_string(),
             args: serde_json::to_string(&Vec::<String>::new()).unwrap(),
             kwargs: r#"{"should_fail": true}"#.to_string(),
-            retry_policy: json!({
+            retry_policy: build_retry_policy(json!({
                 "version": 1,
                 "stop": {"max_attempts": 3},
                 "wait": {
                     "strategy": "fixed",
-                    "delay": 1.0  // 1 second delay for predictable retry timing
+                    "delay": 1.0
                 },
                 "retry": {"include_errors": ["TestError", "ValueError", "RuntimeError"]}
-            })
-            .to_string(),
+            })),
             flow_instance_id: None,
             shepherd_group: None,
         }

@@ -106,6 +106,9 @@ pub async fn start_worker_service(
     info!("Starting worker service on {addr}");
 
     tonic::transport::Server::builder()
+        .http2_keepalive_interval(Some(std::time::Duration::from_secs(30)))
+        .http2_keepalive_timeout(Some(std::time::Duration::from_secs(10)))
+        .tcp_keepalive(Some(std::time::Duration::from_secs(30)))
         .add_service(server)
         .serve(addr)
         .await

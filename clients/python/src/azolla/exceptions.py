@@ -89,3 +89,21 @@ class ValidationError(TaskValidationError):
     """Alias for TaskValidationError for backward compatibility."""
 
     pass
+
+
+class TaskNotFoundError(AzollaError):
+    """Raised when a task is not found."""
+
+    pass
+
+
+class TaskWaitTimeoutError(AzollaError):
+    """Raised when waiting for task completion times out."""
+
+    pass
+
+
+class TaskInternalError(AzollaError):
+    """Raised when an internal server error occurs."""
+
+    pass

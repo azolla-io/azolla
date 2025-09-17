@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from azolla import Client, ClientConfig, WorkerConfig
-from azolla._grpc import orchestrator_pb2
+from azolla._grpc import common_pb2, orchestrator_pb2
 
 
 @pytest.fixture
@@ -25,9 +25,13 @@ async def mock_grpc_stub():
     # Mock successful task creation
     stub.CreateTask.return_value = orchestrator_pb2.CreateTaskResponse(task_id="test-task-123")
 
-    # Mock task completion
+    # Mock task completion with new structure
+    success_result = common_pb2.SuccessResult(
+        result=common_pb2.AnyValue(json_value='{"status": "success", "message": "Task completed"}')
+    )
     stub.WaitForTask.return_value = orchestrator_pb2.WaitForTaskResponse(
-        status="completed", result='{"status": "success", "message": "Task completed"}'
+        status_code=orchestrator_pb2.WAIT_FOR_TASK_STATUS_COMPLETED,
+        success=success_result,
     )
 
     return stub

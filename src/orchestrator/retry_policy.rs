@@ -1,3 +1,9 @@
+use crate::proto::common::{
+    retry_policy_wait::Kind as ProtoWaitKind, RetryPolicy as ProtoRetryPolicy,
+    RetryPolicyExponentialJitterWait as ProtoExpJitterWait,
+    RetryPolicyExponentialWait as ProtoExpWait, RetryPolicyFixedWait as ProtoFixedWait,
+    RetryPolicyRetry as ProtoRetry, RetryPolicyStop as ProtoStop, RetryPolicyWait as ProtoWait,
+};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -141,6 +147,110 @@ impl RetryPolicy {
         serde_json::from_value(json.clone()).map_err(|e| format!("Invalid retry policy: {e}"))
     }
 
+    pub fn from_proto(proto: &ProtoRetryPolicy) -> Result<Self, String> {
+        let stop = proto
+            .stop
+            .as_ref()
+            .map(|value| StopConfig {
+                max_attempts: value.max_attempts,
+                max_delay: value.max_delay,
+            })
+            .unwrap_or_default();
+
+        let wait = match proto.wait.as_ref().and_then(|wait| wait.kind.as_ref()) {
+            Some(ProtoWaitKind::Fixed(ProtoFixedWait { delay })) => WaitConfig {
+                strategy: WaitStrategy::Fixed,
+                delay: Some(*delay),
+                initial_delay: *delay,
+                multiplier: 1.0,
+                max_delay: *delay,
+            },
+            Some(ProtoWaitKind::Exponential(ProtoExpWait {
+                initial_delay,
+                multiplier,
+                max_delay,
+            })) => WaitConfig {
+                strategy: WaitStrategy::Exponential,
+                delay: None,
+                initial_delay: *initial_delay,
+                multiplier: *multiplier,
+                max_delay: *max_delay,
+            },
+            Some(ProtoWaitKind::ExponentialJitter(ProtoExpJitterWait {
+                initial_delay,
+                multiplier,
+                max_delay,
+            })) => WaitConfig {
+                strategy: WaitStrategy::ExponentialJitter,
+                delay: None,
+                initial_delay: *initial_delay,
+                multiplier: *multiplier,
+                max_delay: *max_delay,
+            },
+            None => WaitConfig::default(),
+        };
+
+        let retry = proto
+            .retry
+            .as_ref()
+            .map(|value| RetryConfig {
+                include_errors: value.include_errors.clone(),
+                exclude_errors: value.exclude_errors.clone(),
+            })
+            .unwrap_or_default();
+
+        let policy = Self {
+            version: proto.version as u8,
+            stop,
+            wait,
+            retry,
+        };
+
+        policy.validate()?;
+        Ok(policy)
+    }
+
+    pub fn to_proto(&self) -> ProtoRetryPolicy {
+        let stop = ProtoStop {
+            max_attempts: self.stop.max_attempts,
+            max_delay: self.stop.max_delay,
+        };
+
+        let wait_kind = match self.wait.strategy {
+            WaitStrategy::Fixed => ProtoWaitKind::Fixed(ProtoFixedWait {
+                delay: self.wait.delay.unwrap_or(self.wait.initial_delay),
+            }),
+            WaitStrategy::Exponential => ProtoWaitKind::Exponential(ProtoExpWait {
+                initial_delay: self.wait.initial_delay,
+                multiplier: self.wait.multiplier,
+                max_delay: self.wait.max_delay,
+            }),
+            WaitStrategy::ExponentialJitter => {
+                ProtoWaitKind::ExponentialJitter(ProtoExpJitterWait {
+                    initial_delay: self.wait.initial_delay,
+                    multiplier: self.wait.multiplier,
+                    max_delay: self.wait.max_delay,
+                })
+            }
+        };
+
+        let wait = ProtoWait {
+            kind: Some(wait_kind),
+        };
+
+        let retry = ProtoRetry {
+            include_errors: self.retry.include_errors.clone(),
+            exclude_errors: self.retry.exclude_errors.clone(),
+        };
+
+        ProtoRetryPolicy {
+            version: self.version as u32,
+            stop: Some(stop),
+            wait: Some(wait),
+            retry: Some(retry),
+        }
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if self.version != 1 {
             return Err("Unsupported retry policy version".to_string());
@@ -182,6 +292,14 @@ pub fn should_retry_error(retry_config: &RetryConfig, error_type: &str) -> bool 
     // If include list is empty, retry nothing
     if retry_config.include_errors.is_empty() {
         return false;
+    }
+
+    // Special-case: Treat "TaskError" as a wildcard for any task error type
+    // This allows client libraries to specify the base error to retry on,
+    // while concrete error_type values (e.g., "TestError", "ValidationError")
+    // still work as before. Exclude list takes precedence above.
+    if retry_config.include_errors.iter().any(|e| e == "TaskError") {
+        return true;
     }
 
     // Check if error is in include list

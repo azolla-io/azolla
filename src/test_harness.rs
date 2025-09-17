@@ -14,7 +14,9 @@ const DEFAULT_MAX_CONCURRENT_TASKS: usize = 4;
 use crate::orchestrator::db::{
     Database, DomainsConfig, EventStream, Server as DbServer, Settings, ShutdownConfig,
 };
+use crate::orchestrator::retry_policy::RetryPolicy as InternalRetryPolicy;
 use crate::orchestrator::startup::{OrchestratorBuilder, RunningOrchestratorInstance};
+use crate::proto::common::RetryPolicy as ProtoRetryPolicy;
 use crate::proto::orchestrator::client_service_client::ClientServiceClient;
 use crate::proto::orchestrator::cluster_service_client::ClusterServiceClient;
 use crate::proto::orchestrator::CreateTaskRequest;
@@ -473,19 +475,23 @@ pub struct TaskAttempt {
 pub struct TaskTestData;
 
 impl TaskTestData {
+    fn build_retry_policy(json: serde_json::Value) -> Option<ProtoRetryPolicy> {
+        let policy = InternalRetryPolicy::from_json(&json).expect("invalid retry policy json");
+        Some(policy.to_proto())
+    }
+
     pub fn echo_task(message: &str) -> CreateTaskRequest {
         CreateTaskRequest {
             name: "echo".to_string(),
             domain: "test".to_string(),
             args: serde_json::to_string(&vec![message.to_string()]).unwrap(),
             kwargs: "{}".to_string(),
-            retry_policy: json!({
+            retry_policy: Self::build_retry_policy(json!({
                 "version": 1,
                 "stop": {"max_attempts": 1},
                 "wait": {"strategy": "fixed", "delay": 1},
                 "retry": {"include_errors": ["ValueError"]}
-            })
-            .to_string(),
+            })),
             flow_instance_id: None,
             shepherd_group: None,
         }
@@ -497,7 +503,7 @@ impl TaskTestData {
             domain: "test".to_string(),
             args: serde_json::to_string(&Vec::<String>::new()).unwrap(),
             kwargs: r#"{"fail_first_attempt": true}"#.to_string(),
-            retry_policy: json!({
+            retry_policy: Self::build_retry_policy(json!({
                 "version": 1,
                 "stop": {"max_attempts": 3},
                 "wait": {
@@ -507,8 +513,41 @@ impl TaskTestData {
                     "max_delay": 60
                 },
                 "retry": {"include_errors": ["ValueError", "RuntimeError"]}
-            })
-            .to_string(),
+            })),
+            flow_instance_id: None,
+            shepherd_group: None,
+        }
+    }
+
+    pub fn math_add_task(a: f64, b: f64) -> CreateTaskRequest {
+        CreateTaskRequest {
+            name: "math_add".to_string(),
+            domain: "test".to_string(),
+            args: serde_json::to_string(&Vec::<String>::new()).unwrap(),
+            kwargs: json!({"a": a, "b": b}).to_string(),
+            retry_policy: Self::build_retry_policy(json!({
+                "version": 1,
+                "stop": {"max_attempts": 1},
+                "wait": {"strategy": "fixed", "delay": 1},
+                "retry": {"include_errors": ["ValueError"]}
+            })),
+            flow_instance_id: None,
+            shepherd_group: None,
+        }
+    }
+
+    pub fn count_args_task(args: Vec<serde_json::Value>) -> CreateTaskRequest {
+        CreateTaskRequest {
+            name: "count_args".to_string(),
+            domain: "test".to_string(),
+            args: serde_json::to_string(&args).unwrap(),
+            kwargs: "{}".to_string(),
+            retry_policy: Self::build_retry_policy(json!({
+                "version": 1,
+                "stop": {"max_attempts": 1},
+                "wait": {"strategy": "fixed", "delay": 1},
+                "retry": {"include_errors": ["ValueError"]}
+            })),
             flow_instance_id: None,
             shepherd_group: None,
         }
@@ -520,7 +559,7 @@ impl TaskTestData {
             domain: "test".to_string(),
             args: serde_json::to_string(&Vec::<String>::new()).unwrap(),
             kwargs: r#"{"should_fail": true}"#.to_string(),
-            retry_policy: json!({
+            retry_policy: Self::build_retry_policy(json!({
                 "version": 1,
                 "stop": {"max_attempts": 3},
                 "wait": {
@@ -531,8 +570,7 @@ impl TaskTestData {
                     "jitter": "full"
                 },
                 "retry": {"include_errors": ["ValueError", "RuntimeError"]}
-            })
-            .to_string(),
+            })),
             flow_instance_id: None,
             shepherd_group: None,
         }

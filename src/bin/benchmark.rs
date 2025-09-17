@@ -9,6 +9,8 @@ use serde_json::json;
 use tokio::time::timeout;
 use tonic::transport::Channel;
 
+use azolla::orchestrator::retry_policy::{RetryPolicy as InternalRetryPolicy, WaitStrategy};
+use azolla::proto::common::RetryPolicy as ProtoRetryPolicy;
 use azolla::proto::orchestrator;
 use orchestrator::client_service_client::ClientServiceClient;
 use orchestrator::*;
@@ -212,13 +214,29 @@ fn generate_random_task_data(
         rng.gen::<u16>()
     );
 
-    // Generate random retry policy as JSON string
-    let max_retries = rng.gen_range(1..=5);
-    let retry_policy_json = json!({
-        "max_retries": max_retries,
-        "backoff_multiplier": 2.0,
-        "max_backoff_seconds": 300
-    });
+    // Generate random retry policy using internal representation
+    let max_retries = rng.gen_range(1..=5) as u32;
+    let mut retry_policy = InternalRetryPolicy::default();
+    retry_policy.stop.max_attempts = Some(max_retries);
+
+    if rng.gen_bool(0.5) {
+        let delay = rng.gen_range(0.5..=2.0);
+        retry_policy.wait.strategy = WaitStrategy::Fixed;
+        retry_policy.wait.delay = Some(delay);
+        retry_policy.wait.initial_delay = delay;
+        retry_policy.wait.multiplier = 1.0;
+        retry_policy.wait.max_delay = delay;
+    } else {
+        retry_policy.wait.strategy = WaitStrategy::ExponentialJitter;
+        retry_policy.wait.initial_delay = rng.gen_range(0.5..=1.5);
+        retry_policy.wait.multiplier = rng.gen_range(1.2..=2.5);
+        retry_policy.wait.max_delay = rng.gen_range(5.0..=120.0);
+        retry_policy.wait.delay = None;
+    }
+
+    retry_policy.retry.include_errors = vec!["ValueError".to_string(), "RuntimeError".to_string()];
+    retry_policy.retry.exclude_errors.clear();
+    let retry_policy_proto: Option<ProtoRetryPolicy> = Some(retry_policy.to_proto());
 
     // Generate random args (1-3 elements)
     let num_args = rng.gen_range(1..=3);
@@ -237,7 +255,7 @@ fn generate_random_task_data(
     CreateTaskRequest {
         name: task_name,
         domain: domain.to_string(),
-        retry_policy: serde_json::to_string(&retry_policy_json).unwrap_or_default(),
+        retry_policy: retry_policy_proto,
         args: serde_json::to_string(&args).unwrap_or_default(),
         kwargs: serde_json::to_string(&kwargs_obj).unwrap_or_default(),
         flow_instance_id: None,

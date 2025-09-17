@@ -6,6 +6,8 @@
 
 #![cfg(feature = "test-harness")]
 
+use azolla::orchestrator::retry_policy::RetryPolicy as InternalRetryPolicy;
+use azolla::proto::common::RetryPolicy as ProtoRetryPolicy;
 use azolla::proto::orchestrator::CreateTaskRequest;
 use azolla::test_harness::{find_available_port, IntegrationTestEnvironment};
 use serde_json::json;
@@ -13,6 +15,11 @@ use std::time::Duration;
 use uuid::Uuid;
 
 const DOMAIN: &str = "group_test";
+
+fn build_retry_policy(json: serde_json::Value) -> Option<ProtoRetryPolicy> {
+    let policy = InternalRetryPolicy::from_json(&json).expect("invalid retry policy json");
+    Some(policy.to_proto())
+}
 
 // Helper removed in favor of test harness API
 
@@ -41,12 +48,11 @@ async fn test_default_group_routing() {
     let req = CreateTaskRequest {
         name: "echo".to_string(),
         domain: DOMAIN.to_string(),
-        retry_policy: json!({
+        retry_policy: build_retry_policy(json!({
             "version": 1,
             "stop": {"max_attempts": 1},
             "wait": {"strategy": "fixed", "delay": 1}
-        })
-        .to_string(),
+        })),
         args: serde_json::to_string(&vec!["hello".to_string()]).unwrap(),
         kwargs: "{}".to_string(),
         flow_instance_id: None,
@@ -111,12 +117,11 @@ async fn test_designated_group_routing() {
     let req = CreateTaskRequest {
         name: "echo".to_string(),
         domain: DOMAIN.to_string(),
-        retry_policy: json!({
+        retry_policy: build_retry_policy(json!({
             "version": 1,
             "stop": {"max_attempts": 1},
             "wait": {"strategy": "fixed", "delay": 1}
-        })
-        .to_string(),
+        })),
         args: serde_json::to_string(&vec!["world".to_string()]).unwrap(),
         kwargs: "{}".to_string(),
         flow_instance_id: None,

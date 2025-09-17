@@ -338,8 +338,15 @@ async fn test_client_error_integration() {
         .submit()
         .await;
 
-    // Should get an error from orchestrator
-    assert!(result.is_err());
+    // Submission succeeds even if no worker handles the task
+    let handle = result.expect("Task submission should succeed");
+
+    // Without a registered worker, waiting should time out
+    let wait_outcome = tokio::time::timeout(Duration::from_millis(200), handle.wait()).await;
+    assert!(
+        wait_outcome.is_err(),
+        "Task wait unexpectedly completed without workers"
+    );
 }
 
 /// Test error integration with worker registration

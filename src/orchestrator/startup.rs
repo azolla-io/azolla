@@ -69,12 +69,15 @@ impl OrchestratorInstance {
     where
         F: std::future::Future<Output = ()>,
     {
-        let addr = format!("[::1]:{}", self.settings.server.port).parse::<SocketAddr>()?;
+        let addr = format!("0.0.0.0:{}", self.settings.server.port).parse::<SocketAddr>()?;
 
         log::info!("Azolla Orchestrator listening on {addr}");
         log::info!("Starting both ClientService and ClusterService");
 
         let server_future = Server::builder()
+            .http2_keepalive_interval(Some(std::time::Duration::from_secs(30)))
+            .http2_keepalive_timeout(Some(std::time::Duration::from_secs(10)))
+            .tcp_keepalive(Some(std::time::Duration::from_secs(30)))
             .add_service(self.client_grpc_server)
             .add_service(self.cluster_grpc_server)
             .serve_with_shutdown(addr, shutdown_signal);
@@ -105,6 +108,9 @@ impl OrchestratorInstance {
         log::info!("Starting orchestrator server on {addr}");
         let handle = tokio::spawn(async move {
             Server::builder()
+                .http2_keepalive_interval(Some(std::time::Duration::from_secs(30)))
+                .http2_keepalive_timeout(Some(std::time::Duration::from_secs(10)))
+                .tcp_keepalive(Some(std::time::Duration::from_secs(30)))
                 .add_service(self.client_grpc_server)
                 .add_service(self.cluster_grpc_server)
                 .serve_with_shutdown(addr, shutdown_future)

@@ -118,7 +118,6 @@ The Python client follows **modern Python packaging standards** with a clean, ty
 #### azolla/task.py
 - **@azolla_task decorator**: Convert functions to Azolla tasks
 - **Task base class**: For class-based task definitions
-- **TaskContext**: Execution context with attempt info
 
 #### azolla/retry.py
 - **RetryPolicy**: Configurable retry behavior

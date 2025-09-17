@@ -17,7 +17,8 @@ logger = get_logger(__name__)
 async def worker_main() -> None:
     """Main entry point for azolla-worker CLI."""
     parser = argparse.ArgumentParser(
-        description="Azolla Python Worker", formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        description="Azolla Python Worker",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
     parser.add_argument("--orchestrator", default="localhost:52710", help="Orchestrator endpoint")
@@ -25,13 +26,18 @@ async def worker_main() -> None:
     parser.add_argument("--domain", default="default", help="Worker domain")
 
     parser.add_argument(
-        "--shepherd-group", default="python-workers", help="Shepherd group for this worker"
+        "--shepherd-group",
+        default="python-workers",
+        help="Shepherd group for this worker",
     )
 
     parser.add_argument("--max-concurrency", type=int, default=10, help="Maximum concurrent tasks")
 
     parser.add_argument(
-        "--heartbeat-interval", type=float, default=30.0, help="Heartbeat interval in seconds"
+        "--heartbeat-interval",
+        type=float,
+        default=30.0,
+        help="Heartbeat interval in seconds",
     )
 
     parser.add_argument(

@@ -1,12 +1,12 @@
 """Tests for worker exception wrapping functionality."""
 
-from typing import Any, Optional
+from typing import Any
 
 import pytest
 
-from azolla import Task, TaskContext, Worker, WorkerConfig
+from azolla import Task, Worker, WorkerConfig
 from azolla._grpc import common_pb2
-from azolla.exceptions import TaskError, TaskValidationError
+from azolla.exceptions import TaskError, ValidationError
 
 
 class AlwaysFailTask(Task):
@@ -15,7 +15,7 @@ class AlwaysFailTask(Task):
     def name(self) -> str:
         return "always_fail"
 
-    async def execute(self, args: Any, context: Optional[TaskContext] = None) -> str:
+    async def execute(self, args: Any) -> str:
         raise ValueError("This is a test ValueError")
 
 
@@ -25,8 +25,8 @@ class AlwaysFailWithTaskErrorTask(Task):
     def name(self) -> str:
         return "always_fail_task_error"
 
-    async def execute(self, args: Any, context: Optional[TaskContext] = None) -> str:
-        raise TaskValidationError("This is a test TaskValidationError")
+    async def execute(self, args: Any) -> str:
+        raise ValidationError("This is a test ValidationError")
 
 
 class AlwaysSucceedTask(Task):
@@ -35,7 +35,7 @@ class AlwaysSucceedTask(Task):
     def name(self) -> str:
         return "always_succeed"
 
-    async def execute(self, args: Any, context: Optional[TaskContext] = None) -> str:
+    async def execute(self, args: Any) -> str:
         return "success"
 
 
@@ -85,9 +85,9 @@ async def test_task_error_preserved_as_is() -> None:
     assert not result.HasField("success")
 
     error = result.error
-    assert error.type == "TaskValidationError"  # TaskError subclass type
-    assert "This is a test TaskValidationError" in error.message
-    assert error.retriable is False  # TaskValidationError is not retryable
+    assert error.type == "ValidationError"  # TaskError subclass type
+    assert "This is a test ValidationError" in error.message
+    assert error.retriable is False  # ValidationError is not retryable
     assert error.data == "{}"
 
 
@@ -126,7 +126,7 @@ async def test_different_exception_types_wrapped_correctly() -> None:
         def name(self) -> str:
             return "custom_exception"
 
-        async def execute(self, args: Any, context: Optional[TaskContext] = None) -> str:
+        async def execute(self, args: Any) -> str:
             raise self.exception_type(self.exception_message)
 
     worker = Worker(WorkerConfig())
@@ -146,7 +146,9 @@ async def test_different_exception_types_wrapped_correctly() -> None:
 
         # Create test task protobuf
         proto_task = common_pb2.Task(
-            task_id=f"test-{exception_type.__name__}", name="custom_exception", args="[]"
+            task_id=f"test-{exception_type.__name__}",
+            name="custom_exception",
+            args="[]",
         )
 
         # Execute task
@@ -171,14 +173,14 @@ async def test_task_error_retryable_flag_preserved() -> None:
         def name(self) -> str:
             return "non_retryable"
 
-        async def execute(self, args: Any, context: Optional[TaskContext] = None) -> str:
+        async def execute(self, args: Any) -> str:
             raise TaskError("Non-retryable error", retryable=False)
 
     class RetryableTaskErrorTask(Task):
         def name(self) -> str:
             return "retryable"
 
-        async def execute(self, args: Any, context: Optional[TaskContext] = None) -> str:
+        async def execute(self, args: Any) -> str:
             raise TaskError("Retryable error", retryable=True)
 
     worker = Worker(WorkerConfig())

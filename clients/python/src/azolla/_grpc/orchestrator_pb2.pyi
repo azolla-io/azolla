@@ -1,10 +1,24 @@
 import common_pb2 as _common_pb2
+from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
 from collections.abc import Mapping as _Mapping
 from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
+
+class WaitForTaskStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    WAIT_FOR_TASK_STATUS_UNSPECIFIED: _ClassVar[WaitForTaskStatus]
+    WAIT_FOR_TASK_STATUS_COMPLETED: _ClassVar[WaitForTaskStatus]
+    WAIT_FOR_TASK_STATUS_TIMEOUT: _ClassVar[WaitForTaskStatus]
+    WAIT_FOR_TASK_STATUS_TASK_NOT_FOUND: _ClassVar[WaitForTaskStatus]
+    WAIT_FOR_TASK_STATUS_INTERNAL_ERROR: _ClassVar[WaitForTaskStatus]
+WAIT_FOR_TASK_STATUS_UNSPECIFIED: WaitForTaskStatus
+WAIT_FOR_TASK_STATUS_COMPLETED: WaitForTaskStatus
+WAIT_FOR_TASK_STATUS_TIMEOUT: WaitForTaskStatus
+WAIT_FOR_TASK_STATUS_TASK_NOT_FOUND: WaitForTaskStatus
+WAIT_FOR_TASK_STATUS_INTERNAL_ERROR: WaitForTaskStatus
 
 class CreateTaskRequest(_message.Message):
     __slots__ = ("name", "domain", "retry_policy", "args", "kwargs", "flow_instance_id", "shepherd_group")
@@ -17,12 +31,12 @@ class CreateTaskRequest(_message.Message):
     SHEPHERD_GROUP_FIELD_NUMBER: _ClassVar[int]
     name: str
     domain: str
-    retry_policy: str
+    retry_policy: _common_pb2.RetryPolicy
     args: str
     kwargs: str
     flow_instance_id: str
     shepherd_group: str
-    def __init__(self, name: _Optional[str] = ..., domain: _Optional[str] = ..., retry_policy: _Optional[str] = ..., args: _Optional[str] = ..., kwargs: _Optional[str] = ..., flow_instance_id: _Optional[str] = ..., shepherd_group: _Optional[str] = ...) -> None: ...
+    def __init__(self, name: _Optional[str] = ..., domain: _Optional[str] = ..., retry_policy: _Optional[_Union[_common_pb2.RetryPolicy, _Mapping]] = ..., args: _Optional[str] = ..., kwargs: _Optional[str] = ..., flow_instance_id: _Optional[str] = ..., shepherd_group: _Optional[str] = ...) -> None: ...
 
 class CreateTaskResponse(_message.Message):
     __slots__ = ("task_id",)
@@ -31,22 +45,24 @@ class CreateTaskResponse(_message.Message):
     def __init__(self, task_id: _Optional[str] = ...) -> None: ...
 
 class WaitForTaskRequest(_message.Message):
-    __slots__ = ("task_id", "domain")
+    __slots__ = ("task_id", "domain", "timeout_ms")
     TASK_ID_FIELD_NUMBER: _ClassVar[int]
     DOMAIN_FIELD_NUMBER: _ClassVar[int]
+    TIMEOUT_MS_FIELD_NUMBER: _ClassVar[int]
     task_id: str
     domain: str
-    def __init__(self, task_id: _Optional[str] = ..., domain: _Optional[str] = ...) -> None: ...
+    timeout_ms: int
+    def __init__(self, task_id: _Optional[str] = ..., domain: _Optional[str] = ..., timeout_ms: _Optional[int] = ...) -> None: ...
 
 class WaitForTaskResponse(_message.Message):
-    __slots__ = ("status", "result", "error")
-    STATUS_FIELD_NUMBER: _ClassVar[int]
-    RESULT_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("status_code", "success", "error")
+    STATUS_CODE_FIELD_NUMBER: _ClassVar[int]
+    SUCCESS_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
-    status: str
-    result: str
-    error: str
-    def __init__(self, status: _Optional[str] = ..., result: _Optional[str] = ..., error: _Optional[str] = ...) -> None: ...
+    status_code: WaitForTaskStatus
+    success: _common_pb2.SuccessResult
+    error: _common_pb2.ErrorResult
+    def __init__(self, status_code: _Optional[_Union[WaitForTaskStatus, str]] = ..., success: _Optional[_Union[_common_pb2.SuccessResult, _Mapping]] = ..., error: _Optional[_Union[_common_pb2.ErrorResult, _Mapping]] = ...) -> None: ...
 
 class CreateFlowRequest(_message.Message):
     __slots__ = ("name", "domain", "dag")

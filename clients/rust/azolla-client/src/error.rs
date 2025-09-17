@@ -27,6 +27,12 @@ pub enum AzollaError {
 
     #[error("Worker error: {0}")]
     WorkerError(String),
+
+    #[error("Protocol error: {0}")]
+    Protocol(String),
+
+    #[error("Task not found: {0}")]
+    TaskNotFound(String),
 }
 
 /// Specific error for task failures
