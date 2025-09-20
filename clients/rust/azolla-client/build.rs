@@ -9,6 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &[
                 &format!("{proto_dir}/orchestrator.proto"),
                 &format!("{proto_dir}/common.proto"),
+                &format!("{proto_dir}/shepherd.proto"),
             ],
             &[proto_dir],
         )?;

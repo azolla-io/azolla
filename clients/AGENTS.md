@@ -18,7 +18,7 @@ clients/
 │   │   │   ├── error.rs          # Error types and handling
 │   │   │   ├── retry_policy.rs   # Retry policy implementation
 │   │   │   ├── task.rs           # Task trait and utilities
-│   │   │   └── worker.rs         # Worker building (stub for examples)
+│   │   │   └── worker.rs         # Single-invocation worker runtime
 │   │   ├── LICENSE              # Apache 2.0 license
 │   │   └── release.sh            # Automated publishing script
 │   └── azolla-macros/            # Procedural macro support crate
@@ -63,6 +63,7 @@ The Rust client uses a **two-crate architecture** following Rust ecosystem best 
 - **Type**: Regular library crate
 - **Dependencies**: `tonic`, `tokio`, `serde_json`, optional `azolla-macros`
 - **Features**: `macros` feature enables proc macro support
+- **Worker runtime**: Executes a single task per process and reports results back to the shepherd via `ReportResult`
 
 ### Feature-Based Integration
 
@@ -247,7 +248,7 @@ pytest --cov=azolla --cov-report=term-missing  # With coverage
 - **error.rs**: Comprehensive error types (`AzollaError`, `TaskError`)
 - **retry_policy.rs**: Configurable retry policies with exponential backoff
 - **task.rs**: Task trait definition and execution context
-- **worker.rs**: Worker builder for examples (minimal implementation)
+- **worker.rs**: Single-task worker runtime with shepherd result reporting
 
 #### Python Client Structure
 

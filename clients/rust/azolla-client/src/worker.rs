@@ -1,500 +1,488 @@
-use crate::error::AzollaError;
+use crate::error::{AzollaError, TaskError};
 use crate::proto::common::{
-    AnyValue, ErrorResult, SuccessResult, Task as ProtoTask, TaskResult as ProtoTaskResult,
+    any_value::Value as AnyInner, AnyValue, ErrorResult, SuccessResult, TaskResult,
 };
-use crate::proto::orchestrator::cluster_service_client::ClusterServiceClient;
-use crate::proto::orchestrator::{Ack, ClientMsg, Hello, Ping, ServerMsg, Status};
+use crate::proto::shepherd::worker_client::WorkerClient;
+use crate::proto::shepherd::ReportResultRequest;
 use crate::task::{BoxedTask, Task};
-use serde_json::Value;
+use log::{debug, error, info, warn};
+use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::{
-    atomic::{AtomicBool, AtomicU32, Ordering},
-    Arc,
-};
-use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
-use tokio::time::interval;
-use tokio_stream::wrappers::ReceiverStream;
-use tonic::transport::Channel;
+use std::sync::Arc;
+use std::time::Instant;
 use uuid::Uuid;
 
-/// RAII guard for managing load counter
-/// Automatically decrements the counter when dropped, ensuring panic safety
-struct LoadGuard {
-    counter: Arc<AtomicU32>,
-}
-
-impl LoadGuard {
-    fn new(counter: Arc<AtomicU32>) -> Self {
-        counter.fetch_add(1, Ordering::Relaxed);
-        Self { counter }
-    }
-}
-
-impl Drop for LoadGuard {
-    fn drop(&mut self) {
-        self.counter.fetch_sub(1, Ordering::Relaxed);
-    }
-}
-
-/// Worker for executing tasks
-pub struct Worker {
-    config: WorkerConfig,
-    tasks: HashMap<String, Arc<dyn BoxedTask>>,
-    shepherd_uuid: String,
-    current_load: Arc<AtomicU32>,
-    shutdown_signal: Arc<AtomicBool>,
-}
-
-/// Worker configuration
+/// Represents the outcome of executing a task implementation
 #[derive(Debug, Clone)]
-pub struct WorkerConfig {
-    pub orchestrator_endpoint: String,
-    pub domain: String,
-    pub shepherd_group: String,
-    pub max_concurrency: u32,
-    pub heartbeat_interval: Duration,
+pub enum TaskExecutionOutcome {
+    Success(Value),
+    Failed(TaskError),
 }
 
-impl Default for WorkerConfig {
-    fn default() -> Self {
-        Self {
-            orchestrator_endpoint: "localhost:52710".to_string(),
-            domain: "default".to_string(),
-            shepherd_group: "default".to_string(),
-            max_concurrency: 10,
-            heartbeat_interval: Duration::from_secs(30),
-        }
+/// Detailed execution result used by the worker runtime
+#[derive(Debug, Clone)]
+pub struct WorkerExecution {
+    pub outcome: TaskExecutionOutcome,
+    pub task_result: TaskResult,
+}
+
+impl WorkerExecution {
+    pub fn is_success(&self) -> bool {
+        matches!(self.outcome, TaskExecutionOutcome::Success(_))
     }
+}
+
+/// Invocation context passed from the shepherd when launching a worker process
+#[derive(Debug, Clone)]
+pub struct WorkerInvocation {
+    pub task_id: Uuid,
+    pub task_name: String,
+    pub args: Vec<Value>,
+    pub kwargs: Value,
+    pub shepherd_endpoint: String,
+}
+
+impl WorkerInvocation {
+    /// Build an invocation from JSON encoded CLI values
+    #[allow(clippy::result_large_err)]
+    pub fn from_json(
+        task_id: &str,
+        task_name: &str,
+        args_json: &str,
+        kwargs_json: &str,
+        shepherd_endpoint: &str,
+    ) -> Result<Self, AzollaError> {
+        let task_id = Uuid::parse_str(task_id)
+            .map_err(|e| AzollaError::WorkerError(format!("Invalid task ID {task_id}: {e}")))?;
+
+        let args = if args_json.trim().is_empty() {
+            Vec::new()
+        } else {
+            let parsed: Value = serde_json::from_str(args_json)
+                .map_err(|e| AzollaError::WorkerError(format!("Invalid args JSON: {e}")))?;
+
+            match parsed {
+                Value::Null => Vec::new(),
+                Value::Array(arr) => arr,
+                other => vec![other],
+            }
+        };
+
+        let kwargs = if kwargs_json.trim().is_empty() {
+            Value::Object(Default::default())
+        } else {
+            serde_json::from_str(kwargs_json)
+                .map_err(|e| AzollaError::WorkerError(format!("Invalid kwargs JSON: {e}")))?
+        };
+
+        Ok(Self {
+            task_id,
+            task_name: task_name.to_string(),
+            args,
+            kwargs,
+            shepherd_endpoint: shepherd_endpoint.to_string(),
+        })
+    }
+
+    /// Clone the positional arguments for execution
+    pub(crate) fn argument_values(&self) -> Vec<Value> {
+        self.args.clone()
+    }
+}
+
+/// Worker runtime responsible for executing a single task invocation
+pub struct Worker {
+    tasks: HashMap<String, Arc<dyn BoxedTask>>,
 }
 
 impl Worker {
-    /// Create a worker builder
+    /// Create a worker builder to register task implementations
     pub fn builder() -> WorkerBuilder {
         WorkerBuilder::default()
     }
 
-    /// Get the number of registered tasks
+    /// Number of registered task implementations
     pub fn task_count(&self) -> usize {
         self.tasks.len()
     }
 
-    /// Run the worker with reconnection logic
-    pub async fn run(self) -> Result<(), AzollaError> {
-        log::info!(
-            "Worker starting with {} tasks on {} (domain: {}, group: {})",
-            self.tasks.len(),
-            self.config.orchestrator_endpoint,
-            self.config.domain,
-            self.config.shepherd_group
-        );
+    /// Execute a task without reporting the result to the shepherd
+    pub async fn execute(&self, invocation: &WorkerInvocation) -> WorkerExecution {
+        let task_name = &invocation.task_name;
+        let task_id = invocation.task_id;
 
-        let mut reconnect_delay = Duration::from_secs(1);
-        const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(60);
-
-        loop {
-            match self.run_connection().await {
-                Ok(_) => {
-                    log::info!("Worker connection terminated gracefully");
-                    break;
-                }
-                Err(e) => {
-                    if self.shutdown_signal.load(Ordering::Relaxed) {
-                        log::info!("Shutdown requested, stopping worker");
-                        break;
-                    }
-
-                    log::error!("Worker connection failed: {e}");
-                    log::info!("Reconnecting in {reconnect_delay:?}...");
-
-                    tokio::time::sleep(reconnect_delay).await;
-
-                    // Exponential backoff with jitter
-                    let jitter = 1.0 + (reconnect_delay.as_millis() as f64 % 100.0) / 1000.0;
-                    reconnect_delay =
-                        std::cmp::min(reconnect_delay.mul_f64(1.5 * jitter), MAX_RECONNECT_DELAY);
-                }
-            }
+        info!("Executing task {task_name} ({task_id})");
+        let args_value = Value::Array(invocation.argument_values());
+        debug!("Task arguments: {args_value}");
+        if invocation.kwargs != Value::Object(Default::default()) {
+            debug!("Task kwargs: {}", invocation.kwargs);
         }
 
-        Ok(())
-    }
-
-    /// Run a single connection to the orchestrator
-    async fn run_connection(&self) -> Result<(), AzollaError> {
-        // Connect to orchestrator
-        let mut client = self.connect().await?;
-
-        // Create bidirectional stream
-        let (tx, rx) = mpsc::channel(1000);
-        let request_stream = ReceiverStream::new(rx);
-
-        // Start the stream
-        let response_stream = client.stream(request_stream).await?.into_inner();
-
-        // Send hello message
-        let hello_msg = ClientMsg {
-            kind: Some(crate::proto::orchestrator::client_msg::Kind::Hello(Hello {
-                shepherd_uuid: self.shepherd_uuid.clone(),
-                max_concurrency: self.config.max_concurrency,
-                domain: self.config.domain.clone(),
-                shepherd_group: self.config.shepherd_group.clone(),
-            })),
-        };
-
-        tx.send(hello_msg)
-            .await
-            .map_err(|e| AzollaError::WorkerError(format!("Failed to send hello message: {e}")))?;
-
-        log::info!("Shepherd {} registered successfully", self.shepherd_uuid);
-
-        // Reset reconnect delay on successful connection
-        // (This would be handled by the main loop)
-
-        // Start heartbeat task
-        let heartbeat_tx = tx.clone();
-        let heartbeat_interval = self.config.heartbeat_interval;
-        let current_load = self.current_load.clone();
-        let shutdown_signal = self.shutdown_signal.clone();
-
-        let heartbeat_handle = tokio::spawn(async move {
-            Self::heartbeat_loop(
-                heartbeat_tx,
-                heartbeat_interval,
-                current_load,
-                shutdown_signal,
-            )
-            .await
-        });
-
-        // Main message processing loop
-        let result = self.process_messages(response_stream, tx).await;
-
-        // Cancel heartbeat task
-        heartbeat_handle.abort();
-
-        result
-    }
-
-    /// Connect to the orchestrator
-    async fn connect(&self) -> Result<ClusterServiceClient<Channel>, AzollaError> {
-        let endpoint = if self.config.orchestrator_endpoint.contains("://") {
-            self.config.orchestrator_endpoint.clone()
-        } else {
-            format!("http://{}", self.config.orchestrator_endpoint)
-        };
-
-        let client = ClusterServiceClient::connect(endpoint).await.map_err(|e| {
-            AzollaError::ConnectionError(format!("Failed to connect to orchestrator: {e}"))
-        })?;
-        Ok(client)
-    }
-
-    /// Process incoming messages from orchestrator
-    async fn process_messages(
-        &self,
-        mut response_stream: tonic::Streaming<ServerMsg>,
-        tx: mpsc::Sender<ClientMsg>,
-    ) -> Result<(), AzollaError> {
-        while let Some(message) = response_stream
-            .message()
-            .await
-            .map_err(|e| AzollaError::WorkerError(format!("Stream error: {e}")))?
-        {
-            match message.kind {
-                Some(crate::proto::orchestrator::server_msg::Kind::Task(task)) => {
-                    self.handle_task(task, tx.clone()).await?;
-                }
-                Some(crate::proto::orchestrator::server_msg::Kind::Ping(ping)) => {
-                    self.handle_ping(ping, tx.clone()).await?;
-                }
-                None => {
-                    log::warn!("Received message with no kind");
-                }
+        let start = Instant::now();
+        let execution = match self.tasks.get(task_name) {
+            Some(task_impl) => {
+                let args = invocation.argument_values();
+                Self::run_task(task_impl.clone(), task_id, args).await
             }
-
-            if self.shutdown_signal.load(Ordering::Relaxed) {
-                break;
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Handle incoming task from orchestrator
-    async fn handle_task(
-        &self,
-        task: ProtoTask,
-        tx: mpsc::Sender<ClientMsg>,
-    ) -> Result<(), AzollaError> {
-        log::info!("Received task: {} ({})", task.name, task.task_id);
-
-        // Send acknowledgment
-        let ack_msg = ClientMsg {
-            kind: Some(crate::proto::orchestrator::client_msg::Kind::Ack(Ack {
-                task_id: task.task_id.clone(),
-            })),
-        };
-
-        if let Err(e) = tx.send(ack_msg).await {
-            log::error!("Failed to send ack for task {}: {e}", task.task_id);
-            return Err(AzollaError::WorkerError(format!("Failed to send ack: {e}")));
-        }
-
-        // Execute task asynchronously
-        let tasks = self.tasks.clone();
-        let task_id = task.task_id.clone();
-
-        // Create load guard to ensure counter is properly managed even on panic
-        let load_guard = LoadGuard::new(self.current_load.clone());
-
-        tokio::spawn(async move {
-            // Move the guard into the async task to ensure it lives for the task duration
-            let _guard = load_guard;
-
-            let result = Self::execute_task_impl(tasks, task).await;
-
-            // Send result
-            let result_msg = ClientMsg {
-                kind: Some(crate::proto::orchestrator::client_msg::Kind::TaskResult(
-                    result,
-                )),
-            };
-
-            if let Err(e) = tx.send(result_msg).await {
-                log::error!("Failed to send result for task {task_id}: {e}");
-            }
-
-            // Load counter automatically decremented when _guard is dropped
-        });
-
-        Ok(())
-    }
-
-    /// Execute a task implementation
-    async fn execute_task_impl(
-        tasks: HashMap<String, Arc<dyn BoxedTask>>,
-        proto_task: ProtoTask,
-    ) -> ProtoTaskResult {
-        let task_id = proto_task.task_id.clone();
-
-        // Find the task implementation
-        let task_impl = match tasks.get(&proto_task.name) {
-            Some(task) => task.clone(),
             None => {
-                log::error!("No implementation found for task: {}", proto_task.name);
-                return ProtoTaskResult {
-                    task_id,
-                    result_type: Some(crate::proto::common::task_result::ResultType::Error(
-                        ErrorResult {
-                            r#type: "TaskNotFound".to_string(),
-                            message: format!(
-                                "No implementation found for task: {}",
-                                proto_task.name
-                            ),
-                            data: "{}".to_string(),
-                            retriable: false,
-                        },
-                    )),
-                };
+                warn!("No task implementation registered for {task_name}");
+                Self::task_not_found(task_id, task_name)
             }
         };
 
-        // Parse arguments
-        let args = match Self::parse_task_args(&proto_task.args) {
-            Ok(args) => args,
-            Err(e) => {
-                log::error!("Failed to parse args for task {task_id}: {e}");
-                return ProtoTaskResult {
-                    task_id,
-                    result_type: Some(crate::proto::common::task_result::ResultType::Error(
-                        ErrorResult {
-                            r#type: "ArgumentParseError".to_string(),
-                            message: format!("Failed to parse task arguments: {e}"),
-                            data: "{}".to_string(),
-                            retriable: false,
-                        },
-                    )),
-                };
+        let elapsed = start.elapsed();
+        match &execution.outcome {
+            TaskExecutionOutcome::Success(_) => {
+                info!("Task {task_id} completed successfully in {elapsed:?}");
             }
+            TaskExecutionOutcome::Failed(error) => {
+                warn!(
+                    "Task {task_id} failed in {elapsed:?}: {}:{}",
+                    error.error_type, error.message
+                );
+            }
+        }
+
+        execution
+    }
+
+    /// Execute a task and report the result back to the shepherd
+    pub async fn run_invocation(
+        &self,
+        invocation: WorkerInvocation,
+    ) -> Result<WorkerExecution, AzollaError> {
+        let execution = self.execute(&invocation).await;
+        self.report_to_shepherd(&invocation, &execution.task_result)
+            .await?;
+        Ok(execution)
+    }
+
+    async fn run_task(
+        task_impl: Arc<dyn BoxedTask>,
+        task_id: Uuid,
+        args: Vec<Value>,
+    ) -> WorkerExecution {
+        let outcome = match task_impl.execute_json(args).await {
+            Ok(value) => TaskExecutionOutcome::Success(value),
+            Err(error) => TaskExecutionOutcome::Failed(error),
         };
 
-        // Note: Argument validation is now handled automatically by the type system
+        Self::build_execution(task_id, outcome)
+    }
 
-        // Execute the task
-        let start_time = Instant::now();
-        let execution_result = task_impl.execute_json(args).await;
-        let execution_time = start_time.elapsed();
+    fn task_not_found(task_id: Uuid, task_name: &str) -> WorkerExecution {
+        let error = TaskError {
+            error_type: "TaskNotFound".to_string(),
+            message: format!("No implementation registered for task {task_name}"),
+            code: None,
+            data: Some(json!({ "task_name": task_name })),
+            retryable: false,
+        };
 
-        log::info!("Task {task_id} completed in {execution_time:?}");
+        Self::build_execution(task_id, TaskExecutionOutcome::Failed(error))
+    }
 
-        match execution_result {
-            Ok(result) => ProtoTaskResult {
-                task_id,
+    fn build_execution(task_id: Uuid, outcome: TaskExecutionOutcome) -> WorkerExecution {
+        let task_id_str = task_id.to_string();
+
+        let task_result = match &outcome {
+            TaskExecutionOutcome::Success(value) => TaskResult {
+                task_id: task_id_str.clone(),
                 result_type: Some(crate::proto::common::task_result::ResultType::Success(
                     SuccessResult {
-                        result: Some(AnyValue {
-                            value: Some(crate::proto::common::any_value::Value::JsonValue(
-                                result.to_string(),
-                            )),
-                        }),
+                        result: Some(Self::value_to_any(value)),
                     },
                 )),
             },
-            Err(e) => {
-                log::error!("Task {task_id} failed: {e}");
-
-                let crate::error::TaskError {
-                    error_type,
-                    message,
-                    code,
-                    data,
-                    retryable,
-                } = e;
-
-                let mut payload = serde_json::Map::new();
-                if let Some(code_value) = code {
-                    payload.insert("code".to_string(), Value::String(code_value));
-                }
-                if let Some(data_value) = data {
-                    payload.insert("data".to_string(), data_value);
+            TaskExecutionOutcome::Failed(error) => {
+                let mut data = error
+                    .data
+                    .clone()
+                    .unwrap_or_else(|| Value::Object(Default::default()));
+                if let Some(code_value) = &error.code {
+                    if let Value::Object(map) = &mut data {
+                        map.insert("code".to_string(), Value::String(code_value.clone()));
+                    }
                 }
 
-                let data_json = if payload.is_empty() {
+                let data_json = if data == Value::Object(Default::default()) {
                     "{}".to_string()
                 } else {
-                    Value::Object(payload).to_string()
+                    data.to_string()
                 };
 
-                ProtoTaskResult {
-                    task_id,
+                TaskResult {
+                    task_id: task_id_str.clone(),
                     result_type: Some(crate::proto::common::task_result::ResultType::Error(
                         ErrorResult {
-                            r#type: error_type,
-                            message,
+                            r#type: error.error_type.clone(),
+                            message: error.message.clone(),
                             data: data_json,
-                            retriable: retryable,
+                            retriable: error.retryable,
                         },
                     )),
                 }
             }
+        };
+
+        WorkerExecution {
+            outcome,
+            task_result,
         }
     }
 
-    /// Parse task arguments from JSON string
-    fn parse_task_args(args_json: &str) -> Result<Vec<Value>, serde_json::Error> {
-        if args_json.is_empty() {
-            return Ok(Vec::new());
-        }
-        serde_json::from_str(args_json)
-    }
-
-    /// Handle ping message from orchestrator
-    async fn handle_ping(
-        &self,
-        _ping: Ping,
-        _tx: mpsc::Sender<ClientMsg>,
-    ) -> Result<(), AzollaError> {
-        // Pings are handled automatically by the gRPC layer
-        // We could add custom ping handling here if needed
-        Ok(())
-    }
-
-    /// Heartbeat loop for status reporting
-    async fn heartbeat_loop(
-        tx: mpsc::Sender<ClientMsg>,
-        interval_duration: Duration,
-        current_load: Arc<AtomicU32>,
-        shutdown_signal: Arc<AtomicBool>,
-    ) {
-        let mut interval = interval(interval_duration);
-
-        while !shutdown_signal.load(Ordering::Relaxed) {
-            interval.tick().await;
-
-            let current = current_load.load(Ordering::Relaxed);
-            let status_msg = ClientMsg {
-                kind: Some(crate::proto::orchestrator::client_msg::Kind::Status(
-                    Status {
-                        current_load: current,
-                        available_capacity: 100u32.saturating_sub(current),
-                    },
-                )),
-            };
-
-            if let Err(e) = tx.send(status_msg).await {
-                log::error!("Failed to send status update: {e}");
-                break;
+    fn value_to_any(value: &Value) -> AnyValue {
+        let inner = match value {
+            Value::String(v) => Some(AnyInner::StringValue(v.clone())),
+            Value::Number(v) => {
+                if let Some(int_value) = v.as_i64() {
+                    Some(AnyInner::IntValue(int_value))
+                } else if let Some(u) = v.as_u64() {
+                    Some(AnyInner::IntValue(u as i64))
+                } else if let Some(f) = v.as_f64() {
+                    Some(AnyInner::DoubleValue(f))
+                } else {
+                    Some(AnyInner::JsonValue(value.to_string()))
+                }
             }
-        }
+            Value::Bool(v) => Some(AnyInner::BoolValue(*v)),
+            Value::Null => Some(AnyInner::JsonValue("null".to_string())),
+            Value::Array(_) | Value::Object(_) => Some(AnyInner::JsonValue(value.to_string())),
+        };
+
+        AnyValue { value: inner }
     }
 
-    /// Signal shutdown to the worker
-    pub fn shutdown(&self) {
-        self.shutdown_signal.store(true, Ordering::Relaxed);
+    async fn report_to_shepherd(
+        &self,
+        invocation: &WorkerInvocation,
+        task_result: &TaskResult,
+    ) -> Result<(), AzollaError> {
+        info!(
+            "Reporting result for task {} to {}",
+            invocation.task_id, invocation.shepherd_endpoint
+        );
+
+        let mut client = WorkerClient::connect(invocation.shepherd_endpoint.clone())
+            .await
+            .map_err(|e| {
+                AzollaError::ConnectionError(format!(
+                    "Failed to connect to shepherd at {}: {e}",
+                    invocation.shepherd_endpoint
+                ))
+            })?;
+
+        let request = ReportResultRequest {
+            task_id: invocation.task_id.to_string(),
+            result: Some(task_result.clone()),
+        };
+
+        let response = client.report_result(request).await.map_err(|e| {
+            AzollaError::WorkerError(format!(
+                "Failed to report result for task {}: {e}",
+                invocation.task_id
+            ))
+        })?;
+
+        let ack = response.into_inner();
+        if !ack.success {
+            error!(
+                "Shepherd rejected result for task {}: {}",
+                invocation.task_id, ack.message
+            );
+            return Err(AzollaError::WorkerError(format!(
+                "Shepherd rejected result for task {}: {}",
+                invocation.task_id, ack.message
+            )));
+        }
+
+        info!(
+            "Result for task {} reported successfully",
+            invocation.task_id
+        );
+        Ok(())
     }
 }
 
-/// Builder for worker configuration
+/// Builder for registering worker task implementations
 #[derive(Default)]
 pub struct WorkerBuilder {
-    config: WorkerConfig,
     tasks: HashMap<String, Arc<dyn BoxedTask>>,
 }
 
 impl WorkerBuilder {
-    /// Set orchestrator endpoint
-    pub fn orchestrator(mut self, endpoint: &str) -> Self {
-        self.config.orchestrator_endpoint = endpoint.to_string();
-        self
-    }
-
-    /// Set domain
-    pub fn domain(mut self, domain: &str) -> Self {
-        self.config.domain = domain.to_string();
-        self
-    }
-
-    /// Set shepherd group
-    pub fn shepherd_group(mut self, group: &str) -> Self {
-        self.config.shepherd_group = group.to_string();
-        self
-    }
-
-    /// Set max concurrency
-    pub fn max_concurrency(mut self, concurrency: u32) -> Self {
-        self.config.max_concurrency = concurrency;
-        self
-    }
-
-    /// Register a task implementation
+    /// Register a task implementation with the worker
     pub fn register_task<T: Task + 'static>(mut self, task: T) -> Self {
         let name = task.name().to_string();
-        self.tasks
-            .insert(name, Arc::new(task) as Arc<dyn BoxedTask>);
+        if self.tasks.contains_key(&name) {
+            warn!("Duplicate task registration detected for {name}, overriding previous implementation");
+        }
+        self.tasks.insert(name, Arc::new(task));
         self
     }
 
-    /// Discover tasks automatically (placeholder for proc macro integration)
-    pub fn discover_tasks(self) -> Self {
-        // TODO: This would use the inventory crate to discover
-        // all tasks registered by the proc macro
-
-        // For now, just return self unchanged
-        log::info!("Task discovery not yet implemented");
-        self
-    }
-
-    /// Build the worker
-    pub async fn build(self) -> Result<Worker, AzollaError> {
-        Ok(Worker {
-            config: self.config,
-            tasks: self.tasks,
-            shepherd_uuid: Uuid::new_v4().to_string(),
-            current_load: Arc::new(AtomicU32::new(0)),
-            shutdown_signal: Arc::new(AtomicBool::new(false)),
-        })
+    /// Build the worker runtime
+    pub fn build(self) -> Worker {
+        Worker { tasks: self.tasks }
     }
 }
 
-// (duplicate test module removed)
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::task::TaskResult;
+    use serde_json::json;
+    use std::future::Future;
+    use std::pin::Pin;
+
+    struct SimpleTask;
+
+    impl Task for SimpleTask {
+        type Args = ();
+
+        fn name(&self) -> &'static str {
+            "simple_task"
+        }
+
+        fn execute(
+            &self,
+            _args: Self::Args,
+        ) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+            Box::pin(async { Ok(json!({ "status": "ok" })) })
+        }
+    }
+
+    struct FailingTask;
+
+    impl Task for FailingTask {
+        type Args = ();
+
+        fn name(&self) -> &'static str {
+            "failing_task"
+        }
+
+        fn execute(
+            &self,
+            _args: Self::Args,
+        ) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+            Box::pin(async {
+                Err(TaskError::execution_failed("intentional failure")
+                    .with_error_type("TestError")
+                    .with_retryable(false))
+            })
+        }
+    }
+
+    fn test_invocation(task_name: &str) -> WorkerInvocation {
+        WorkerInvocation {
+            task_id: Uuid::new_v4(),
+            task_name: task_name.to_string(),
+            args: Vec::new(),
+            kwargs: Value::Object(Default::default()),
+            shepherd_endpoint: "http://127.0.0.1:50052".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_success_creates_success_result() {
+        let worker = Worker::builder().register_task(SimpleTask).build();
+        let invocation = test_invocation("simple_task");
+
+        let execution = worker.execute(&invocation).await;
+
+        assert!(execution.is_success());
+        match execution.outcome {
+            TaskExecutionOutcome::Success(value) => {
+                assert_eq!(value["status"], "ok");
+            }
+            TaskExecutionOutcome::Failed(_) => panic!("Expected success outcome"),
+        }
+
+        assert!(matches!(
+            execution.task_result.result_type,
+            Some(crate::proto::common::task_result::ResultType::Success(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn execute_failure_creates_error_result() {
+        let worker = Worker::builder().register_task(FailingTask).build();
+        let invocation = test_invocation("failing_task");
+
+        let execution = worker.execute(&invocation).await;
+
+        assert!(!execution.is_success());
+        match execution.outcome {
+            TaskExecutionOutcome::Failed(error) => {
+                assert_eq!(error.error_type(), "TestError");
+                assert!(!error.retryable);
+            }
+            TaskExecutionOutcome::Success(_) => panic!("Expected failure outcome"),
+        }
+
+        match execution.task_result.result_type {
+            Some(crate::proto::common::task_result::ResultType::Error(err)) => {
+                assert_eq!(err.r#type, "TestError");
+                assert!(!err.retriable);
+            }
+            _ => panic!("Expected error result type"),
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_task_returns_not_found_error() {
+        let worker = Worker::builder().build();
+        let invocation = test_invocation("unknown_task");
+
+        let execution = worker.execute(&invocation).await;
+        assert!(!execution.is_success());
+
+        match execution.outcome {
+            TaskExecutionOutcome::Failed(error) => {
+                assert_eq!(error.error_type(), "TaskNotFound");
+                assert!(!error.retryable);
+            }
+            _ => panic!("Expected failure outcome"),
+        }
+    }
+
+    #[test]
+    fn worker_invocation_from_json_parses_inputs() {
+        let invocation = WorkerInvocation::from_json(
+            &Uuid::new_v4().to_string(),
+            "json_task",
+            "[1,2,3]",
+            "{\"flag\": true}",
+            "http://127.0.0.1:50052",
+        )
+        .expect("invocation should parse");
+
+        assert_eq!(invocation.args.len(), 3);
+        assert_eq!(invocation.kwargs["flag"], true);
+        assert_eq!(invocation.task_name, "json_task");
+    }
+
+    #[test]
+    fn worker_invocation_from_json_handles_single_value() {
+        let invocation = WorkerInvocation::from_json(
+            &Uuid::new_v4().to_string(),
+            "single_value",
+            "{\"name\": \"value\"}",
+            "{}",
+            "http://127.0.0.1:50052",
+        )
+        .expect("invocation should parse");
+
+        assert_eq!(invocation.args.len(), 1);
+        assert_eq!(invocation.args[0]["name"], "value");
+    }
+
+    #[test]
+    fn worker_invocation_from_json_rejects_invalid_uuid() {
+        let err =
+            WorkerInvocation::from_json("not-a-uuid", "task", "[]", "{}", "http://127.0.0.1:50052")
+                .expect_err("expected invalid UUID error");
+
+        assert!(matches!(err, AzollaError::WorkerError(_)));
+    }
+}
