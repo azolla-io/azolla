@@ -22,7 +22,7 @@
 
 ## 🚀 Why Azolla?
 
-**Simple**: One database dependency. No Redis, no Kafka, no MQ, no complex setup.  
+**Simple**: Only depend on PostgreSQL. No Redis, no message broker, no etcd/ZooKeeper.  
 **Fast**: Sub-millisecond scheduling with 10K+ tasks/sec throughput.  
 **Reliable**: Exactly-once execution with complete audit trails.  
 **Polyglot**: Write tasks in any language via high-performance gRPC.

@@ -3,7 +3,7 @@ repos:
     hooks:
       - id: cargo-fmt
         name: cargo fmt
-        entry: bash -c 'cargo fmt --all -- --check'
+        entry: bash -c 'cargo fmt --all'
         language: system
         types: [rust]
         pass_filenames: false
@@ -15,7 +15,7 @@ repos:
         pass_filenames: false
       - id: rust-client-fmt-macros
         name: cargo fmt (azolla-macros)
-        entry: bash -c 'cd clients/rust/azolla-macros && cargo fmt --all -- --check'
+        entry: bash -c 'cd clients/rust/azolla-macros && cargo fmt --all'
         language: system
         files: ^clients/rust/azolla-macros/.*\.rs$
         pass_filenames: false
@@ -27,7 +27,7 @@ repos:
         pass_filenames: false
       - id: rust-client-fmt-client
         name: cargo fmt (azolla-client)
-        entry: bash -c 'cd clients/rust/azolla-client && cargo fmt --all -- --check'
+        entry: bash -c 'cd clients/rust/azolla-client && cargo fmt --all'
         language: system
         files: ^clients/rust/azolla-client/.*\.rs$
         pass_filenames: false

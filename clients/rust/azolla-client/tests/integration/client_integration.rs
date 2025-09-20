@@ -61,7 +61,7 @@ async fn test_client_connection_lifecycle() {
 
     let client = Client::builder()
         .endpoint(&orchestrator.endpoint())
-        .domain("test-domain")
+        .domain("test")
         .timeout(Duration::from_secs(10))
         .build()
         .await
@@ -95,7 +95,7 @@ async fn test_task_submission_with_retry_policy() {
 
     let client = Client::builder()
         .endpoint(&orchestrator.endpoint())
-        .domain("test-domain")
+        .domain("test")
         .build()
         .await
         .expect("Failed to connect to orchestrator");

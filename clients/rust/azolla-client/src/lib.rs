@@ -20,6 +20,10 @@ pub mod proto {
     pub mod common {
         tonic::include_proto!("azolla.common");
     }
+
+    pub mod shepherd {
+        tonic::include_proto!("azolla.shepherd");
+    }
 }
 
 // Re-export main public API
@@ -28,7 +32,7 @@ pub use convert::{ConversionError, FromJsonValue};
 pub use error::{AzollaError, TaskError};
 pub use retry_policy::{RetryPolicy, RetryPolicyBuilder, StopCondition, WaitStrategy};
 pub use task::{BoxedTask, Task, TaskResult};
-pub use worker::{Worker, WorkerBuilder};
+pub use worker::{TaskExecutionOutcome, Worker, WorkerBuilder, WorkerExecution, WorkerInvocation};
 
 // Re-export proc macro (only when macros feature is enabled)
 #[cfg(feature = "macros")]

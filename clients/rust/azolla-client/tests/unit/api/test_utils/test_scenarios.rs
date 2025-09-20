@@ -1,10 +1,9 @@
-use azolla_client::Client;
-use azolla_client::client::ClientConfig;
-use azolla_client::worker::WorkerConfig;
-use azolla_client::error::AzollaError;
-use std::time::Duration;
 use super::TestOrchestrator;
 use anyhow::Result;
+use azolla_client::client::ClientConfig;
+use azolla_client::Client;
+use futures::future;
+use std::time::Duration;
 
 /// Common test scenario utilities
 pub struct TestScenarios;
@@ -14,28 +13,13 @@ impl TestScenarios {
     pub async fn create_client(orchestrator: &TestOrchestrator) -> Result<Client> {
         let config = ClientConfig {
             endpoint: orchestrator.client_endpoint(),
-            domain: "test_domain".to_string(),
+            domain: "test".to_string(),
             timeout: Duration::from_secs(10),
         };
 
-        Client::with_config(config).await
+        Client::with_config(config)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to create client: {e}"))
-    }
-
-    /// Create a worker config for the test orchestrator
-    pub fn create_worker_config(orchestrator: &TestOrchestrator) -> WorkerConfig {
-        WorkerConfig {
-            orchestrator_endpoint: orchestrator.worker_endpoint(),
-            domain: "test_domain".to_string(),
-            shepherd_group: "test_workers".to_string(),
-            max_concurrency: 5,
-            heartbeat_interval: Duration::from_secs(5),
-        }
-    }
-
-    /// Create worker config with tasks (worker API is different than expected)
-    pub fn create_worker_config_with_tasks(orchestrator: &TestOrchestrator) -> WorkerConfig {
-        Self::create_worker_config(orchestrator)
     }
 
     /// Wait for a condition with timeout
@@ -72,19 +56,21 @@ impl TestScenarios {
     ) -> Result<Client> {
         let config = ClientConfig {
             endpoint: orchestrator.client_endpoint(),
-            domain: "test_domain".to_string(),
+            domain: "test".to_string(),
             timeout,
         };
 
-        Client::with_config(config).await
+        Client::with_config(config)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to create client with timeout: {e}"))
     }
 
     /// Try to create a client with invalid endpoint for error testing
-    pub async fn try_create_client_with_invalid_endpoint() -> Result<Client, azolla_client::error::AzollaError> {
+    pub async fn try_create_client_with_invalid_endpoint(
+    ) -> Result<Client, azolla_client::error::AzollaError> {
         let config = ClientConfig {
             endpoint: "http://invalid-host:99999".to_string(),
-            domain: "test_domain".to_string(),
+            domain: "test".to_string(),
             timeout: Duration::from_secs(1),
         };
 
@@ -97,13 +83,11 @@ impl TestScenarios {
         task_name: &str,
         args: serde_json::Value,
     ) -> Result<azolla_client::client::TaskExecutionResult> {
-        let handle = client
-            .submit_task(task_name)
-            .args(args)?
-            .submit()
-            .await?;
+        let handle = client.submit_task(task_name).args(args)?.submit().await?;
 
-        handle.wait().await
+        handle
+            .wait()
+            .await
             .map_err(|e| anyhow::anyhow!("Task execution failed: {e}"))
     }
 
@@ -112,24 +96,13 @@ impl TestScenarios {
         client: &Client,
         task_configs: Vec<(&str, serde_json::Value)>,
     ) -> Result<Vec<azolla_client::client::TaskExecutionResult>> {
-        let handles: Result<Vec<_>, AzollaError> = futures::future::try_join_all(
-            task_configs
-                .into_iter()
-                .map(|(task_name, args)| async move {
-                    client
-                        .submit_task(task_name)
-                        .args(args)?
-                        .submit()
-                        .await
-                }),
-        ).await;
+        let handles = future::try_join_all(task_configs.into_iter().map(|(task_name, args)| {
+            async move { client.submit_task(task_name).args(args)?.submit().await }
+        }))
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to submit tasks: {e}"))?;
 
-        let handles = handles.map_err(|e| anyhow::anyhow!("Failed to submit tasks: {e}"))?;
-
-        // Wait for all tasks to complete
-        let results = futures::future::try_join_all(
-            handles.into_iter().map(|h| h.wait())
-        ).await?;
+        let results = future::try_join_all(handles.into_iter().map(|handle| handle.wait())).await?;
 
         Ok(results)
     }
