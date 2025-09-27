@@ -10,23 +10,23 @@ coverage:
   status:
     project:
       core:
-        target: 0.64
-        threshold: 0.02
+        target: 64
+        threshold: 0
         flags:
           - core
       rust-client:
-        target: 0.65
-        threshold: 0.02
+        target: 65
+        threshold: 0
         flags:
           - rust-client
       python:
-        target: 0.75
-        threshold: 0.02
+        target: 75
+        threshold: 0
         flags:
           - python
     patch:
       default:
-        target: 0.8
+        target: 80
         threshold: 0
         base: auto
 

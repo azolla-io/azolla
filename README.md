@@ -1,6 +1,6 @@
 # Azolla
 
-[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org) [![PostgreSQL](https://img.shields.io/badge/postgresql-12%2B-blue.svg)](https://www.postgresql.org) [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org) [![PostgreSQL](https://img.shields.io/badge/postgresql-12%2B-blue.svg)](https://www.postgresql.org) [![Codecov](https://codecov.io/gh/azolla-io/azolla/branch/main/graph/badge.svg)](https://codecov.io/gh/azolla-io/azolla) [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 <div align="center">
 
@@ -14,7 +14,7 @@
 
 > **The reliable, high-performance, yet simple async task platform**
 
-**Azolla** delivers enterprise-grade task orchestration with breakthrough simplicity. Built in Rust, it achieves **sub-millisecond latency** and **10K+ tasks/sec** throughput while running on just PostgreSQL—no complex infrastructure required.
+**Azolla** delivers enterprise-grade task orchestration with breakthrough simplicity. Built in Rust, it achieves **sub-millisecond latency** and **10K+ tasks/sec** throughput while running on just PostgreSQL—no complex infrastructure required. Azolla ensures no task is ever lost, and every workflow leaves a persistent trail you can replay and audit.
 
 > ⚠️ **Development Status**: Azolla is under active development and ready for testing. Production readiness is expected in the coming months.
 
