@@ -1,0 +1,92 @@
+syntax = "proto3";
+
+package azolla.common;
+
+// Shared data structures used by both orchestrator and shepherd services
+
+message AnyValue {
+  oneof value {
+    string string_value = 1;
+    int64 int_value = 2;
+    double double_value = 3;
+    bool bool_value = 4;
+    string json_value = 5; // For complex objects
+    uint64 uint_value = 6;
+  }
+}
+
+// Retry policy data structures shared across services
+
+message RetryPolicyStop {
+  optional uint32 max_attempts = 1;
+  optional double max_delay = 2; // Seconds
+}
+
+message RetryPolicyFixedWait {
+  double delay = 1; // Seconds
+}
+
+message RetryPolicyExponentialWait {
+  double initial_delay = 1;
+  double multiplier = 2;
+  double max_delay = 3;
+}
+
+// Exponential jitter shares same parameters as exponential
+message RetryPolicyExponentialJitterWait {
+  double initial_delay = 1;
+  double multiplier = 2;
+  double max_delay = 3;
+}
+
+message RetryPolicyWait {
+  oneof kind {
+    RetryPolicyFixedWait fixed = 1;
+    RetryPolicyExponentialWait exponential = 2;
+    RetryPolicyExponentialJitterWait exponential_jitter = 3;
+  }
+}
+
+message RetryPolicyRetry {
+  repeated string include_errors = 1;
+  repeated string exclude_errors = 2;
+}
+
+message RetryPolicy {
+  uint32 version = 1;
+  RetryPolicyStop stop = 2;
+  RetryPolicyWait wait = 3;
+  RetryPolicyRetry retry = 4;
+}
+
+message StructValue {
+  string json_data = 1; // JSON representation of structured data
+}
+
+message SuccessResult {
+  AnyValue result = 1;
+}
+
+message ErrorResult {
+  string type = 1;        // e.g., "ValueError"
+  string message = 2;     // human-readable message
+  string data = 3;        // JSON representation of structured data, default to "{}"
+  bool retriable = 4;     // is the error retriable, default to True
+}
+
+message TaskResult {
+  string task_id = 1;
+  oneof result_type {
+    SuccessResult success = 2;
+    ErrorResult error = 3;
+  }
+}
+
+message Task {
+  string task_id = 1;
+  string name = 2;
+  string args = 3; // JSON array of arguments for type safety
+  string kwargs = 4; // JSON string
+  optional uint64 memory_limit = 5; // bytes
+  optional uint32 cpu_limit = 6; // millicores
+}

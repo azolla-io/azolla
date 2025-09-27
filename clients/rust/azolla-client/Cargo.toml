@@ -1,0 +1,87 @@
+[package]
+name = "azolla-client"
+version = "0.1.1"
+edition = "2021"
+rust-version = "1.70"
+authors = ["Azolla Team <team@azolla.io>"]
+license = "Apache-2.0"
+description = "Type-safe Rust client library for Azolla distributed task processing platform with proc macro support"
+homepage = "https://azolla.io"
+repository = "https://github.com/azolla-io/azolla"
+documentation = "https://docs.rs/azolla-client"
+keywords = ["distributed", "tasks", "async", "grpc", "orchestration"]
+categories = ["asynchronous", "network-programming", "api-bindings"]
+exclude = [
+    "target/",
+    ".git/",
+    "*.tmp"
+]
+
+
+[dependencies]
+# Core async runtime
+tokio = { version = "1.0", features = ["rt-multi-thread", "net", "time", "macros"] }
+
+# gRPC client
+tonic = "0.11"
+prost = "0.12"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "2.0"
+
+# Async trait support  
+async-trait = "0.1"
+
+# Logging
+log = "0.4"
+
+# UUID generation
+uuid = { version = "1.0", features = ["v4"] }
+
+# Stream utilities for tokio
+tokio-stream = "0.1"
+
+# Proc macro for task definitions (optional)
+azolla-macros = { path = "../azolla-macros", optional = true }
+
+[build-dependencies]
+tonic-build = "0.11"
+
+[features]
+default = []
+
+# Enable proc macro support for task definitions
+macros = ["azolla-macros"]
+
+# Internal feature for proc macro path resolution (used by azolla main crate)
+__azolla_internal__ = []
+
+[dev-dependencies]
+# Async testing utilities
+tokio-test = "0.4"
+
+# Performance testing and benchmarking  
+criterion = { version = "0.5", features = ["html_reports"] }
+
+# Mock and test utilities
+mockall = "0.12"
+
+# Ensure tests run in sequence when needed
+serial_test = "3.0"
+
+# Additional testing assertions
+assert_matches = "1.5"
+
+# Property-based testing
+proptest = "1.0"
+
+# Integration testing dependencies
+anyhow = "1.0"
+reqwest = "0.11"
+futures = "0.3"
+
+# Examples moved to repo root examples/ directory

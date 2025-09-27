@@ -1,0 +1,152 @@
+syntax = "proto3";
+
+package azolla.orchestrator;
+
+import "common.proto";
+
+// Public API service for end-user clients of the Azolla platform.
+service ClientService {
+  // Creates a new task instance.
+  rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse);
+  
+  // Waits for a task to reach a terminal state.
+  rpc WaitForTask(WaitForTaskRequest) returns (WaitForTaskResponse);
+
+  // Creates a new flow instance.
+  rpc CreateFlow(CreateFlowRequest) returns (CreateFlowResponse);
+
+  // Waits for a flow to reach a terminal state.
+  rpc WaitForFlow(WaitForFlowRequest) returns (WaitForFlowResponse);
+
+  // Publishes an event associated with a task.
+  rpc PublishTaskEvent(PublishTaskEventRequest) returns (PublishTaskEventResponse);
+
+  // Publishes an event associated with a flow.
+  rpc PublishFlowEvent(PublishFlowEventRequest) returns (PublishFlowEventResponse);
+}
+
+// Internal service for orchestrator-shepherd communication.
+service ClusterService {
+  // Establishes a bi-directional stream between shepherd and orchestrator.
+  rpc Stream(stream ClientMsg) returns (stream ServerMsg);
+}
+
+// --- Message Definitions ---
+
+message CreateTaskRequest {
+  string name = 1;
+  string domain = 2;
+  azolla.common.RetryPolicy retry_policy = 3;
+  string args = 4; // JSON array of arguments for type safety
+  string kwargs = 5;
+  optional string flow_instance_id = 6;
+  // Optional shepherd group for dispatch scoping. If omitted, domain's default applies.
+  optional string shepherd_group = 7;
+}
+
+message CreateTaskResponse {
+  string task_id = 1;
+}
+
+message WaitForTaskRequest {
+  string task_id = 1;
+  string domain = 2;
+  // Optional timeout in milliseconds. If not set, will wait indefinitely until result becomes available.
+  optional uint64 timeout_ms = 3;
+}
+
+enum WaitForTaskStatus {
+  WAIT_FOR_TASK_STATUS_UNSPECIFIED = 0;
+  WAIT_FOR_TASK_STATUS_COMPLETED = 1;         // Task completed (check result_type for success/failure)
+  WAIT_FOR_TASK_STATUS_TIMEOUT = 2;           // Wait timeout exceeded
+  WAIT_FOR_TASK_STATUS_TASK_NOT_FOUND = 3;    // Task not found in TaskSet
+  WAIT_FOR_TASK_STATUS_INTERNAL_ERROR = 4;    // Internal server error
+}
+
+message WaitForTaskResponse {
+  WaitForTaskStatus status_code = 1;
+  oneof result_type {
+    azolla.common.SuccessResult success = 2;
+    azolla.common.ErrorResult error = 3;
+  }
+}
+
+message CreateFlowRequest {
+  string name = 1;
+  string domain = 2;
+  string dag = 3; // JSON representation of the DAG
+}
+
+message CreateFlowResponse {
+  string flow_id = 1;
+}
+
+message WaitForFlowRequest {
+  string flow_id = 1;
+  string domain = 2;
+}
+
+message WaitForFlowResponse {
+  string status = 1;
+}
+
+message PublishTaskEventRequest {
+  string task_instance_id = 1;
+  string domain = 2;
+  int32 event_type = 3; // smallint
+  string metadata = 4; // JSON
+}
+
+message PublishTaskEventResponse {
+  bool success = 1;
+}
+
+message PublishFlowEventRequest {
+  string flow_instance_id = 1;
+  string domain = 2;
+  int32 event_type = 3;
+  string metadata = 4;
+}
+
+message PublishFlowEventResponse {
+  bool success = 1;
+}
+
+// --- Shepherd/Dispatch Messages ---
+
+message ClientMsg {
+  oneof kind {
+    Hello hello = 1;
+    Ack ack = 2;
+    Status status = 3;
+    azolla.common.TaskResult task_result = 4;
+  }
+}
+
+message ServerMsg {
+  oneof kind {
+    azolla.common.Task task = 1;
+    Ping ping = 2;
+  }
+}
+
+message Hello {
+  string shepherd_uuid = 1;
+  uint32 max_concurrency = 2;
+  // Domain and shepherd group this shepherd serves
+  string domain = 3;
+  string shepherd_group = 4;
+}
+
+message Ack {
+  string task_id = 1;
+}
+
+message Status {
+  uint32 current_load = 1;
+  uint32 available_capacity = 2;
+}
+
+message Ping {
+  int64 timestamp = 1;
+}

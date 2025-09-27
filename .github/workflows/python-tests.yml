@@ -1,0 +1,217 @@
+name: Python Tests
+
+permissions:
+  contents: read
+  actions: read
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "clients/python/**"
+      - ".github/workflows/python-tests.yml"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "clients/python/**"
+      - ".github/workflows/python-tests.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test-and-coverage:
+    name: Python Test and Coverage
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: azolla
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 10
+          --tmpfs /var/lib/postgresql/data
+        ports:
+          - 5432:5432
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Cache apt packages
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: protobuf-compiler libssl-dev pkg-config
+        version: 1.0
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: "comprehensive-tests"
+        cache-targets: true
+        cache-all-crates: true
+        cache-on-failure: true
+    
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.9"
+    
+    - name: Cache pip dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-comprehensive-${{ hashFiles('clients/python/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-comprehensive-
+          ${{ runner.os }}-pip-
+    
+    - name: Set up database environment
+      run: |
+        echo "AZOLLA__DATABASE__URL=postgres://postgres:postgres@localhost:5432/azolla" >> $GITHUB_ENV
+    
+    - name: Build Rust orchestrator
+      run: cargo build --verbose --jobs 2
+      timeout-minutes: 10
+    
+    - name: Install Python dependencies
+      working-directory: clients/python
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev,testing,integration]"
+    
+    - name: Lint with ruff
+      working-directory: clients/python
+      run: ruff check src tests --output-format=github
+    
+    - name: Format check with ruff
+      working-directory: clients/python
+      run: ruff format --check src tests
+    
+    - name: Type check with mypy
+      working-directory: clients/python
+      run: mypy src
+    
+    - name: Run comprehensive tests with coverage
+      working-directory: clients/python
+      run: |
+        pytest tests/ \
+          --cov=azolla \
+          --cov-report=xml \
+          --cov-report=term-missing \
+          --cov-report=html \
+          --cov-fail-under=75 \
+          -v \
+          -m "not slow" \
+          --tb=short
+      timeout-minutes: 20
+
+    - name: Upload Python coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        files: clients/python/coverage.xml
+        flags: python
+        fail_ci_if_error: true
+
+    - name: Upload test logs
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-logs
+        path: integration_test_logs/
+        retention-days: 3
+    
+    - name: Upload coverage report
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report
+        path: clients/python/htmlcov/
+        retention-days: 7
+    
+  python-security:
+    name: Python Security Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.9"
+    
+    - name: Install security tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install safety bandit
+    
+    - name: Check for known vulnerabilities
+      working-directory: clients/python
+      run: |
+        # Install dependencies first to check them
+        pip install -e ".[all]"
+        safety check --json --output safety-report.json || true
+        safety check
+    
+    - name: Run bandit security linter
+      working-directory: clients/python
+      run: |
+        bandit -r src/ -f json -o bandit-report.json || true
+        bandit -r src/
+    
+    - name: Upload security reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: security-reports
+        path: |
+          clients/python/safety-report.json
+          clients/python/bandit-report.json
+        retention-days: 30
+
+  python-build-test:
+    name: Test Python Package Build
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.9"
+    
+    - name: Install build tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install build twine
+    
+    - name: Build package
+      working-directory: clients/python
+      run: python -m build
+    
+    - name: Check package
+      working-directory: clients/python
+      run: |
+        twine check dist/*
+        # Test installation
+        pip install dist/*.whl
+        python -c "import azolla; print(f'Azolla version: {azolla.__version__}')"
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-package
+        path: clients/python/dist/
+        retention-days: 7

@@ -1,0 +1,15 @@
+# Azolla Shepherd Configuration
+orchestrator_endpoint = "http://127.0.0.1:52710"
+max_concurrency = 4
+worker_grpc_port = 50052
+worker_binary_path = "./target/debug/azolla-worker"
+domain = "test"
+shepherd_group = "default"
+
+# Optional timeouts
+heartbeat_interval_secs = 30
+reconnect_backoff_secs = 5
+worker_timeout_secs = 300
+
+# Logging
+log_level = "info"

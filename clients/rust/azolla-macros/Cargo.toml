@@ -1,0 +1,30 @@
+[package]
+name = "azolla-macros"
+version = "0.1.1"
+edition = "2021"
+rust-version = "1.70"
+authors = ["Azolla Team <team@azolla.io>"]
+license = "Apache-2.0"
+description = "Procedural macros for type-safe Azolla task definitions with automatic argument extraction"
+homepage = "https://azolla.io"
+repository = "https://github.com/azolla-io/azolla"
+documentation = "https://docs.rs/azolla-macros"
+keywords = ["macros", "tasks", "distributed", "proc-macro", "code-generation"]
+categories = ["development-tools::procedural-macro-helpers", "asynchronous"]
+
+[lib]
+proc-macro = true
+
+[features]
+__azolla_internal__ = []
+
+[dependencies]
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = { version = "2.0", features = ["full", "extra-traits"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
+azolla-client = { path = "../azolla-client", features = ["macros"] }

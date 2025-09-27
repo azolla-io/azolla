@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: azolla_postgres
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=azolla
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d azolla"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  azolla-orchestrator:
+    build: .
+    container_name: azolla_orchestrator
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Override the database URL to point to the postgres container
+      - AZOLLA__DATABASE__URL=postgres://postgres:postgres@postgres:5432/azolla
+      # Set the Rust logger to show info level logs
+      - RUST_LOG=info
+    ports:
+      - "52710:52710"
+
+volumes:
+  postgres_data: 

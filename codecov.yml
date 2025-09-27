@@ -1,0 +1,53 @@
+codecov:
+  notify:
+    require_ci_to_pass: yes
+  max_report_age: off
+
+coverage:
+  precision: 2
+  round: nearest
+  range: 0..100
+  status:
+    project:
+      core:
+        target: 0.64
+        threshold: 0.02
+        flags:
+          - core
+      rust-client:
+        target: 0.65
+        threshold: 0.02
+        flags:
+          - rust-client
+      python:
+        target: 0.75
+        threshold: 0.02
+        flags:
+          - python
+    patch:
+      default:
+        target: 0.8
+        threshold: 0
+        base: auto
+
+flags:
+  core:
+    paths:
+      - src/
+      - proto/
+      - migrations/
+      - tests/
+  rust-client:
+    paths:
+      - clients/rust/azolla-client/
+      - clients/rust/azolla-macros/
+  python:
+    paths:
+      - clients/python/
+
+ignore:
+  - "clients/python/htmlcov/**"
+  - "clients/python/dist/**"
+  - "clients/rust/**/target/**"
+  - "target/**"
+  - "**/*.generated.rs"

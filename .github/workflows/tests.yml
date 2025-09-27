@@ -1,0 +1,194 @@
+name: Test
+
+permissions:
+  contents: read
+  actions: read
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  TARPAULIN_VERSION: "0.32.8"
+
+jobs:
+  rust-client-tests:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: azolla
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 10
+          --tmpfs /var/lib/postgresql/data
+        ports:
+          - 5432:5432
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Cache apt packages
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: protobuf-compiler libssl-dev pkg-config
+        version: 1.0
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: "rust-client-tests"
+        cache-targets: true
+        cache-all-crates: true
+        cache-on-failure: true
+        workspaces: |
+          clients/rust/azolla-client
+          clients/rust/azolla-macros
+
+    - name: Cache cargo-tarpaulin
+      uses: actions/cache@v4
+      id: cache-client-tarpaulin
+      with:
+        path: ~/.cargo/bin/cargo-tarpaulin
+        key: ${{ runner.os }}-cargo-tarpaulin-${{ env.TARPAULIN_VERSION }}
+
+    - name: Install cargo-tarpaulin
+      if: steps.cache-client-tarpaulin.outputs.cache-hit != 'true'
+      run: cargo install cargo-tarpaulin --version ${{ env.TARPAULIN_VERSION }}
+      timeout-minutes: 10
+
+    - name: Set up database environment
+      run: |
+        echo "DATABASE_URL=postgres://postgres:postgres@localhost:5432/azolla" >> $GITHUB_ENV
+
+    - name: Build main project (for orchestrator binary)
+      run: cargo build --verbose --jobs 2
+      timeout-minutes: 10
+
+    - name: Build and test azolla-macros
+      run: |
+        cd clients/rust/azolla-macros
+        cargo fmt --all -- --check
+        cargo clippy --all-targets --all-features -- -D warnings
+        cargo build --verbose
+        cargo test --verbose
+      timeout-minutes: 10
+
+    - name: Build and test azolla-client with coverage
+      run: |
+        cd clients/rust/azolla-client
+        cargo fmt --all -- --check
+        cargo clippy --all-targets --all-features -- -D warnings
+        cargo build --verbose --all-features
+        cargo tarpaulin --verbose --all-features --timeout 120 --out xml --output-dir ./coverage --jobs 4 --engine llvm --fail-under 65
+      timeout-minutes: 15
+
+    - name: Upload rust client coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        files: clients/rust/azolla-client/coverage/cobertura.xml
+        flags: rust-client
+        fail_ci_if_error: true
+
+    - name: Upload client coverage report
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-rust-client
+        path: clients/rust/azolla-client/coverage/cobertura.xml
+        retention-days: 1
+
+  test-and-coverage:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: azolla
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 10
+          --tmpfs /var/lib/postgresql/data
+        ports:
+          - 5432:5432
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Cache apt packages
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: protobuf-compiler libssl-dev pkg-config
+        version: 1.0
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: "tests"
+        cache-targets: true
+        cache-all-crates: true
+        cache-on-failure: true
+    
+    - name: Set up database environment
+      run: |
+        echo "DATABASE_URL=postgres://postgres:postgres@localhost:5432/azolla" >> $GITHUB_ENV
+    
+    - name: Build
+      run: cargo build --verbose --jobs 2
+      timeout-minutes: 10
+    
+    - name: Cache cargo-tarpaulin
+      uses: actions/cache@v4
+      id: cache-tarpaulin
+      with:
+        path: ~/.cargo/bin/cargo-tarpaulin
+        key: ${{ runner.os }}-cargo-tarpaulin-${{ env.TARPAULIN_VERSION }}
+    
+    - name: Install cargo-tarpaulin
+      if: steps.cache-tarpaulin.outputs.cache-hit != 'true'
+      run: cargo install cargo-tarpaulin --version ${{ env.TARPAULIN_VERSION }}
+      timeout-minutes: 10
+    
+    - name: Run tests with coverage
+      run: cargo tarpaulin --verbose --all-features --exclude-files 'clients/*' --timeout 120 --out xml --output-dir ./coverage --jobs 8 --engine llvm --fail-under 64
+      timeout-minutes: 15
+
+    - name: Upload core coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        files: ./coverage/cobertura.xml
+        flags: core
+        fail_ci_if_error: true
+
+    - name: Upload current coverage report
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-current
+        path: ./coverage/cobertura.xml
+        retention-days: 1
+    
+    
+    

@@ -1,0 +1,70 @@
+[package]
+name = "azolla"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "azolla-orchestrator"
+path = "src/orchestrator/main.rs"
+
+[[bin]]
+name = "azolla-shepherd"
+path = "src/bin/azolla-shepherd.rs"
+
+[[bin]]
+name = "azolla-worker"
+path = "src/bin/azolla-worker.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+tonic = "0.11"
+prost = "0.12"
+tokio-postgres = { version = "0.7", features = ["with-serde_json-1", "with-chrono-0_4", "with-uuid-1"] }
+deadpool-postgres = "0.12"
+refinery = { version = "0.8", features = ["tokio-postgres"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+anyhow = "1.0"
+config = "0.14"
+rand = "0.8"
+# Log with compile-time level filtering
+log = { version = "0.4", features = ["release_max_level_warn"] }
+env_logger = "0.11"
+chrono = { version = "0.4", features = ["serde"] }
+dashmap = "5.5"
+rayon = "1.10.0"
+futures = "0.3.31"
+fastrand = "2.0"
+testcontainers = "0.24.0"
+openssl = { version = "0.10", features = ["vendored"] }
+postgres-openssl = "0.5"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+clap = { version = "4.0", features = ["derive"] }
+rustc-hash = "1.1"
+thiserror = "2.0"
+async-trait = "0.1"
+azolla-macros = { path = "clients/rust/azolla-macros", features = ["__azolla_internal__"] }
+azolla-client = { path = "clients/rust/azolla-client", features = ["macros"] }
+
+[build-dependencies]
+tonic-build = "0.11"
+
+[features]
+default = []
+test-harness = []
+__azolla_internal__ = []
+
+# Examples
+[[example]]
+name = "basic_client_example"
+path = "examples/rust/basic_client_example.rs"
+
+[[example]]
+name = "basic_worker_example"
+path = "examples/rust/basic_worker_example.rs"
+
+[[example]]
+name = "proc_macro_tasks"
+path = "examples/rust/proc_macro_tasks.rs"

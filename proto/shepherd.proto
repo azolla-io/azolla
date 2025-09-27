@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package azolla.shepherd;
+
+import "common.proto";
+
+// Worker service exposed by shepherd for workers to report results.
+service Worker {
+  // Workers call this to report task completion.
+  rpc ReportResult(ReportResultRequest) returns (ReportResultResponse);
+}
+
+// --- Worker Messages ---
+
+message ReportResultRequest {
+  string task_id = 1;
+  azolla.common.TaskResult result = 2;
+}
+
+message ReportResultResponse {
+  bool success = 1;
+  string message = 2;
+}

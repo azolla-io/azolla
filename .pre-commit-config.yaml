@@ -1,0 +1,57 @@
+repos:
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: bash -c 'cargo fmt --all'
+        language: system
+        types: [rust]
+        pass_filenames: false
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: cargo clippy --all-targets --all-features -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+      - id: rust-client-fmt-macros
+        name: cargo fmt (azolla-macros)
+        entry: bash -c 'cd clients/rust/azolla-macros && cargo fmt --all'
+        language: system
+        files: ^clients/rust/azolla-macros/.*\.rs$
+        pass_filenames: false
+      - id: rust-client-clippy-macros
+        name: cargo clippy (azolla-macros)
+        entry: bash -c 'cd clients/rust/azolla-macros && cargo clippy --all-targets --all-features -- -D warnings'
+        language: system
+        files: ^clients/rust/azolla-macros/.*\.rs$
+        pass_filenames: false
+      - id: rust-client-fmt-client
+        name: cargo fmt (azolla-client)
+        entry: bash -c 'cd clients/rust/azolla-client && cargo fmt --all'
+        language: system
+        files: ^clients/rust/azolla-client/.*\.rs$
+        pass_filenames: false
+      - id: rust-client-clippy-client
+        name: cargo clippy (azolla-client)
+        entry: bash -c 'cd clients/rust/azolla-client && cargo clippy --all-targets --all-features -- -D warnings'
+        language: system
+        files: ^clients/rust/azolla-client/.*\.rs$
+        pass_filenames: false
+      - id: python-ruff-check
+        name: ruff check
+        entry: bash -c 'cd clients/python && ../../venv/bin/ruff check src tests'
+        language: system
+        files: ^clients/python/.*\.py$
+        pass_filenames: false
+      - id: python-ruff-format
+        name: ruff format check
+        entry: bash -c 'cd clients/python && ../../venv/bin/ruff format --check src tests'
+        language: system
+        files: ^clients/python/.*\.py$
+        pass_filenames: false
+      - id: python-mypy-check
+        name: mypy check
+        entry: bash -c 'cd clients/python && ../../venv/bin/mypy src'
+        language: system
+        files: ^clients/python/src/.*\.py$
+        pass_filenames: false

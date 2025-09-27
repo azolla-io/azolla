@@ -1,0 +1,2 @@
+# Collapse generated gRPC files in GitHub PR reviews
+clients/python/src/azolla/_grpc/* linguist-generated=true
