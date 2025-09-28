@@ -1767,7 +1767,13 @@ mod tests {
                 task.retry_policy = json!({
                     "version": 1,
                     "stop": {"max_attempts": 3},
-                    "wait": {"strategy": "exponential_jitter", "initial_delay": 1, "multiplier": 2, "max_delay": 300},
+                    "wait": {
+                        "strategy": "fixed",
+                        "delay": 30,
+                        "initial_delay": 30,
+                        "multiplier": 1,
+                        "max_delay": 30
+                    },
                     "retry": {"include_errors": ["ValueError", "RuntimeError", "RetryableError", "FatalError"]}
                 });
                 task.status = TASK_STATUS_ATTEMPT_STARTED;
