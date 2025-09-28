@@ -54,3 +54,46 @@ helm uninstall benchmark --namespace azolla-benchmark
 ```
 
 This command removes all benchmark-related Kubernetes resources but leaves your PostgreSQL instance untouched.
+
+## Automated Benchmark Runner
+
+The helper script `scripts/run_benchmark_kind.py` automates benchmark execution in two modes:
+
+- **kind (default)** – provisions a throwaway kind cluster, deploys the chart, streams benchmark logs, and tears everything down (unless you pass `--keep-cluster`/`--keep-namespace`).
+- **EKS/production** – reuses the current kube-context (optionally supplied via `--kube-context`), deploys into the specified namespace, and leaves the cluster untouched.
+
+Common behaviour:
+
+- validates prerequisites (`kubectl`, `helm`, and `kind` when running in kind mode)
+- creates the namespace (if missing), provisions a unique temporary PostgreSQL database based on the template URL you provide, and seeds the secret with that per-run connection string
+- installs the Helm chart using the GHCR images/tags passed on the command line
+- waits for the orchestrator deployment and benchmark Job to complete
+- streams Job logs, which include interval and final throughput metrics
+- optionally cleans up the Helm release, namespace, kind cluster, and drops the temporary database
+
+### kind example
+
+```bash
+python3 scripts/run_benchmark_kind.py \
+  --mode kind \
+  --database-url 'postgres://USER:PASSWORD@HOST:5432/azolla' \
+  --orchestrator-image ghcr.io/<org>/azolla-orchestrator:<tag> \
+  --shepherd-image ghcr.io/<org>/azolla-shepherd:<tag> \
+  --benchmark-image ghcr.io/<org>/azolla-benchmark-client:<tag>
+```
+
+### EKS example
+
+```bash
+python3 scripts/run_benchmark_kind.py \
+  --mode eks \
+  --kube-context <your-eks-context> \
+  --database-url 'postgres://USER:PASSWORD@HOST:5432/azolla' \
+  --namespace azolla-benchmark \
+  --orchestrator-image ghcr.io/<org>/azolla-orchestrator:<tag> \
+  --shepherd-image ghcr.io/<org>/azolla-shepherd:<tag> \
+  --benchmark-image ghcr.io/<org>/azolla-benchmark-client:<tag> \
+  --keep-namespace
+```
+
+Use a database URL that points at an existing admin database (for example `postgres://user:pass@host:5432/postgres`). The script will create a randomly named database for the benchmark run, inject that URL into the cluster, and drop the database during teardown so multiple runs do not interfere with each other. The script echoes the benchmark logs to stdout so you can capture the sustained throughput. Ensure the referenced GHCR images exist and the supplied database URL is reachable from your cluster.

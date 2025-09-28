@@ -72,7 +72,3 @@ path = "examples/rust/proc_macro_tasks.rs"
 [[example]]
 name = "benchmark_client_example"
 path = "examples/rust/benchmark_client_example.rs"
-
-[[example]]
-name = "benchmark_worker_example"
-path = "examples/rust/benchmark_worker_example.rs"

@@ -19,7 +19,7 @@ RUN apt-get update \
 
 # Copy source and build in release mode
 COPY . .
-RUN cargo build --locked --release --bin azolla-orchestrator --bin azolla-shepherd --bin azolla-worker --example benchmark_client_example --example benchmark_worker_example
+RUN cargo build --locked --release --bin azolla-orchestrator --bin azolla-shepherd --bin azolla-worker --example benchmark_client_example
 RUN strip target/release/azolla-orchestrator target/release/azolla-shepherd target/release/azolla-worker target/release/examples/benchmark_client_example
 
 FROM debian:bookworm-slim AS runtime-base

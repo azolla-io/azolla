@@ -114,7 +114,7 @@ fn main() -> anyhow::Result<()> {
                     .context("failed to construct client")?;
 
                 for _ in 0..thread_requests {
-                    if thread_shutdown.load(Ordering::Relaxed) {
+                    if thread_shutdown.load(Ordering::Acquire) {
                         break;
                     }
 
@@ -163,7 +163,7 @@ fn main() -> anyhow::Result<()> {
         loop {
             thread::sleep(report_interval);
 
-            if reporter_shutdown.load(Ordering::Relaxed) {
+            if reporter_shutdown.load(Ordering::Acquire) {
                 break;
             }
 
@@ -195,16 +195,16 @@ fn main() -> anyhow::Result<()> {
             Ok(Ok(())) => {}
             Ok(Err(err)) => {
                 thread_errors.push(err);
-                shutdown.store(true, Ordering::Relaxed);
+                shutdown.store(true, Ordering::Release);
             }
             Err(panic) => {
-                shutdown.store(true, Ordering::Relaxed);
+                shutdown.store(true, Ordering::Release);
                 thread_errors.push(anyhow!("thread panicked: {panic:?}"));
             }
         }
     }
 
-    shutdown.store(true, Ordering::Relaxed);
+    shutdown.store(true, Ordering::Release);
     if let Err(err) = reporter_handle.join() {
         log::warn!("reporter thread panicked: {err:?}");
     }
