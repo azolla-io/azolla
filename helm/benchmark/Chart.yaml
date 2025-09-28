@@ -1,0 +1,5 @@
+apiVersion: v2
+name: azolla-benchmark
+description: Helm chart to run Azolla throughput benchmark against an external PostgreSQL database
+version: 0.1.0
+appVersion: "0.1.0"

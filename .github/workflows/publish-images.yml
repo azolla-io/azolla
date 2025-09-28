@@ -90,6 +90,21 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=https://github.com/${{ steps.vars.outputs.repository }}
 
+      - name: Benchmark client metadata
+        id: meta-benchmark
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/azolla-benchmark-client
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=tag
+            type=sha,format=short,prefix=sha-
+          labels: |
+            org.opencontainers.image.title=Azolla Benchmark Client
+            org.opencontainers.image.version=${{ steps.vars.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ steps.vars.outputs.repository }}
+
       - name: Build and push orchestrator image
         uses: docker/build-push-action@v5
         with:
@@ -123,3 +138,20 @@ jobs:
             REPOSITORY=${{ steps.vars.outputs.repository }}
           cache-from: type=gha,scope=azolla-shepherd
           cache-to: type=gha,mode=max,scope=azolla-shepherd
+
+      - name: Build and push benchmark client image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: benchmark-client
+          push: ${{ steps.vars.outputs.push == 'true' }}
+          platforms: ${{ steps.vars.outputs.platforms }}
+          tags: ${{ steps.meta-benchmark.outputs.tags }}
+          labels: ${{ steps.meta-benchmark.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ steps.vars.outputs.version }}
+            GIT_SHA=${{ github.sha }}
+            REPOSITORY=${{ steps.vars.outputs.repository }}
+          cache-from: type=gha,scope=azolla-benchmark-client
+          cache-to: type=gha,mode=max,scope=azolla-benchmark-client

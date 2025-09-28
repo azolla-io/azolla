@@ -19,8 +19,8 @@ RUN apt-get update \
 
 # Copy source and build in release mode
 COPY . .
-RUN cargo build --locked --release --bin azolla-orchestrator --bin azolla-shepherd --bin azolla-worker
-RUN strip target/release/azolla-orchestrator target/release/azolla-shepherd target/release/azolla-worker
+RUN cargo build --locked --release --bin azolla-orchestrator --bin azolla-shepherd --bin azolla-worker --example benchmark_client_example --example benchmark_worker_example
+RUN strip target/release/azolla-orchestrator target/release/azolla-shepherd target/release/azolla-worker target/release/examples/benchmark_client_example
 
 FROM debian:bookworm-slim AS runtime-base
 ARG USER=azolla
@@ -88,3 +88,32 @@ LABEL org.opencontainers.image.revision=${GIT_SHA}
 LABEL org.opencontainers.image.source="https://github.com/${REPOSITORY}"
 
 ENTRYPOINT ["/usr/local/bin/azolla-shepherd"]
+
+FROM runtime-base AS benchmark-client
+ARG APP_VERSION=dev
+ARG GIT_SHA=unknown
+ARG REPOSITORY=unknown/azolla
+ARG USER=azolla
+
+COPY --from=builder /app/target/release/examples/benchmark_client_example /usr/local/bin/azolla-benchmark-client
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && ARCH=$(dpkg --print-architecture) \
+    && KUBECTL_VERSION=$(curl -fsSL https://dl.k8s.io/release/stable.txt) \
+    && curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl" -o /usr/local/bin/kubectl \
+    && chmod +x /usr/local/bin/kubectl
+
+RUN chown ${USER}:${USER} /usr/local/bin/azolla-benchmark-client
+
+USER ${USER}
+
+LABEL org.opencontainers.image.title="Azolla Benchmark Client"
+LABEL org.opencontainers.image.version=${APP_VERSION}
+LABEL org.opencontainers.image.revision=${GIT_SHA}
+LABEL org.opencontainers.image.source="https://github.com/${REPOSITORY}"
+
+ENTRYPOINT ["/usr/local/bin/azolla-benchmark-client"]

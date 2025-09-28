@@ -1,0 +1,54 @@
+imagePullSecrets: []
+
+orchestrator:
+  image:
+    repository: ghcr.io/azolla/azolla-orchestrator
+    tag: latest
+    pullPolicy: IfNotPresent
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  service:
+    type: ClusterIP
+    port: 52710
+  domain: benchmark
+
+database:
+  existingSecret: ""
+  existingSecretKey: ""
+  url: ""
+
+shepherd:
+  image:
+    repository: ghcr.io/azolla/azolla-shepherd
+    tag: latest
+    pullPolicy: IfNotPresent
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  replicaCount: 1
+  domain: benchmark
+  shepherdGroup: default
+  maxConcurrency: 32
+
+benchmarkClient:
+  image:
+    repository: ghcr.io/azolla/azolla-benchmark-client
+    tag: latest
+    pullPolicy: IfNotPresent
+  totalRequests: 10000
+  threads: 8
+  requestTimeoutSeconds: 60
+  reportIntervalSeconds: 5
+  waitForReadySeconds: 120
+  cleanupOnSuccess: true
+  jobTtlSeconds: 3600
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  serviceAccount:
+    create: true
+    name: ""

@@ -233,6 +233,7 @@ fn build_worker() -> Worker {
         .register_task(MathAddTask)
         .register_task(CountArgsTask)
         .register_task(BoolTask)
+        .register_task(TrivialTask)
         .register_task(NullTask)
         .register_task(ObjectTask)
         .register_task(UintTask)
@@ -357,6 +358,30 @@ impl Task for BoolTask {
         } else {
             Err(TaskError::invalid_args(
                 "bool_task does not accept arguments",
+            ))
+        }
+    }
+
+    fn execute(&self, _args: Self::Args) -> Pin<Box<dyn Future<Output = TaskResult> + Send + '_>> {
+        Box::pin(async move { Ok(json!(true)) })
+    }
+}
+
+pub struct TrivialTask;
+
+impl Task for TrivialTask {
+    type Args = ();
+
+    fn name(&self) -> &'static str {
+        "trivial_task"
+    }
+
+    fn parse_args(args: Vec<Value>, _kwargs: Value) -> Result<Self::Args, TaskError> {
+        if args.is_empty() {
+            Ok(())
+        } else {
+            Err(TaskError::invalid_args(
+                "trivial_task does not accept positional arguments",
             ))
         }
     }
