@@ -1,0 +1,19 @@
+{{- if .Values.benchmarkClient.serviceAccount.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "azolla-benchmark.fullname" . }}-benchmark
+  labels:
+    {{- include "azolla-benchmark.labels" . | nindent 4 }}
+    app.kubernetes.io/component: benchmark-client
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["services", "pods"]
+    verbs: ["get", "list", "watch", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "delete"]
+{{- end }}

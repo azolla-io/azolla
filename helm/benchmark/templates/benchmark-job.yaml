@@ -1,0 +1,105 @@
+{{- if and (not .Values.benchmarkClient.serviceAccount.create) (not .Values.benchmarkClient.serviceAccount.name) }}
+{{- fail "benchmarkClient.serviceAccount.name must be set when serviceAccount.create is false" }}
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "azolla-benchmark.fullname" . }}-run
+  labels:
+    {{- include "azolla-benchmark.labels" . | nindent 4 }}
+    app.kubernetes.io/component: benchmark-client
+spec:
+  ttlSecondsAfterFinished: {{ .Values.benchmarkClient.jobTtlSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "azolla-benchmark.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: benchmark-client
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      restartPolicy: Never
+      serviceAccountName: {{ include "azolla-benchmark.benchmarkServiceAccountName" . }}
+      containers:
+        - name: benchmark
+          image: "{{ .Values.benchmarkClient.image.repository }}:{{ .Values.benchmarkClient.image.tag }}"
+          imagePullPolicy: {{ .Values.benchmarkClient.image.pullPolicy }}
+          env:
+            - name: RELEASE_NAME
+              value: {{ .Release.Name | quote }}
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: ORCHESTRATOR_SERVICE
+              value: "{{ include "azolla-benchmark.fullname" . }}-orchestrator"
+            - name: ORCHESTRATOR_PORT
+              value: "{{ .Values.orchestrator.service.port }}"
+            - name: BENCHMARK_DOMAIN
+              value: {{ .Values.shepherd.domain | quote }}
+            - name: TOTAL_REQUESTS
+              value: "{{ .Values.benchmarkClient.totalRequests }}"
+            - name: THREADS
+              value: "{{ .Values.benchmarkClient.threads }}"
+            - name: REQUEST_TIMEOUT
+              value: "{{ .Values.benchmarkClient.requestTimeoutSeconds }}"
+            - name: REPORT_INTERVAL
+              value: "{{ .Values.benchmarkClient.reportIntervalSeconds }}"
+            - name: WAIT_TIMEOUT
+              value: "{{ .Values.benchmarkClient.waitForReadySeconds }}"
+            - name: CLEANUP_ON_SUCCESS
+              value: {{ ternary "true" "false" .Values.benchmarkClient.cleanupOnSuccess }}
+          command:
+            - /bin/sh
+          args:
+            - -c
+            - |
+              set -euo pipefail
+              echo "Waiting for orchestrator deployment to become available"
+              if ! kubectl wait deployment/${RELEASE_NAME}-orchestrator --for=condition=Available --timeout=${WAIT_TIMEOUT}s -n ${NAMESPACE}; then
+                echo "Orchestrator failed to become ready within ${WAIT_TIMEOUT}s" >&2
+                exit 1
+              fi
+
+              ENDPOINT="http://${ORCHESTRATOR_SERVICE}:${ORCHESTRATOR_PORT}"
+              echo "Starting benchmark against ${ENDPOINT} in domain ${BENCHMARK_DOMAIN}"
+
+              set +e
+              /usr/local/bin/azolla-benchmark-client \
+                --orchestrator-endpoint "${ENDPOINT}" \
+                --domain "${BENCHMARK_DOMAIN}" \
+                --total-requests "${TOTAL_REQUESTS}" \
+                --threads "${THREADS}" \
+                --request-timeout-secs "${REQUEST_TIMEOUT}" \
+                --report-interval-secs "${REPORT_INTERVAL}"
+              STATUS=$?
+              set -e
+
+              if [ "${STATUS}" -eq 0 ] && [ "${CLEANUP_ON_SUCCESS}" = "true" ]; then
+                echo "Benchmark succeeded; cleaning up benchmark resources"
+                LABEL_SELECTOR="app.kubernetes.io/instance=${RELEASE_NAME}"
+                kubectl delete deployment -l "${LABEL_SELECTOR}" -n "${NAMESPACE}" --ignore-not-found
+                kubectl delete service -l "${LABEL_SELECTOR}" -n "${NAMESPACE}" --ignore-not-found
+              elif [ "${STATUS}" -ne 0 ]; then
+                echo "Benchmark failed; preserving resources for inspection" >&2
+              fi
+
+              exit ${STATUS}
+          {{- with .Values.benchmarkClient.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.benchmarkClient.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.benchmarkClient.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.benchmarkClient.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
