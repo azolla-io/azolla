@@ -1,0 +1,125 @@
+name: Publish Container Images
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determine version metadata
+        id: vars
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            echo "version=pr-${GITHUB_HEAD_REF//\//-}-${GITHUB_SHA::7}" >>"${GITHUB_OUTPUT}"
+            echo "push=false" >>"${GITHUB_OUTPUT}"
+            echo "platforms=linux/amd64" >>"${GITHUB_OUTPUT}"
+          elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "version=${GITHUB_REF_NAME}" >>"${GITHUB_OUTPUT}"
+            echo "push=true" >>"${GITHUB_OUTPUT}"
+            echo "platforms=linux/amd64,linux/arm64" >>"${GITHUB_OUTPUT}"
+          else
+            echo "version=dev-${GITHUB_SHA::7}" >>"${GITHUB_OUTPUT}"
+            echo "push=true" >>"${GITHUB_OUTPUT}"
+            echo "platforms=linux/amd64,linux/arm64" >>"${GITHUB_OUTPUT}"
+          fi
+          echo "short_sha=${GITHUB_SHA::7}" >>"${GITHUB_OUTPUT}"
+          echo "repository=${GITHUB_REPOSITORY}" >>"${GITHUB_OUTPUT}"
+
+      - name: Login to GHCR
+        if: steps.vars.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Orchestrator metadata
+        id: meta-orchestrator
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/azolla-orchestrator
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=tag
+            type=sha,format=short,prefix=sha-
+          labels: |
+            org.opencontainers.image.title=Azolla Orchestrator
+            org.opencontainers.image.version=${{ steps.vars.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ steps.vars.outputs.repository }}
+
+      - name: Shepherd metadata
+        id: meta-shepherd
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/azolla-shepherd
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=tag
+            type=sha,format=short,prefix=sha-
+          labels: |
+            org.opencontainers.image.title=Azolla Shepherd
+            org.opencontainers.image.version=${{ steps.vars.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ steps.vars.outputs.repository }}
+
+      - name: Build and push orchestrator image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: orchestrator
+          push: ${{ steps.vars.outputs.push == 'true' }}
+          platforms: ${{ steps.vars.outputs.platforms }}
+          tags: ${{ steps.meta-orchestrator.outputs.tags }}
+          labels: ${{ steps.meta-orchestrator.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ steps.vars.outputs.version }}
+            GIT_SHA=${{ github.sha }}
+            REPOSITORY=${{ steps.vars.outputs.repository }}
+          cache-from: type=gha,scope=azolla-orchestrator
+          cache-to: type=gha,mode=max,scope=azolla-orchestrator
+
+      - name: Build and push shepherd image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: shepherd
+          push: ${{ steps.vars.outputs.push == 'true' }}
+          platforms: ${{ steps.vars.outputs.platforms }}
+          tags: ${{ steps.meta-shepherd.outputs.tags }}
+          labels: ${{ steps.meta-shepherd.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ steps.vars.outputs.version }}
+            GIT_SHA=${{ github.sha }}
+            REPOSITORY=${{ steps.vars.outputs.repository }}
+          cache-from: type=gha,scope=azolla-shepherd
+          cache-to: type=gha,mode=max,scope=azolla-shepherd
