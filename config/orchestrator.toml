@@ -1,4 +1,5 @@
-# Default configuration for the Azolla Orchestrator
+# Example basic configuration for the Azolla Orchestrator.
+# Override values via AZOLLA__* environment variables for other environments.
 
 [server]
 port = 52710

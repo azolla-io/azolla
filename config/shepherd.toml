@@ -1,4 +1,5 @@
-# Azolla Shepherd Configuration
+# Example basic configuration for the Azolla Shepherd.
+# Override values via AZOLLA_* environment variables for other environments.
 orchestrator_endpoint = "http://127.0.0.1:52710"
 max_concurrency = 4
 worker_grpc_port = 50052
